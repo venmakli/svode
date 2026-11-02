@@ -14,6 +14,7 @@ export {
   normalizePageCover,
 } from "./model/normalize-page";
 export { applyPageTitleOutcome } from "./model/title-outcome";
+export { definePageSchemaProperties } from "./model/page-properties";
 export {
   pageSourceErrorKind,
   type PageSourceConflict,

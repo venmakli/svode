@@ -103,14 +103,16 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     mediaFormatFromPath: () => null,
     probeMediaTarget: () => ({ status: "no_match" }),
   }));
-  mock.module("@/features/properties/panel", () => ({
-    PropertyPanel: (props: Props) => {
+  mock.module("@/features/page/ui/page-property-panel", () => ({
+    PagePropertyPanel: (props: Props) => {
       panelProps = props;
       const result = props.schemaResult as {
         schema: { columns: unknown[] };
       };
       return <div data-columns={result.schema.columns.length} />;
     },
+  }));
+  mock.module("@/features/properties/panel", () => ({
     keepsCollectionPropertyEditorOnEscape: () => false,
   }));
   mock.module("@/features/page/ui/page-identity-header", () => ({

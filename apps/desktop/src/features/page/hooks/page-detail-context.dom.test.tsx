@@ -455,7 +455,7 @@ test("a property draft whose save failed stays visible with a user-facing error"
     });
     const document = view.dom.window.document;
     const text = document.body.textContent ?? "";
-    expect(text.includes("Done")).toBe(true);
+    expect(Boolean(propertyControl(view.dom, "Done"))).toBe(true);
     expect(text.includes("[object Object]")).toBe(false);
     expect(
       document
@@ -547,10 +547,21 @@ async function readyHarness(
   return view;
 }
 
-function propertyButton(dom: JSDOM, text: string) {
-  return [...dom.window.document.querySelectorAll('[role="button"]')].find(
-    (node) => node.textContent === text,
-  ) as HTMLElement | undefined;
+/** The control of a property that shows `text`: its field or its trigger. */
+function propertyControl(dom: JSDOM, text: string) {
+  for (const editor of dom.window.document.querySelectorAll(
+    "[data-collection-property-editor]",
+  )) {
+    const field = editor.querySelector(
+      "input, textarea",
+    ) as HTMLInputElement | null;
+    if (field?.value === text) return field;
+    const trigger = [...editor.querySelectorAll('[role="button"]')].find(
+      (node) => node.textContent === text,
+    );
+    if (trigger) return trigger as HTMLElement;
+  }
+  return undefined;
 }
 
 function inputWithValue(dom: JSDOM, value: string) {
@@ -595,8 +606,8 @@ for (const presentation of ["full", "compact"] as const) {
       expect(Boolean(inputWithValue(view.dom, "External description"))).toBe(
         true,
       );
-      expect(Boolean(propertyButton(view.dom, "Done"))).toBe(true);
-      expect(propertyButton(view.dom, "Todo")).toBe(undefined);
+      expect(Boolean(propertyControl(view.dom, "Done"))).toBe(true);
+      expect(propertyControl(view.dom, "Todo")).toBe(undefined);
 
       view.setSchema([
         { name: "Status", type: "text" },
@@ -680,12 +691,69 @@ test("a field saved during a refresh keeps its value and its echo changes nothin
     view.delayReads(null);
     expect(view.context().page?.meta.extra.Status).toBe("Mine");
     expect(view.context().page?.meta.description).toBe("External");
-    expect(Boolean(propertyButton(view.dom, "Mine"))).toBe(true);
+    expect(Boolean(propertyControl(view.dom, "Mine"))).toBe(true);
 
     const shown = view.context().page;
     await view.fileEvent(README);
     expect(view.context().page).toBe(shown);
     expect(view.pages.get(README)?.meta.extra.Status).toBe("Mine");
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a property edited in the panel is written as a field of the Page, as a cell writes it", async () => {
+  const view = await readyHarness({
+    schema: [
+      { name: "Status", type: "text" },
+      {
+        name: "Tags",
+        type: "multi_select",
+        options: [{ name: "red", color: "red" }],
+      },
+    ],
+  });
+  try {
+    const input = propertyControl(view.dom, "Todo") as HTMLInputElement;
+    await act(async () => {
+      input.focus();
+      Object.getOwnPropertyDescriptor(
+        view.dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, "Doing");
+      input.dispatchEvent(
+        new view.dom.window.Event("input", { bubbles: true }),
+      );
+      const propertyChange = new view.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+      await turn();
+    });
+    const writesBefore = view.calls.filter(
+      (call) => call === "update_page_field",
+    ).length;
+    await act(async () => {
+      input.dispatchEvent(
+        new view.dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+        }),
+      );
+      await turn();
+      // A text property keeps the debounced save policy of its cell.
+      await new Promise((resolve) =>
+        setTimeout(resolve, PAGE_FIELD_TEXT_SAVE_DELAY_MS + 50),
+      );
+      await turn();
+    });
+    expect(
+      view.calls.filter((call) => call === "update_page_field").length,
+    ).toBe(writesBefore + 1);
+    expect(view.pages.get(README)?.meta.extra.Status).toBe("Doing");
+    expect(view.context().page?.meta.extra.Status).toBe("Doing");
+    expect(view.context().metadataDrafts.size).toBe(0);
   } finally {
     await view.cleanup();
   }
@@ -707,7 +775,7 @@ test("a refresh keeps focus, the typed value and an open property popover", asyn
   });
   try {
     await act(async () => {
-      propertyButton(view.dom, "Todo")!.click();
+      propertyControl(view.dom, "Todo")!.click();
       await turn();
     });
     const input = inputWithValue(view.dom, "Todo")!;
@@ -743,7 +811,7 @@ test("a refresh keeps focus, the typed value and an open property popover", asyn
       await turn();
     });
     await act(async () => {
-      propertyButton(view.dom, "-")!.click();
+      propertyControl(view.dom, m.property_empty())!.click();
       await turn();
     });
     // The trigger state does not depend on the portal, which a Radix module

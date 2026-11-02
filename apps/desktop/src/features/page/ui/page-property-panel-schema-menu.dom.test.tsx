@@ -28,17 +28,31 @@ if (!isolatedProcess) {
     const dom = createDom();
     const restoreGlobals = installDomGlobals(dom);
     const root = createRoot(dom.window.document.getElementById("app")!);
-    const { PropertyPanel } = await import("./property-panel");
+    const { PagePropertyPanel } = await import("./page-property-panel");
     const { PropertyLabelTrigger, SchemaColumnMenu } =
-      await import("./schema-column-menu");
+      await import("@/features/properties/column-menu");
     const m = await import("@/paraglide/messages.js");
     const panel = (mode: "full" | "peek") => (
-      <PropertyPanel
-        mode={mode}
+      <PagePropertyPanel
+        presentation={mode === "full" ? "full" : "compact"}
         spacePath="/project"
         projectPath="/project"
-        filePath="tasks/task.md"
-        pageLabel="Task"
+        page={{
+          path: "tasks/task.md",
+          body: "",
+          meta: {
+            title: "Task",
+            icon: null,
+            created: "",
+            updated: "",
+            extra: {
+              Summary: "Review",
+              Published: false,
+              Contact: "invalid",
+              Legacy: "kept",
+            },
+          },
+        }}
         schemaResult={{
           collectionRootPath: "tasks",
           schema: {
@@ -48,12 +62,6 @@ if (!isolatedProcess) {
               { name: "Contact", type: "email" },
             ],
           },
-        }}
-        values={{
-          Summary: "Review",
-          Published: false,
-          Contact: "invalid",
-          Legacy: "kept",
         }}
         onValueChange={async () => undefined}
       />
@@ -106,23 +114,19 @@ if (!isolatedProcess) {
 
       const publishedTrigger = triggers[1]!;
       const publishedRow = publishedTrigger.closest(".contents")!;
-      const valueTrigger =
-        publishedRow.children[1]!.querySelector<HTMLElement>(
-          '[role="button"]',
-        )!;
-      expect(valueTrigger === publishedTrigger).toBe(false);
+      // The value edits in its own control, apart from the label's menu.
+      const valueControl = publishedRow.children[1]!.querySelector<HTMLElement>(
+        '[role="switch"][aria-label="Published: Task"]',
+      )!;
+      expect(valueControl !== null).toBe(true);
+      expect(publishedTrigger.contains(valueControl)).toBe(false);
       await act(async () => {
-        valueTrigger.click();
+        valueControl.click();
         await nextFrame(dom);
       });
       expect(
         dom.window.document.querySelector('[data-slot="popover-content"]'),
       ).toBeNull();
-      expect(
-        publishedRow.querySelector(
-          '[role="switch"][aria-label="Published: Task"]',
-        ) !== null,
-      ).toBe(true);
 
       await act(async () => {
         root.render(panel("peek"));

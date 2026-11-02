@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { useSignalUserEdit } from "@/features/navigation";
-import { PropertyPanel } from "@/features/properties/panel";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
+import type { Page } from "../model/types";
 import {
   showPageHeaderSaveError,
   type PageHeaderSaveField,
@@ -13,6 +13,7 @@ import {
 } from "./page-identity-header";
 import { PageReadError } from "./page-read-error";
 import { PageSaveStatus } from "./page-save-status";
+import { PagePropertyPanel } from "./page-property-panel";
 import { PageSystemFields } from "./page-system-fields";
 
 export function PageDetailHeader({
@@ -44,6 +45,12 @@ export function PageDetailHeader({
     if (!context.writeFailureShown(error))
       showPageHeaderSaveError(field, error);
   };
+  // A failed write the save block keeps to retry is not reported again at
+  // the property; any other refusal is.
+  const saveProperty = (field: string, value: unknown) =>
+    context.updateField(field, value).catch((error: unknown) => {
+      if (!context.writeFailureShown(error)) throw error;
+    });
   const createReadme = () => {
     if (canCreateReadme)
       void context.createReadme().catch(saveHeaderField("readme"));
@@ -111,27 +118,25 @@ export function PageDetailHeader({
       schemaResult &&
       (schemaResult.schema.columns.length > 0 || !readOnly) ? (
         <div className="max-w-5xl">
-          <PropertyPanel
+          <PagePropertyPanel
             key={`properties:${readOnly ? "view" : "edit"}`}
             spacePath={context.spacePath}
             projectPath={context.projectPath}
             spaceId={context.spaceId}
-            filePath={page.path}
-            pageLabel={page.meta.title}
-            schemaResult={schemaResult}
-            values={propertyValues(
-              page.meta.extra ?? {},
+            page={pageWithDrafts(
+              page,
               schemaResult.schema.columns,
               context.metadataDrafts,
             )}
-            mode={presentation === "compact" ? "peek" : "full"}
+            schemaResult={schemaResult}
+            presentation={presentation}
             readOnly={readOnly}
             onOpenPath={context.onOpenPath}
             onSchemaChange={(result) => {
               context.applySchema(result);
               signalUserEdit();
             }}
-            onValueChange={context.updateField}
+            onValueChange={saveProperty}
           />
         </div>
       ) : null}
@@ -140,17 +145,17 @@ export function PageDetailHeader({
 }
 
 /** Unsaved field drafts stay visible until they are saved or discarded. */
-function propertyValues(
-  saved: Record<string, unknown>,
+function pageWithDrafts(
+  page: Page,
   columns: readonly { name: string }[],
   drafts: ReadonlyMap<string, { value: unknown }>,
-) {
-  const values = { ...saved };
+): Page {
+  const values = { ...(page.meta.extra ?? {}) };
   for (const { name } of columns) {
     const draft = drafts.get(name);
     if (draft) values[name] = draft.value;
   }
-  return values;
+  return { ...page, meta: { ...page.meta, extra: values } };
 }
 
 function PageDetailHeaderSkeleton({ actions }: { actions?: ReactNode }) {

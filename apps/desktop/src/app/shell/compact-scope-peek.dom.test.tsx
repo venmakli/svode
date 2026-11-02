@@ -95,8 +95,10 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
     mediaFormatFromPath: () => null,
     probeMediaTarget: () => ({ status: "no_match" }),
   }));
+  mock.module("@/features/page/ui/page-property-panel", () => ({
+    PagePropertyPanel: () => null,
+  }));
   mock.module("@/features/properties/panel", () => ({
-    PropertyPanel: () => null,
     CollectionPropertyPanel: () => null,
     keepsCollectionPropertyEditorOnEscape: () => false,
   }));

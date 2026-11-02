@@ -11,7 +11,6 @@ import {
 import type { ColorName, Column, StatusGroup } from "../model/types";
 import { validatePropertyValue } from "../model/validation";
 import { PropertyControl } from "./property-control";
-import { PropertyPanel } from "./property-panel";
 import { PropertyValue } from "./property-value";
 
 // A schema as Desktop gets it when a newer Svode version changed the file.
@@ -100,38 +99,6 @@ test("values of a newer property render read-only as text, known ones as before"
   );
   expect(summaryControl.includes("data-newer-property-value")).toBe(false);
   expect(summaryControl.includes("<input")).toBe(true);
-});
-
-test("the property panel shows a newer property without its menu or editor", () => {
-  const schema = normalizeSchema(newerSchemaDto());
-  const markup = renderToStaticMarkup(
-    <PropertyPanel
-      mode="full"
-      spacePath="/repo"
-      projectPath="/repo"
-      filePath="tasks/task.md"
-      pageLabel="Task"
-      schemaResult={{ collectionRootPath: "tasks", schema }}
-      values={{ Summary: "Visible value", Score: 42 }}
-      onValueChange={async () => undefined}
-    />,
-  );
-
-  expect(markup.includes('data-newer-property="Score"')).toBe(true);
-  expect(markup.includes('data-newer-property="Links"')).toBe(true);
-  expect(markup.includes('data-property-label-trigger="Score"')).toBe(false);
-  expect(markup.includes('data-property-label-trigger="Summary"')).toBe(true);
-  expect(markup.includes('data-property-label-trigger="Owner"')).toBe(true);
-  expect(
-    markup.includes(
-      "Score: Property of a newer Svode version. Update Svode to change it.",
-    ),
-  ).toBe(true);
-  expect(
-    markup.includes('<span data-newer-property-value="true">42</span>'),
-  ).toBe(true);
-  // Only the known properties open an editor.
-  expect(markup.match(/role="button"/g)?.length).toBe(2);
 });
 
 test("values a newer version set inside known objects draw as the default", () => {

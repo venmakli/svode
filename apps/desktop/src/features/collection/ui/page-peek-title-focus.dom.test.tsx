@@ -77,8 +77,10 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
   mock.module("@/features/page/ui/page-system-fields", () => ({
     PageSystemFields: () => null,
   }));
+  mock.module("@/features/page/ui/page-property-panel", () => ({
+    PagePropertyPanel: () => null,
+  }));
   mock.module("@/features/properties/panel", () => ({
-    PropertyPanel: () => null,
     CollectionPropertyPanel: () => null,
     keepsCollectionPropertyEditorOnEscape: () => false,
   }));

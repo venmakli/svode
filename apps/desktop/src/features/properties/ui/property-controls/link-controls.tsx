@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Copy, ExternalLink, Link, Mail, PhoneCall, Text } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +21,11 @@ import {
 } from "./common";
 import type { PropertyControlProps } from "./types";
 
+/**
+ * A link: its address in the field and, in a popover, the address and the
+ * text. Leaving a changed field saves the link; Escape in any of its fields
+ * puts the saved link back without saving.
+ */
 export function UrlControl({
   value,
   invalid,
@@ -36,6 +41,8 @@ export function UrlControl({
   const normalized = normalizeUrlValue(value);
   const [draft, setDraft] = useState(normalized.href);
   const [text, setText] = useState(normalized.title);
+  // Set by Escape until the next edit, so the blur it causes does not save.
+  const cancelledRef = useRef(false);
   useEffect(() => {
     return deferStateUpdate(() => {
       const next = normalizeUrlValue(value);
@@ -45,22 +52,37 @@ export function UrlControl({
   }, [value]);
   const warning = invalid || (draft ? !isValidUrl(draft) : false);
   const commit = () => {
+    if (cancelledRef.current) return;
     const href = draft.trim();
     const title = text.trim();
+    if (href === normalized.href && title === normalized.title) return;
     void onChange(
       href ? { href, title: title || fallbackUrlTitle(href) } : null,
     );
+  };
+  const fieldProps = {
+    onBlur: commit,
+    onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Escape") return;
+      cancelledRef.current = true;
+      setDraft(normalized.href);
+      setText(normalized.title);
+    },
+  };
+  const edit = (update: () => void) => {
+    cancelledRef.current = false;
+    update();
   };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <div className="group/control relative">
           <Input
+            {...fieldProps}
             value={draft}
             disabled={disabled}
             aria-invalid={warning || undefined}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commit}
+            onChange={(event) => edit(() => setDraft(event.target.value))}
             className="pr-16"
           />
           <div className="absolute top-1/2 right-1 flex -translate-y-1/2 opacity-0 group-focus-within/control:opacity-100 group-hover/control:opacity-100">
@@ -85,18 +107,18 @@ export function UrlControl({
         <div className="grid grid-cols-[auto_1fr] items-center gap-2">
           <Link className="text-muted-foreground" />
           <Input
+            {...fieldProps}
             value={draft}
             placeholder={m.page_link_url_placeholder()}
             autoFocus={autoOpen}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commit}
+            onChange={(event) => edit(() => setDraft(event.target.value))}
           />
           <Text className="text-muted-foreground" />
           <Input
+            {...fieldProps}
             value={text}
             placeholder={m.page_link_text_placeholder()}
-            onChange={(event) => setText(event.target.value)}
-            onBlur={commit}
+            onChange={(event) => edit(() => setText(event.target.value))}
           />
         </div>
       </PopoverContent>

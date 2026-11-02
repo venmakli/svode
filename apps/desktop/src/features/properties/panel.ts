@@ -1,4 +1,3 @@
-export * from "./ui/property-panel";
 export * from "./ui/collection-property-panel";
 export type {
   CollectionPropertyFact,
@@ -6,3 +5,7 @@ export type {
   CollectionPropertyFactValue,
 } from "./model/collection-property-fact";
 export { keepsCollectionPropertyEditorOnEscape } from "./ui/collection-property-editor";
+export {
+  useCollectionSchemaPanel,
+  type CollectionSchemaPanel,
+} from "./hooks/use-collection-schema-panel";

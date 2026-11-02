@@ -5,6 +5,7 @@ import {
   type CollectionPropertyApplicability,
   type CollectionPropertyDefinition,
 } from "../model/collection-property";
+import type { RelationContext } from "../model/types";
 import { PropertyValue } from "./property-value";
 
 export function CollectionInlineDiagnostic({ message }: { message: string }) {
@@ -28,10 +29,13 @@ export function CollectionPropertyValue({
   property,
   item,
   context = "cell",
+  relationContext,
 }: {
   property: CollectionPropertyDefinition<unknown>;
   item: unknown;
   context?: "cell" | "detail";
+  /** Resolves the Pages a relation value links to. */
+  relationContext?: RelationContext;
 }) {
   const applicability = readCollectionPropertyApplicability(property, item);
   if (applicability.status === "hidden") return null;
@@ -75,6 +79,7 @@ export function CollectionPropertyValue({
         actors={property.actorCandidates}
         column={column}
         value={value}
+        relationContext={relationContext}
       />
     );
   }

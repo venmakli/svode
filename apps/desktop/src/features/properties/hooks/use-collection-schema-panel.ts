@@ -23,16 +23,26 @@ import type {
 import { newPropertyColumn } from "../ui/property-type-meta";
 import * as m from "@/paraglide/messages.js";
 
-interface UsePropertyPanelStateInput {
+interface UseCollectionSchemaPanelInput {
   spacePath: string;
   projectPath?: string | null;
   spaceId?: string | null;
-  filePath: string;
+  /** The item of the Collection whose properties the panel shows. */
+  itemPath: string;
   schemaResult: PageSchemaResult;
+  /** The item's saved values by property name. */
   values: Record<string, unknown>;
   onOpenPath?: (path: string, spaceId?: string | null) => void;
   onSchemaChange?: (result: PageSchemaResult | null) => void;
 }
+
+/**
+ * The schema extensions of the property panel for an item of a Collection
+ * with a schema: the column menu at a label, "+ Add property", the state of
+ * an invalid value with its repair, "Number repeats" of a `unique_id` and
+ * the values the schema does not declare. See `CollectionPropertyPanel`.
+ */
+export type CollectionSchemaPanel = ReturnType<typeof useCollectionSchemaPanel>;
 
 interface SchemaMutationContext {
   spacePath: string;
@@ -40,16 +50,16 @@ interface SchemaMutationContext {
   projectPath?: string | null;
 }
 
-export function usePropertyPanelState({
+export function useCollectionSchemaPanel({
   spacePath,
   projectPath,
   spaceId,
-  filePath,
+  itemPath: filePath,
   schemaResult,
   values,
   onOpenPath,
   onSchemaChange,
-}: UsePropertyPanelStateInput) {
+}: UseCollectionSchemaPanelInput) {
   const [schema, setSchema] = useState(() =>
     normalizeSchema(schemaResult.schema),
   );
@@ -60,7 +70,9 @@ export function usePropertyPanelState({
     () => schemaResult.uniqueIdDuplicate ?? null,
   );
   const [actors, setActors] = useState<ActorCandidate[]>([]);
-  const [editingField, setEditingField] = useState<string | null>(null);
+  // The property whose column menu is open, such as one just added.
+  const [openColumn, setOpenColumn] = useState<string | null>(null);
+  // The values a repair here changed, until the item reads them back.
   const [panelValues, setPanelValues] = useState(values);
 
   const handleSchemaError = useCallback((error: unknown) => {
@@ -77,7 +89,6 @@ export function usePropertyPanelState({
 
   useEffect(() => {
     applySchemaResult(schemaResult);
-    setEditingField(null);
   }, [applySchemaResult, schemaResult]);
 
   useEffect(() => {
@@ -164,7 +175,10 @@ export function usePropertyPanelState({
     [filePath, projectPath, refreshSchema, runSchemaMutation, spacePath],
   );
 
-  /** Adds a property named after its type; resolves to its name, or null on refusal. */
+  /**
+   * Adds a property named after its type and opens its column menu with the
+   * name in focus; a refusal is reported and leaves the schema as it was.
+   */
   const addProperty = useCallback(
     async (type: PropertyType) => {
       const column = newPropertyColumn({
@@ -181,7 +195,7 @@ export function usePropertyPanelState({
       await runSchemaMutation(async () => {
         await refreshSchema();
       });
-      return column.name;
+      setOpenColumn(column.name);
     },
     [
       collectionRootPath,
@@ -267,12 +281,14 @@ export function usePropertyPanelState({
   );
 
   return {
+    spacePath,
+    projectPath,
     schema,
     collectionRootPath,
     uniqueIdDuplicate,
     actors,
-    editingField,
-    setEditingField,
+    openColumn,
+    setOpenColumn,
     panelValues,
     orphanEntries,
     relationContext,

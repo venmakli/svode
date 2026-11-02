@@ -1,7 +1,6 @@
-import type { Page } from "@/features/page";
+import { definePageSchemaProperties, type Page } from "@/features/page";
 import {
   defineComputedCollectionProperty,
-  defineSchemaBackedCollectionProperty,
   defineTitleCollectionProperty,
   defineUpdatedCollectionProperty,
   type CollectionPropertyDefinition,
@@ -96,21 +95,7 @@ export function definePageCollectionProperties(
     defineUpdatedCollectionProperty({
       getValue: (page: Page) => page.meta.updated,
     }),
-    ...schema.columns.map((column) =>
-      defineSchemaBackedCollectionProperty({
-        // Nothing filters or sorts by a property of a newer Svode version.
-        capabilities: column.newer
-          ? {}
-          : {
-              filter: { kind: "standard" },
-              sort: { kind: "standard" },
-            },
-        column,
-        getAccessibilityLabel: (page: Page) =>
-          `${column.name}: ${page.meta.title}`,
-        getValue: (page: Page) => page.meta.extra[column.name],
-      }),
-    ),
+    ...definePageSchemaProperties(schema),
   ];
 }
 

@@ -17,7 +17,7 @@ import type {
   CollectionPropertyEdit,
   CollectionPropertyPopoverEditor,
 } from "../model/collection-property";
-import type { Column } from "../model/types";
+import type { ActorCandidate, Column, RelationContext } from "../model/types";
 import { validatePropertyValue } from "../model/validation";
 import { CollectionPropertyValue } from "./collection-property-value";
 import { PropertyControl } from "./property-control";
@@ -63,15 +63,25 @@ type EditorNotice = { kind: "error" | "invalid"; text: string } | null;
  */
 export function CollectionPropertyEditor<Item>({
   column,
+  disabled: disabledByPanel = false,
   edit,
+  invalid = false,
   item,
   property,
+  relationContext,
+  onRequestActors,
 }: {
   /** The column of a standard value; none for a composite popover value. */
   column: Column | null;
+  /** The saved value cannot be edited, as the panel shows next to it. */
+  disabled?: boolean;
   edit: CollectionPropertyEdit<Item>;
+  /** The saved value is invalid, as the panel shows next to it. */
+  invalid?: boolean;
   item: Item;
   property: CollectionPropertyDefinition<Item>;
+  relationContext?: RelationContext;
+  onRequestActors?: (allTime: boolean) => Promise<ActorCandidate[]>;
 }) {
   // A new revision draws the control again, dropping its draft.
   const [revision, setRevision] = useState(0);
@@ -84,7 +94,7 @@ export function CollectionPropertyEditor<Item>({
   const saved = property.getValue(item);
   const ownerState = readCollectionPropertyEditState(edit, item);
   const busy = pending || ownerState.status === "pending";
-  const disabled = busy || ownerState.status === "disabled";
+  const disabled = busy || disabledByPanel || ownerState.status === "disabled";
 
   const write = async (
     next: unknown,
@@ -159,8 +169,10 @@ export function CollectionPropertyEditor<Item>({
         actors={property.actorCandidates}
         column={column}
         value={saved}
-        invalid={notice?.kind === "invalid"}
+        invalid={invalid || notice?.kind === "invalid"}
         disabled={disabled}
+        relationContext={relationContext}
+        onRequestActors={onRequestActors}
         placeholder={m.property_empty()}
         accessibilityLabel={
           property.getAccessibilityLabel?.(item) ?? property.label

@@ -1,21 +1,31 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PropertyPanel } from "./property-panel";
+import type { Page } from "../model/types";
+import { PagePropertyPanel } from "./page-property-panel";
+
+function taskPage(extra: Record<string, unknown>): Page {
+  return {
+    path: "tasks/task.md",
+    body: "",
+    meta: { title: "Task", icon: null, created: "", updated: "", extra },
+  };
+}
 
 test("read-only Page properties preserve label geometry and disable mutation controls", () => {
   const markup = renderToStaticMarkup(
-    <PropertyPanel
+    <PagePropertyPanel
       readOnly
-      mode="full"
+      presentation="full"
       spacePath="/repo"
       projectPath="/repo"
-      filePath="tasks/task.md"
-      pageLabel="Task"
+      page={taskPage({
+        Summary: "Visible value",
+        Legacy: "Visible legacy value",
+      })}
       schemaResult={{
         collectionRootPath: "tasks",
         schema: { columns: [{ name: "Summary", type: "text" }] },
       }}
-      values={{ Summary: "Visible value", Legacy: "Visible legacy value" }}
       onValueChange={async () => undefined}
     />,
   );
@@ -30,17 +40,15 @@ test("read-only Page properties preserve label geometry and disable mutation con
   expect(markup.includes('role="button"')).toBe(false);
 
   const editableMarkup = renderToStaticMarkup(
-    <PropertyPanel
-      mode="full"
+    <PagePropertyPanel
+      presentation="full"
       spacePath="/repo"
       projectPath="/repo"
-      filePath="tasks/task.md"
-      pageLabel="Task"
+      page={taskPage({ Summary: "Visible value" })}
       schemaResult={{
         collectionRootPath: "tasks",
         schema: { columns: [{ name: "Summary", type: "text" }] },
       }}
-      values={{ Summary: "Visible value" }}
       onValueChange={async () => undefined}
     />,
   );

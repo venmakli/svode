@@ -3,7 +3,9 @@ import { Folder, SquareTerminal, type LucideIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/shared/lib/utils";
 
+import type { CollectionSchemaPanel } from "../hooks/use-collection-schema-panel";
 import { isEmptyValue } from "../lib/utils";
 import {
   resolveStandardPropertyColumn,
@@ -15,6 +17,10 @@ import {
   type CollectionPropertyFactValue,
 } from "../model/collection-property-fact";
 import {
+  validatePropertyValue,
+  type PropertyValidationState,
+} from "../model/validation";
+import {
   CollectionPropertyValue,
   readCollectionPropertyApplicability,
 } from "./collection-property-value";
@@ -22,7 +28,16 @@ import {
   CollectionPropertyEditor,
   readCollectionPropertyEditState,
 } from "./collection-property-editor";
+import {
+  SchemaAddPropertyAction,
+  SchemaOrphanRows,
+  SchemaPropertyLabel,
+  SchemaValueRepair,
+  useSchemaAddOptionDialog,
+} from "./collection-property-panel-schema";
 import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
+
+const VALID: PropertyValidationState = { invalid: false };
 
 /**
  * The properties of one item, built from the same property definitions as
@@ -31,68 +46,155 @@ import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
  * it. A hidden property is not shown, nor an empty read-only property or
  * fact; an empty editable property shows its hint. A property its owner
  * declared editable is edited here with the control of its cell, see
- * `CollectionPropertyEditor`.
+ * `CollectionPropertyEditor`; `readOnly` shows every value without editing.
+ *
+ * An item of a Collection with a schema adds the schema extensions of
+ * `schemaPanel`: the column menu at the label of each schema property, which
+ * stays shown while it can be edited, the state of an invalid saved value
+ * with its repair, "Number repeats" of a `unique_id`, the values the schema
+ * does not declare and "+ Add property", alone while the schema has no
+ * properties.
  */
 export function CollectionPropertyPanel<Item>({
   factGroups = [],
   properties,
   item,
+  layout = "default",
+  readOnly = false,
+  schemaPanel,
 }: {
   factGroups?: readonly CollectionPropertyFactGroup[];
   properties: readonly CollectionPropertyDefinition<Item>[];
   item: Item;
+  /** `wide` puts two properties in a row from the medium width up. */
+  layout?: "default" | "wide";
+  readOnly?: boolean;
+  schemaPanel?: CollectionSchemaPanel;
 }) {
-  const visibleProperties = properties.filter(
-    (property) =>
-      property.common !== "title" && panelRowKind(property, item) !== null,
-  );
+  const optionDialog = useSchemaAddOptionDialog(schemaPanel);
+  const rows = properties.flatMap((property) => {
+    if (property.common === "title") return [];
+    const schemaColumn =
+      schemaPanel && property.owner.kind === "schema"
+        ? property.owner.column
+        : null;
+    const validation = schemaColumn
+      ? validatePropertyValue(
+          schemaColumn,
+          readValue(property, item),
+          schemaPanel?.uniqueIdDuplicate,
+        )
+      : VALID;
+    const kind = panelRowKind(property, item, {
+      readOnly,
+      // A schema property keeps its row, and its column menu, while the
+      // schema can be edited; an invalid value shows its state anyway.
+      keep: schemaColumn !== null && (!readOnly || validation.invalid),
+    });
+    return kind ? [{ kind, property, schemaColumn, validation }] : [];
+  });
   const visibleGroups = factGroups
     .map((group) => ({
       ...group,
       facts: group.facts.filter((fact) => !isEmptyCollectionPropertyFact(fact)),
     }))
     .filter((group) => group.facts.length > 0);
-  if (visibleProperties.length === 0 && visibleGroups.length === 0) {
-    return null;
+  const addAction =
+    schemaPanel && !readOnly ? (
+      <SchemaAddPropertyAction schemaPanel={schemaPanel} />
+    ) : null;
+  // A Collection without properties offers only the first one to add.
+  if (schemaPanel && schemaPanel.schema.columns.length === 0) return addAction;
+  const orphanCount = schemaPanel?.orphanEntries.length ?? 0;
+  if (rows.length === 0 && visibleGroups.length === 0 && orphanCount === 0) {
+    return addAction;
   }
 
-  return (
+  const grid = (
     <div
-      className="grid max-w-5xl min-w-0 grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)] gap-x-6 gap-y-0.5"
+      className={cn(
+        "grid max-w-5xl min-w-0 grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)] gap-x-6 gap-y-0.5",
+        layout === "wide" &&
+          "md:grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)_minmax(7rem,12rem)_minmax(0,1fr)]",
+      )}
       data-collection-property-panel
     >
-      {visibleProperties.map((property) => {
+      {rows.map(({ kind, property, schemaColumn, validation }) => {
         const column = resolveStandardPropertyColumn(property);
         const edit = property.capabilities?.edit;
         return (
           <PanelRow
             key={`property:${property.key}`}
-            icon={PROPERTY_TYPE_ICONS[column?.type ?? "text"]}
-            label={property.label}
+            label={
+              schemaColumn && schemaPanel ? (
+                <SchemaPropertyLabel
+                  column={schemaColumn}
+                  readOnly={readOnly}
+                  schemaPanel={schemaPanel}
+                  validation={validation}
+                />
+              ) : (
+                <PanelLabel
+                  icon={PROPERTY_TYPE_ICONS[column?.type ?? "text"]}
+                  label={property.label}
+                />
+              )
+            }
             rowAttributes={{ "data-collection-panel-property": property.key }}
           >
-            {edit && panelRowKind(property, item) === "edit" ? (
+            {edit && kind === "edit" ? (
               <CollectionPropertyEditor
                 column={column}
+                disabled={validation.code === "type_conflict"}
                 edit={edit}
+                invalid={validation.invalid}
                 item={item}
                 property={property}
+                relationContext={schemaPanel?.relationContext}
+                onRequestActors={schemaPanel?.loadActors}
               />
             ) : (
               <CollectionPropertyValue
                 context="detail"
                 property={property as CollectionPropertyDefinition<unknown>}
                 item={item}
+                relationContext={schemaPanel?.relationContext}
               />
             )}
+            {schemaColumn && schemaPanel && validation.invalid && !readOnly ? (
+              <SchemaValueRepair
+                column={schemaColumn}
+                value={readValue(property, item)}
+                schemaPanel={schemaPanel}
+                onAddOption={() => optionDialog.open(schemaColumn)}
+                onClearValue={async () => {
+                  await edit?.update(item, null);
+                }}
+              />
+            ) : null}
           </PanelRow>
         );
       })}
+      {schemaPanel ? (
+        <SchemaOrphanRows
+          readOnly={readOnly}
+          schemaPanel={schemaPanel}
+          renderRow={({ key, label, value }) => (
+            <PanelRow
+              key={`orphan:${key}`}
+              label={label}
+              rowAttributes={{ "data-collection-panel-orphan": key }}
+            >
+              {value}
+            </PanelRow>
+          )}
+        />
+      ) : null}
       {visibleGroups.map((group) => (
         <Fragment key={`group:${group.key}`}>
           {group.label ? (
             <h3
-              className="col-span-2 px-1.5 pt-3 pb-1 text-xs font-medium text-muted-foreground"
+              className="col-span-full px-1.5 pt-3 pb-1 text-xs font-medium text-muted-foreground"
               data-collection-panel-fact-group={group.key}
             >
               {group.label}
@@ -101,8 +203,12 @@ export function CollectionPropertyPanel<Item>({
           {group.facts.map((fact) => (
             <PanelRow
               key={`fact:${group.key}:${fact.key}`}
-              icon={fact.icon ?? factValueIcon(fact.value)}
-              label={fact.label}
+              label={
+                <PanelLabel
+                  icon={fact.icon ?? factValueIcon(fact.value)}
+                  label={fact.label}
+                />
+              }
               rowAttributes={{ "data-collection-panel-fact": fact.key }}
             >
               <FactValue value={fact.value} />
@@ -112,6 +218,25 @@ export function CollectionPropertyPanel<Item>({
       ))}
     </div>
   );
+  if (!schemaPanel) return grid;
+  return (
+    <div className="flex flex-col gap-2">
+      {grid}
+      {addAction}
+      {readOnly ? null : optionDialog.dialog}
+    </div>
+  );
+}
+
+function readValue<Item>(
+  property: CollectionPropertyDefinition<Item>,
+  item: Item,
+): unknown {
+  try {
+    return property.getValue(item);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -121,6 +246,7 @@ export function CollectionPropertyPanel<Item>({
 function panelRowKind<Item>(
   property: CollectionPropertyDefinition<Item>,
   item: Item,
+  { keep, readOnly }: { keep: boolean; readOnly: boolean },
 ): "edit" | "value" | null {
   const applicability = readCollectionPropertyApplicability(
     property as CollectionPropertyDefinition<unknown>,
@@ -128,7 +254,7 @@ function panelRowKind<Item>(
   );
   if (applicability.status === "hidden") return null;
   if (applicability.status === "unavailable") return "value";
-  const edit = property.capabilities?.edit;
+  const edit = readOnly ? undefined : property.capabilities?.edit;
   const hasEditor = Boolean(
     edit && (edit.popover || resolveStandardPropertyColumn(property)),
   );
@@ -139,7 +265,7 @@ function panelRowKind<Item>(
   ) {
     return "edit";
   }
-  if (isEmptyPanelValue(property, item)) return null;
+  if (!keep && isEmptyPanelValue(property, item)) return null;
   return hasEditor ? "edit" : "value";
 }
 
@@ -170,26 +296,36 @@ function isEmptyPanelValue<Item>(
 
 function PanelRow({
   children,
-  icon: Icon,
   label,
   rowAttributes,
 }: {
   children: ReactNode;
-  icon: LucideIcon;
-  label: string;
+  label: ReactNode;
   rowAttributes: Record<string, string>;
 }) {
   return (
     <div className="contents" {...rowAttributes}>
-      <div className="flex min-w-0 items-start gap-1.5 px-1.5 py-1.5 text-sm leading-5 text-muted-foreground">
-        <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-          {label}
-        </span>
-      </div>
+      {label}
       <div className="flex min-w-0 items-start px-2 py-1.5 text-sm leading-5">
         <div className="min-w-0 flex-1">{children}</div>
       </div>
+    </div>
+  );
+}
+
+function PanelLabel({
+  icon: Icon,
+  label,
+}: {
+  icon: LucideIcon;
+  label: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-1.5 px-1.5 py-1.5 text-sm leading-5 text-muted-foreground">
+      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+      <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+        {label}
+      </span>
     </div>
   );
 }

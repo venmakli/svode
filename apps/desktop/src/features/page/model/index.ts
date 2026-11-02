@@ -16,3 +16,4 @@ export {
   pageNameKey,
   findPageNameConflictPath,
 } from "./page-name";
+export { definePageSchemaProperties } from "./page-properties";

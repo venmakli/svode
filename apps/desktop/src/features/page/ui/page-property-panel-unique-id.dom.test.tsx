@@ -27,8 +27,8 @@ if (process.env.SVODE_UNIQUE_ID_DUPLICATE_DOM !== "1") {
   installDomGlobals(dom);
   const { createRoot } = await import("react-dom/client");
   const { mockNativeIpc } = await import("@/platform/native/testing");
-  const { PropertyPanel } = await import("./property-panel");
-  const { validatePropertyValue } = await import("../model/validation");
+  const { PagePropertyPanel } = await import("./page-property-panel");
+  const { validatePropertyValue } = await import("@/features/properties");
   const m = await import("@/paraglide/messages.js");
   const doc = dom.window.document;
 
@@ -76,17 +76,25 @@ if (process.env.SVODE_UNIQUE_ID_DUPLICATE_DOM !== "1") {
     try {
       await act(async () => {
         root.render(
-          <PropertyPanel
+          <PagePropertyPanel
             spacePath="/repo"
             projectPath="/repo"
-            filePath="tasks/a.md"
-            pageLabel="From A"
+            page={{
+              path: "tasks/a.md",
+              body: "",
+              meta: {
+                title: "From A",
+                icon: null,
+                created: "",
+                updated: "",
+                extra: { Key: 3 },
+              },
+            }}
             schemaResult={{
               collectionRootPath: "tasks",
               schema,
               uniqueIdDuplicate: other,
             }}
-            values={{ Key: 3 }}
             onValueChange={async () => undefined}
           />,
         );
