@@ -1855,7 +1855,6 @@
   "agent_actors_delete_reference_diagnostics": "Не удалось проверить файлов рутин: {count}. Показаны только известные ссылки.",
   "agent_actors_delete_retry_scan": "Проверить снова",
   "agent_actors_catalog_unavailable": "Каталог агентов недоступен.",
-  "agent_actors_catalog_read_only": "Каталог агентов открыт только для чтения.",
   "agent_actors_property_stale": "Агент изменился после чтения. Показаны текущие значения: повторите изменение.",
   "agent_actors_new_name": "Новый агент",
   "agent_actors_create_failed": "Не удалось создать агента",

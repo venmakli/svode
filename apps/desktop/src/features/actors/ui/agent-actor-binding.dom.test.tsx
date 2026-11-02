@@ -333,7 +333,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   );
 
   bindingTest(
-    "a changed Agent is a conflict at Agent without a write; a read-only catalog shows the reason at Agent",
+    "a changed Agent is a conflict at Agent without a write; a read-only repository shows the reason at Agent",
     async () => {
       mutateAnswers = [() => ({ status: "stale" })];
       await mount(<Panel items={[item({})]} />);
@@ -350,10 +350,12 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       await mount(
         <Panel
           items={[item({})]}
-          readOnly={m.agent_actors_catalog_read_only()}
+          readOnly={m.repository_work_status_read_only()}
         />,
       );
-      expect(propertyMessage("agent")).toBe(m.agent_actors_catalog_read_only());
+      expect(propertyMessage("agent")).toBe(
+        m.repository_work_status_read_only(),
+      );
       expect((trigger() as HTMLButtonElement).disabled).toBe(true);
       expect((trigger("approval") as HTMLButtonElement).disabled).toBe(true);
       expect(propertyMessage("approval")).toBe(null);

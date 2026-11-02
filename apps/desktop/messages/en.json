@@ -1855,7 +1855,6 @@
   "agent_actors_delete_reference_diagnostics": "{count} routine file(s) could not be checked. Only known references are shown.",
   "agent_actors_delete_retry_scan": "Check again",
   "agent_actors_catalog_unavailable": "The agent catalog is unavailable.",
-  "agent_actors_catalog_read_only": "The agent catalog is open only for reading.",
   "agent_actors_property_stale": "The agent changed since it was read. Its current values are shown: repeat the change.",
   "agent_actors_new_name": "New agent",
   "agent_actors_create_failed": "Could not create the agent",

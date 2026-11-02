@@ -197,37 +197,6 @@ if (process.env.SVODE_AGENT_ACTOR_SCREEN_DOM !== "1") {
   );
 
   screenTest(
-    "an Agent of a catalog open only for reading shows its screen without editing and the reason at Agent",
-    async () => {
-      fingerprints = { "/project": "root" };
-      diagnostics = [
-        {
-          ownerPath: "/repo",
-          code: "catalog_unavailable",
-          message: "UnknownSchema(3)",
-        },
-      ];
-      await mount(REVIEWER);
-      expect(title()).toBe(null);
-      expect(
-        document
-          .querySelector("[data-object-content-header]")
-          ?.textContent?.includes("Reviewer"),
-      ).toBe(true);
-      expect(
-        document.querySelector(
-          '[data-collection-panel-property="agent"] [data-collection-panel-property-message]',
-        )?.textContent,
-      ).toBe(m.agent_actors_catalog_read_only());
-      expect(
-        document.querySelector<HTMLButtonElement>(
-          '[data-collection-property-popover-trigger="agent"]',
-        )?.disabled,
-      ).toBe(true);
-    },
-  );
-
-  screenTest(
     "creating an Agent writes New agent 2 bound to the participant's agent and opens it with focus in its name",
     async () => {
       actors = [

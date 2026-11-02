@@ -14,7 +14,6 @@ import * as m from "@/paraglide/messages.js";
 import type { ActorPeekTarget } from "../model/actor-peek";
 import type {
   AgentActorAgentOption,
-  AgentActorCatalogSnapshot,
   AgentActorItem,
 } from "../model/agent-actor-types";
 import {
@@ -153,18 +152,14 @@ export function useAgentActorsController({
   });
   const requestAccess = accessCoordinator.request;
 
+  // A read-only repository leaves an Agent without editing, with the reason
+  // at "Agent".
   const editState = useCallback(
-    (item: AgentActorItem): CollectionPropertyActionState => {
-      if (readOnly) {
-        return {
-          reason: m.repository_work_status_read_only(),
-          status: "disabled",
-        };
-      }
-      const reason = snapshot ? agentActorReadOnlyReason(snapshot, item) : null;
-      return reason ? { reason, status: "disabled" } : { status: "idle" };
-    },
-    [readOnly, snapshot],
+    (): CollectionPropertyActionState =>
+      readOnly
+        ? { reason: m.repository_work_status_read_only(), status: "disabled" }
+        : { status: "idle" },
+    [readOnly],
   );
   const agents = snapshot?.agents ?? NO_AGENTS;
   const offers = agentFacts.offers;
@@ -358,34 +353,4 @@ export function useAgentActorsController({
     presentationState,
     spaceName,
   };
-}
-
-/**
- * Why an Agent cannot be edited (Stage 11 `04`, 4.I): its catalog is open
- * only for reading, as one of an unknown schema version, with unknown fields
- * or a diagnostic of its source, or its id is ambiguous; null when it can.
- */
-export function agentActorReadOnlyReason(
-  snapshot: AgentActorCatalogSnapshot,
-  item: AgentActorItem,
-): string | null {
-  const diagnostics = snapshot.diagnostics.filter(
-    (diagnostic) => diagnostic.ownerPath === item.ownerPath,
-  );
-  if (
-    diagnostics.some(
-      (diagnostic) =>
-        diagnostic.code === "ambiguous_actor_id" &&
-        diagnostic.message.includes(item.actorRef),
-    )
-  ) {
-    return m.agent_actors_reference_ambiguous();
-  }
-  if (
-    !snapshot.fingerprints[item.ownerPath] ||
-    diagnostics.some((diagnostic) => diagnostic.code === "catalog_unavailable")
-  ) {
-    return m.agent_actors_catalog_read_only();
-  }
-  return null;
 }
