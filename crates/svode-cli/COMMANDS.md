@@ -68,7 +68,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `collection view update --collection --name --patch-file` | `update_collection_view` | yes |
 | `collection view delete --collection --name` | `delete_collection_view` | yes |
 | `content rename --path --to` | `rename_content` | yes |
-| `content move --path --to-parent <dir\|"">` | `move_content` | yes |
+| `content move --path --to-parent <parent\|"">` | `move_content` | yes |
 | `content reorder --parent <dir\|""> --child …` | `reorder_content` | yes |
 | `content convert --path --to leaf` | `convert_page_to_leaf` | yes |
 | `content convert --path --to collection` | `convert_to_collection` | yes |
@@ -114,6 +114,7 @@ Collection create/delete, schema columns and views, content rename/move/reorder/
 
 - Structured input: `--columns-file` and `--views-file` take a JSON array, `--column-file`, `--view-file`, `--patch-file` and `--cover-file` a JSON object, from a file or `-`. A command reads stdin at most once.
 - Ordered lists are repeated flags in their order: `content reorder --child a.md --child b.md` is the complete order of the direct children as `page list` shows them (directory-backed Pages and Collections use their `README.md` path); `space reorder --id a --id b` is the complete order of the child Spaces without `root`.
+- `content move --to-parent` is a folder, Collection or folder Page (its directory or its `README.md`), a leaf Page, or `""` for the Space root. A leaf Page parent first becomes a folder Page `<name>/README.md` with its links, relations and place in the order, and a folder Page the move leaves holding nothing but its `README.md` becomes a leaf again, in the same all-or-nothing operation. The JSON result lists them in `convertedParents` (`oldPath`, `newPath`; empty without a conversion), and their paths are in `changedPaths`. A missing parent fails with `FILE_NOT_FOUND` and no folder is created; a file that is not a Markdown Page, the moved content itself or a path inside it fails with `UNSUPPORTED_MOVE_PARENT`; a taken name fails with `FILE_ALREADY_EXISTS`. A refusal changes nothing.
 - `column delete` keeps stored values unless `--delete-values` is set. `view add --position` counts from 0; the end by default.
 - Destructive targets are exact selectors; there is no confirmation and no `--force`. A rejected command is exit 1 with the code of the shared operation (for example `NOT_A_STANDALONE_PAGE`, `INVALID_COLLECTION_CONVERSION`, `INVALID_SPACE_ORDER`, `REPOSITORY_ACCESS_DENIED`). Reread the structure before trying again.
 - `collection check` is read-only: it reports `errorCount`, `warningCount` and `issuesBySeverity` for relation targets, stored item references and stale order entries of one Collection or of every Collection in the Space. Issues are a result, not a failure (exit 0). Run it after structural files changed outside Svode (by hand, Git or another program).

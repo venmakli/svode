@@ -767,7 +767,8 @@ async fn moving_a_folder_rewrites_relation_schemas_of_nested_collections() {
         runtime(&state),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .new_path;
 
     assert_eq!(moved, "Archive/Area");
     assert_nested_collections_moved(root, "Archive/Area");
@@ -915,7 +916,8 @@ async fn df_154_move_rename_and_conversion_rewrite_percent_encoded_links() {
         runtime(&state),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .new_path;
     assert_eq!(moved, "notes/Roadmap Draft.md");
     assert_eq!(
         fs::read_to_string(root.join("Index.md")).unwrap(),
@@ -1115,7 +1117,8 @@ async fn rename_and_move_register_every_changed_file_in_one_group() {
         runtime(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .new_path;
     assert_eq!(moved, "Zone/Tasks/Sub/Item.md");
     assert!(
         fs::read_to_string(root.join("Decisions/Decision.md"))
@@ -1174,7 +1177,8 @@ async fn a_move_with_unique_ids_registers_the_whole_changed_set_in_one_group() {
         },
     )
     .await
-    .unwrap();
+    .unwrap()
+    .new_path;
 
     assert!(
         fs::read_to_string(root.join("Tasks/Loose.md"))
@@ -1393,7 +1397,7 @@ async fn a_read_only_source_fails_the_operation_without_a_false_recovery() {
                 runtime,
             )
             .await
-            .map(|path| vec![path])
+            .map(|outcome| vec![outcome.new_path])
         };
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -2243,12 +2247,14 @@ async fn df_251_moves_renames_and_conversions_rewrite_and_rebase_definitions() {
     // The moved source rebases its definition like its inline link.
     super::ops::move_page(space, "docs/inner.md", "", Some(space), runtime(&state))
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     assert_eq!(read("inner.md"), "[x](Plan.md)\n\n[r]: Plan.md\n");
 
     super::ops::move_page(space, "Plan.md", "notes", Some(space), runtime(&state))
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     assert_eq!(
         read("Index.md"),
         "[Plan][p]\n\n[p]: notes/Plan.md \"Title\"\n"
@@ -2282,7 +2288,8 @@ async fn df_251_moves_renames_and_conversions_rewrite_and_rebase_definitions() {
     // absolute path.
     super::ops::move_page(space, "Old Notes", "tasks", Some(space), runtime(&state))
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     assert_eq!(
         read("Index.md"),
         "[Plan][p]\n\n[p]: <tasks/Old Notes/Plan.md> \"Title\"\n"

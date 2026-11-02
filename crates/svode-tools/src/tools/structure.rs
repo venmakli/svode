@@ -332,27 +332,18 @@ pub(crate) async fn move_content(
     let to_parent = validate_public_rel_path(&args.to_parent, true)?;
     ensure_inside(Path::new(&space), &from)?;
     ensure_inside(Path::new(&space), &to_parent)?;
-    let file_name = Path::new(&from)
-        .file_name()
-        .ok_or_else(|| ToolError::new("INVALID_PATH", "invalid source path"))?
-        .to_string_lossy();
-    let planned_to = if to_parent.is_empty() {
-        file_name.to_string()
-    } else {
-        format!("{to_parent}/{file_name}")
-    };
     let project = target.project_path.as_str();
     let handles = PageHandles::of(host);
-    let planned = structure::move_mutation_paths(
+    let planned = structure::move_page_mutation_paths(
         handles.runtime.index,
         &space,
         Some(project),
         &from,
-        &planned_to,
+        &to_parent,
     )
     .await?;
     let authorized = authorize(host, &space, planned).await?;
-    let (new_path, changes) = within_authorized(
+    let (moved, mut changes) = within_authorized(
         authorized,
         observe_structural_change(&space, project, async {
             Ok(Box::pin(structure::move_page(
@@ -367,12 +358,12 @@ pub(crate) async fn move_content(
     )
     .await
     .map_err(|error| space_relative_busy(&space, error))?;
-    Ok(structural_operation_result(
-        "Moved content",
-        &from,
-        &new_path,
-        changes,
-    ))
+    changes.include(&space, project, &moved.removed_paths);
+    let mut result = structural_operation_result("Moved content", &from, &moved.new_path, changes);
+    if let Some(structured_content) = result.structured_content.as_mut() {
+        structured_content["convertedParents"] = json!(moved.converted_parents);
+    }
+    Ok(result)
 }
 
 pub(crate) async fn reorder_content(

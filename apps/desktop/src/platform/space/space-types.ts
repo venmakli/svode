@@ -191,3 +191,15 @@ export interface SpaceDirtyEventDto {
   space: string;
   affectsTree?: boolean;
 }
+
+/** A Page a move turned into a folder Page or back into a leaf. */
+export interface ConvertedParentDto {
+  oldPath: string;
+  newPath: string;
+}
+
+/** Result of `move_content`: where the source landed and the parents the move converted. */
+export interface MoveContentResultDto {
+  newPath: string;
+  convertedParents: ConvertedParentDto[];
+}

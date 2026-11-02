@@ -35,6 +35,7 @@ impl From<AppError> for ToolError {
             AppError::DocumentNameConflict(_) => "PAGE_NAME_CONFLICT",
             AppError::TitleRenameRequired { .. } => "TITLE_RENAME_REQUIRED",
             AppError::UnsupportedRenameTarget { .. } => "UNSUPPORTED_RENAME_TARGET",
+            AppError::UnsupportedMoveParent { .. } => "UNSUPPORTED_MOVE_PARENT",
             AppError::Index(_) => "INDEX_ERROR",
             AppError::Db(_) => "DATABASE_ERROR",
             _ => "SVODE_ERROR",

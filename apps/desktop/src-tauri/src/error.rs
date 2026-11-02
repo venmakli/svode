@@ -372,6 +372,7 @@ impl From<svode_core::page::PageError> for AppError {
                 Self::TitleRenameRequired { path, kind }
             }
             PageError::UnsupportedRenameTarget { path } => Self::UnsupportedRenameTarget { path },
+            PageError::UnsupportedMoveParent { path } => Self::UnsupportedMoveParent { path },
             PageError::General(message) => Self::General(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),
@@ -604,6 +605,11 @@ pub enum AppError {
     #[error("{path} cannot be renamed by path: only a folder without a title can")]
     UnsupportedRenameTarget { path: String },
 
+    #[error(
+        "{path} cannot be a move parent: use a folder, a folder Page or its README.md, a leaf Page, or an empty path for the Space root"
+    )]
+    UnsupportedMoveParent { path: String },
+
     #[error("{0}")]
     AgentRuntime(svode_agents::AgentRuntimeError),
 
@@ -664,6 +670,7 @@ impl AppError {
             AppError::TreeOrderUnreadable { .. } => "tree_order_unreadable",
             AppError::TitleRenameRequired { .. } => "title_rename_required",
             AppError::UnsupportedRenameTarget { .. } => "unsupported_rename_target",
+            AppError::UnsupportedMoveParent { .. } => "unsupported_move_parent",
             AppError::AgentRuntime(_) => "agent_runtime",
             AppError::AgentAdapter(_) => "agent_adapter",
             AppError::CustomAgent(_) => "custom_agent",
@@ -711,7 +718,8 @@ impl Serialize for AppError {
             | AppError::SourceStale { path }
             | AppError::TreeOrderUnreadable { path }
             | AppError::TitleRenameRequired { path, .. }
-            | AppError::UnsupportedRenameTarget { path } => {
+            | AppError::UnsupportedRenameTarget { path }
+            | AppError::UnsupportedMoveParent { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
             }
             AppError::GitPublicationBlocked { repository, reason } => {
@@ -885,6 +893,15 @@ mod tests {
         .unwrap();
         assert_eq!(unsupported["kind"], "unsupported_rename_target");
         assert_eq!(unsupported["path"], "photo.png");
+
+        let parent = serde_json::to_value(AppError::from(
+            svode_core::page::PageError::UnsupportedMoveParent {
+                path: "data.txt".into(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(parent["kind"], "unsupported_move_parent");
+        assert_eq!(parent["path"], "data.txt");
     }
 
     #[test]

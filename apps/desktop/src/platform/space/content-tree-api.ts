@@ -1,5 +1,5 @@
 import { invokeCommand } from "@/platform/native/invoke";
-import type { TreeNodeDto } from "./space-types";
+import type { MoveContentResultDto, TreeNodeDto } from "./space-types";
 
 export function treeLoadTargetFailure(
   error: unknown,
@@ -85,7 +85,9 @@ export function moveContentTreeItem(input: {
   toParent: string;
   projectPath: string | null;
 }): Promise<string> {
-  return invokeCommand<string>("move_content", { ...input });
+  return invokeCommand<MoveContentResultDto>("move_content", { ...input }).then(
+    (result) => result.newPath,
+  );
 }
 
 export function renameContentTreeItem(input: {

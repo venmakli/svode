@@ -20,6 +20,8 @@ fn title_write_help(example: &str) -> String {
 
 const CONTENT_RENAME: &str = "Rename is for folders without a title. A Page, Collection item or Collection is renamed by setting its title with `meta set --title` (or `item fields set`); this command refuses it with TITLE_RENAME_REQUIRED and changes nothing. A file, a child Space directory or a system or hidden path is refused with UNSUPPORTED_RENAME_TARGET. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed.";
 
+const CONTENT_MOVE: &str = "--to-parent is a folder, Collection or folder Page (its directory or its README.md), a leaf Page, or \"\" for the Space root. A leaf Page parent first becomes a folder Page <name>/README.md, with its links, relations and place in the order; a folder Page the move leaves holding nothing but its README.md becomes a leaf again, in the same operation. The JSON result lists them in convertedParents (oldPath, newPath), and their paths are in changedPaths. A missing parent fails with FILE_NOT_FOUND and no folder is created; a file that is not a Markdown Page, the moved content itself or a path inside it fails with UNSUPPORTED_MOVE_PARENT; a taken name fails with FILE_ALREADY_EXISTS. A refusal changes nothing.";
+
 const BODY_WRITE: &str = "Safe cycle: read the source with --json and keep its sourceVersion, edit the body, then write the whole result with --source-version <token>. If the source changed after your read, the write fails with SOURCE_STALE and writes nothing: read it again and reapply your change to the current text. SOURCE_BUSY means another Svode operation is writing the same repository: retry later. The result carries the sourceVersion of the written source for the next write. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git; never delete or hand-repair .svode metadata.\n\nWith file access, edit the text below the frontmatter with your own tools instead and keep the frontmatter unchanged; this command is the path for clients without file access.";
 
 fn body_write_help(example: &str) -> String {
@@ -723,7 +725,7 @@ pub enum ContentVerb {
     #[command(after_help = format!("{CONTENT_RENAME}\n\n{}", structural_help("svode --project ~/Notes content rename --path notes/drafts --to notes/archive")))]
     Rename(ContentRenameArgs),
     /// Move a Page, folder or Collection under another parent.
-    #[command(after_help = structural_help("svode --project ~/Notes content move --path notes/Plan.md --to-parent archive"))]
+    #[command(after_help = format!("{CONTENT_MOVE}\n\n{}", structural_help("svode --project ~/Notes content move --path notes/Plan.md --to-parent archive")))]
     Move(ContentMoveArgs),
     /// Set the complete order of the direct children of one parent.
     #[command(after_help = structural_help("svode --project ~/Notes content reorder --parent archive --child archive/b.md --child archive/a.md"))]
@@ -749,8 +751,10 @@ pub struct ContentMoveArgs {
     /// Existing Page, folder or Collection relative to the selected Space.
     #[arg(long, value_name = "RELATIVE")]
     pub path: String,
-    /// Destination parent directory; `""` for the Space root.
-    #[arg(long, value_name = "DIR")]
+    /// Destination parent: a folder, Collection, folder Page or its
+    /// README.md, or a leaf Page, which becomes a folder Page; `""` for the
+    /// Space root.
+    #[arg(long, value_name = "PARENT")]
     pub to_parent: String,
 }
 

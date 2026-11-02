@@ -225,3 +225,32 @@ fn rename_help_routes_pages_and_collections_to_a_title_change() {
     assert!(content.contains("UNSUPPORTED_RENAME_TARGET"), "{content}");
     assert!(!content.contains("keeps its old title"), "{content}");
 }
+
+/// Help of `content move` names the parents it accepts, the conversions of
+/// a leaf parent and of the folder Page left behind, and its refusals.
+#[test]
+fn move_help_names_parents_conversions_and_refusals() {
+    let empty = tempfile::tempdir().unwrap();
+    let output = svode(empty.path(), &["content", "move", "--help"]);
+    let help = String::from_utf8(output.stdout).unwrap();
+    for phrase in [
+        "--to-parent <PARENT>",
+        "a leaf Page",
+        "becomes a folder Page",
+        "becomes a leaf again",
+        "convertedParents",
+        "FILE_NOT_FOUND",
+        "UNSUPPORTED_MOVE_PARENT",
+        "FILE_ALREADY_EXISTS",
+    ] {
+        assert!(help.contains(phrase), "{phrase}: {help}");
+    }
+    let reference = include_str!("../COMMANDS.md");
+    for phrase in [
+        "`content move --to-parent` is a folder",
+        "`convertedParents`",
+        "`UNSUPPORTED_MOVE_PARENT`",
+    ] {
+        assert!(reference.contains(phrase), "{phrase}");
+    }
+}

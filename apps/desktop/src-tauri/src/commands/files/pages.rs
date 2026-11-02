@@ -490,27 +490,18 @@ pub async fn move_content(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<String, AppError> {
-    let file_name = Path::new(&from)
-        .file_name()
-        .ok_or_else(|| AppError::General("invalid source path".to_string()))?
-        .to_string_lossy();
-    let to = if to_parent.is_empty() {
-        file_name.to_string()
-    } else {
-        format!("{to_parent}/{file_name}")
-    };
+) -> Result<MoveContentCommandResult, AppError> {
     let authorized_paths = require_page_move_mutation_plan(
         &app,
         &index_state,
         &space,
         project_path.as_deref(),
         &from,
-        &to,
+        &to_parent,
     )
     .await?;
     let _changing = crate::navigation::path_change(&space);
-    let new_path = scope_authorized_mutation_paths(authorized_paths, async {
+    let moved = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::move_page(
             &space,
             &from,
@@ -523,8 +514,12 @@ pub async fn move_content(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &from, &new_path);
-    Ok(new_path)
+    crate::navigation::artifact_moved(&app, &space, &from, &moved.new_path);
+    // The parents the move converted follow like a conversion of their own.
+    for converted in &moved.converted_parents {
+        crate::navigation::artifact_moved(&app, &space, &converted.old_path, &converted.new_path);
+    }
+    Ok(moved)
 }
 
 #[tauri::command]

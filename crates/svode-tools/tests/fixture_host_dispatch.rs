@@ -3729,3 +3729,113 @@ async fn deep_pages_of_a_collection_take_page_tools_unless_nested_items_is_set()
     let page = call("read_page", json!({ "path": "tasks/b/note.md" })).await;
     assert_eq!(error_code(&page), "NOT_A_STANDALONE_PAGE");
 }
+
+/// move_content under a Page (DF-296): a leaf Page parent becomes a folder
+/// Page and the folder Page the source leaves becomes a leaf in one
+/// operation reported in convertedParents; the admission covers the
+/// repositories of the conversions; a parent the move cannot use is refused
+/// with a stable code before any write.
+#[tokio::test]
+async fn move_content_under_a_page_converts_its_parents_and_refuses_unusable_parents() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    fs::create_dir_all(project.join("child/.git")).unwrap();
+    write(&project.join("child/links.md"), "[Leaf](../leaf.md)\n");
+    write(&project.join("data.txt"), "data");
+    write(&project.join("hub/image.png"), "image");
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let call = async |from: &str, to_parent: &str| {
+        call_tool(
+            &host,
+            Some(&target),
+            "move_content",
+            json!({ "from": from, "toParent": to_parent }),
+        )
+        .await
+    };
+    let before = source_snapshot(project);
+
+    for (from, to_parent, code) in [
+        ("notes.md", "Nope/Deep", "FILE_NOT_FOUND"),
+        ("notes.md", "Missing", "FILE_NOT_FOUND"),
+        ("notes.md", "data.txt", "UNSUPPORTED_MOVE_PARENT"),
+        ("leaf.md", "leaf.md", "UNSUPPORTED_MOVE_PARENT"),
+        ("drafts", "drafts", "UNSUPPORTED_MOVE_PARENT"),
+        ("drafts", "drafts/plan.md", "UNSUPPORTED_MOVE_PARENT"),
+        ("notes.md", "hub.md", "FILE_ALREADY_EXISTS"),
+    ] {
+        let refused = call(from, to_parent).await;
+        assert_eq!(error_code(&refused), code, "{from} → {to_parent}");
+        let message = refused.structured_content.as_ref().unwrap()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if code == "UNSUPPORTED_MOVE_PARENT" {
+            assert!(message.contains("leaf Page"), "{message}");
+            assert!(message.contains("README.md"), "{message}");
+        }
+        assert_eq!(source_snapshot(project), before, "{from} → {to_parent}");
+    }
+
+    // The conversion of the leaf rewrites a link in the child repository:
+    // its refusal refuses the whole move before the first write.
+    *host.denied_repositories.lock().unwrap() = vec![project.join("child")];
+    let refused = call("notes.md", "leaf.md").await;
+    assert_eq!(error_code(&refused), "REPOSITORY_ACCESS_DENIED");
+    assert_eq!(source_snapshot(project), before);
+    host.denied_repositories.lock().unwrap().clear();
+    host.authorized.lock().unwrap().clear();
+
+    let moved = call("notes.md", "leaf.md").await;
+    let moved = structured(&moved);
+    assert_eq!(moved["oldPath"], "notes.md");
+    assert_eq!(moved["newPath"], "leaf/notes.md");
+    assert_eq!(
+        moved["convertedParents"],
+        json!([{ "oldPath": "leaf.md", "newPath": "leaf/README.md" }])
+    );
+    for path in ["leaf.md", "leaf/README.md", "leaf/notes.md", "notes.md"] {
+        assert!(
+            changed(moved).contains(&path.to_string()),
+            "{path}: {moved}"
+        );
+    }
+    assert!(read(&fixture, "child/links.md").contains("../leaf/README.md"));
+    assert!(host.authorized().contains(&project.join("child")));
+
+    // Through a folder README into a folder Page: the folder Page `leaf`
+    // that the source leaves becomes a leaf again.
+    let moved = call("leaf/notes.md", "solo/README.md").await;
+    let moved = structured(&moved);
+    assert_eq!(moved["newPath"], "solo/notes.md");
+    assert_eq!(
+        moved["convertedParents"],
+        json!([{ "oldPath": "leaf/README.md", "newPath": "leaf.md" }])
+    );
+    assert!(changed(moved).contains(&"leaf.md".to_string()));
+    assert!(!project.join("leaf").exists());
+
+    // Out of a folder Page with only service files left: they go with it.
+    let moved = call("solo/notes.md", "").await;
+    let moved = structured(&moved);
+    assert_eq!(
+        moved["convertedParents"],
+        json!([{ "oldPath": "solo/README.md", "newPath": "solo.md" }])
+    );
+    for path in [
+        "solo.md",
+        "solo/README.md",
+        "solo/.gitkeep",
+        "solo/.DS_Store",
+    ] {
+        assert!(
+            changed(moved).contains(&path.to_string()),
+            "{path}: {moved}"
+        );
+    }
+
+    // A move without a conversion reports none.
+    let plain = call("notes.md", "archive").await;
+    assert_eq!(structured(&plain)["convertedParents"], json!([]));
+}

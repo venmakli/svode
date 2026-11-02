@@ -520,7 +520,8 @@ async fn only_new_items_receive_schema_defaults_and_unique_ids() {
     };
     let moved = move_page(space, "Loose.md", "tasks/b", Some(space), runtime())
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     assert_eq!(moved, "tasks/b/Loose.md");
     assert_eq!(
         fs::read_to_string(root.join(&moved)).unwrap(),
@@ -528,7 +529,8 @@ async fn only_new_items_receive_schema_defaults_and_unique_ids() {
     );
     let moved = move_page(space, &moved, "tasks", Some(space), runtime())
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     let moved = fs::read_to_string(root.join(moved)).unwrap();
     assert!(
         moved.contains("Status: Todo") && moved.contains("Key: 6"),

@@ -450,6 +450,100 @@ fn a_held_repository_of_the_touched_set_is_busy_until_it_is_released() {
 }
 
 #[cfg(unix)]
+/// `content move` under a Page (DF-296): the cases of the live probe with
+/// their new results through the real binary and `--json`.
+#[test]
+fn content_move_under_a_page_converts_its_parents_and_refuses_unusable_parents() {
+    let Some((_temp, root)) = project() else {
+        return;
+    };
+    let root = &root;
+    write(&root.join("archive.md"), "---\ntitle: Archive page\n---\n");
+    let before = sources(root);
+    for (path, to_parent, expected) in [
+        ("ideas.md", "Nope/Deep", "FILE_NOT_FOUND"),
+        ("ideas.md", "Missing", "FILE_NOT_FOUND"),
+        ("ideas.md", "tasks/schema.yaml", "UNSUPPORTED_MOVE_PARENT"),
+        ("ideas.md", "ideas.md", "UNSUPPORTED_MOVE_PARENT"),
+        ("drafts", "drafts", "UNSUPPORTED_MOVE_PARENT"),
+        ("drafts", "drafts/plan.md", "UNSUPPORTED_MOVE_PARENT"),
+        ("ideas.md", "archive.md", "FILE_ALREADY_EXISTS"),
+    ] {
+        let (exit, value) = json(
+            root,
+            &["content", "move", "--path", path, "--to-parent", to_parent],
+            None,
+        );
+        assert_eq!(exit, 1, "{path} → {to_parent}: {value}");
+        assert_eq!(code(&value), expected, "{path} → {to_parent}");
+        assert_eq!(sources(root), before, "{path} → {to_parent}");
+    }
+
+    // Into a leaf Page: it becomes a folder Page, and its links in the
+    // inline and the independent child Spaces follow it.
+    let moved = ok(
+        root,
+        &[
+            "content",
+            "move",
+            "--path",
+            "ideas.md",
+            "--to-parent",
+            "drafts/plan.md",
+        ],
+    );
+    assert_eq!(moved["newPath"], "drafts/plan/ideas.md");
+    assert_eq!(
+        moved["convertedParents"],
+        json!([{ "oldPath": "drafts/plan.md", "newPath": "drafts/plan/README.md" }])
+    );
+    let changed = strings(&moved["changedPaths"]);
+    for path in [
+        "drafts/plan.md",
+        "drafts/plan/README.md",
+        "drafts/plan/ideas.md",
+    ] {
+        assert!(changed.contains(path), "{path}: {moved}");
+    }
+    assert!(text(root, "notes.md").contains("(drafts/plan/README.md)"));
+    assert!(text(root, "child/ref.md").contains("(../drafts/plan/README.md)"));
+
+    // The last child out: the folder Page becomes a leaf again.
+    let back = ok(
+        root,
+        &[
+            "content",
+            "move",
+            "--path",
+            "drafts/plan/ideas.md",
+            "--to-parent",
+            "",
+        ],
+    );
+    assert_eq!(back["newPath"], "ideas.md");
+    assert_eq!(
+        back["convertedParents"],
+        json!([{ "oldPath": "drafts/plan/README.md", "newPath": "drafts/plan.md" }])
+    );
+    assert!(root.join("drafts/plan.md").is_file() && !root.join("drafts/plan").exists());
+    assert!(text(root, "child/ref.md").contains("(../drafts/plan.md)"));
+
+    // A folder README names its folder; no conversion, none reported.
+    let plain = ok(
+        root,
+        &[
+            "content",
+            "move",
+            "--path",
+            "ideas.md",
+            "--to-parent",
+            "archive/README.md",
+        ],
+    );
+    assert_eq!(plain["newPath"], "archive/ideas.md");
+    assert_eq!(plain["convertedParents"], json!([]));
+}
+
 #[test]
 fn a_link_rewrite_that_fails_rolls_the_whole_rename_back() {
     use std::os::unix::fs::PermissionsExt;

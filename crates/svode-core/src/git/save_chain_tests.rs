@@ -353,7 +353,8 @@ async fn rename_move_and_folder_relocations_commit_from_the_final_folder() {
     assert_eq!(fixture.rename("Page.md", "Plan").await, "Plan.md");
     let moved = structure::move_page(root, "Plan.md", "Area", Some(root), fixture.structure())
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     assert_eq!(moved, "Area/Plan.md");
     let converted = structure::convert_to_folder(root, &moved, Some(root), fixture.structure())
         .await
@@ -634,7 +635,8 @@ async fn a_scoped_save_after_a_structural_rename_or_move_leaves_a_clean_status()
         fixture.structure(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .new_path;
     assert_eq!(moved, "Zone/Tasks/Sub/Item.md");
     fixture.save(Some(&[&moved])).await.expect("move save");
     assert_eq!(status().await, "");
@@ -793,7 +795,8 @@ async fn unique_id_allocated_by_move_and_duplicate_stays_pending_until_a_manual_
 
     let moved = structure::move_page(root, "Loose.md", "Tasks", Some(root), runtime())
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     let duplicated = structure::duplicate(root, "Tasks/Item.md", Some(root), runtime())
         .await
         .unwrap()

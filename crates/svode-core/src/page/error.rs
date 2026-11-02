@@ -46,6 +46,10 @@ pub enum PageError {
     TitleRenameRequired { path: String, kind: TitledContent },
     #[error("{path} cannot be renamed by path: only a folder without a title can")]
     UnsupportedRenameTarget { path: String },
+    #[error(
+        "{path} cannot be a move parent: use a folder, a folder Page or its README.md, a leaf Page, or an empty path for the Space root"
+    )]
+    UnsupportedMoveParent { path: String },
     #[error("{0}")]
     General(String),
     #[error(transparent)]

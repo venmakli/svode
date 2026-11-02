@@ -1301,7 +1301,8 @@ async fn shared_move_nest_and_unnest_use_the_structural_owner() {
     let moved =
         crate::structure::move_page(space, "Page.md", "target", None, &state, updates(), None)
             .await
-            .unwrap();
+            .unwrap()
+            .new_path;
     assert_eq!(moved, "target/Page.md");
 
     let nested = crate::structure::nest(space, &moved, None, &state, updates(), None)

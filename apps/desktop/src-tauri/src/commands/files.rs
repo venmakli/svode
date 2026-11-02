@@ -109,6 +109,10 @@ pub struct ChangeSchemaTypeResult {
 
 pub type ConvertToCollectionCommandResult = crate::structure::ConvertToCollectionOutcome;
 
+/// The path the moved source lands on and the parents the move converted
+/// (`newPath`, `convertedParents`).
+pub type MoveContentCommandResult = crate::structure::MovePageOutcome;
+
 fn property_type_message(type_: PropertyType) -> &'static str {
     match type_ {
         PropertyType::Text => "text",
@@ -224,10 +228,16 @@ async fn require_page_move_mutation_plan(
     space: &str,
     project_path: Option<&str>,
     from: &str,
-    to: &str,
+    to_parent: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
-    let paths =
-        crate::structure::move_mutation_paths(index_state, space, project_path, from, to).await?;
+    let paths = crate::structure::move_page_mutation_paths(
+        index_state,
+        space,
+        project_path,
+        from,
+        to_parent,
+    )
+    .await?;
     require_planned_mutation_paths(app, space, paths).await
 }
 

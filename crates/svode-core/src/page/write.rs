@@ -152,6 +152,7 @@ pub(crate) struct SourceSnapshot {
     files: BTreeMap<PathBuf, Option<Vec<u8>>>,
     roots: Option<(PathBuf, PathBuf)>,
     created_dirs: Vec<PathBuf>,
+    removed_dirs: Vec<PathBuf>,
 }
 
 /// Whether `path` names an existing directory entry with exactly this name, so a
@@ -182,6 +183,7 @@ impl SourceSnapshot {
             files,
             roots,
             created_dirs: Vec::new(),
+            removed_dirs: Vec::new(),
         })
     }
 
@@ -198,8 +200,21 @@ impl SourceSnapshot {
         }
     }
 
+    /// A directory the operation removes: the rollback recreates it before it
+    /// moves or writes anything back into it.
+    pub(crate) fn track_removed_dir(&mut self, path: PathBuf) {
+        if !self.removed_dirs.contains(&path) {
+            self.removed_dirs.push(path);
+        }
+    }
+
     pub(crate) fn rollback(&self, cause: PageError) -> PageError {
         let mut failed = Vec::new();
+        for dir in &self.removed_dirs {
+            if fs::create_dir_all(dir).is_err() {
+                failed.push(dir.display().to_string());
+            }
+        }
         if let Some((old, new)) = &self.roots {
             if !present_as_named(old) && present_as_named(new) && fs::rename(new, old).is_err() {
                 failed.extend([old.display().to_string(), new.display().to_string()]);

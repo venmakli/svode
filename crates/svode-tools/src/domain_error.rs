@@ -120,6 +120,15 @@ fn unsupported_rename_target(path: String) -> ToolError {
     )
 }
 
+fn unsupported_move_parent(path: String) -> ToolError {
+    ToolError::new(
+        "UNSUPPORTED_MOVE_PARENT",
+        format!(
+            "{path} cannot be the parent of this move and nothing changed: move_content moves under a folder, Collection or folder Page (or its README.md), under a leaf Page, which becomes a folder Page first, or to the Space root with an empty toParent; not under a file that is not a Markdown Page, the moved content itself or a path inside it."
+        ),
+    )
+}
+
 fn name_conflict() -> ToolError {
     ToolError::new(
         "PAGE_NAME_CONFLICT",
@@ -332,6 +341,7 @@ impl From<PageError> for ToolError {
             PageError::SourceStale { path } => source_refused("SOURCE_STALE", message, path),
             PageError::TitleRenameRequired { path, kind } => title_rename_required(path, kind),
             PageError::UnsupportedRenameTarget { path } => unsupported_rename_target(path),
+            PageError::UnsupportedMoveParent { path } => unsupported_move_parent(path),
             PageError::General(message) => general(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),

@@ -173,7 +173,8 @@ async fn a_created_page_moved_and_edited_closes_when_the_user_leaves_it() {
         .unwrap();
     let moved = structure::move_page(root, &created, "Docs", Some(root), fixture.structure())
         .await
-        .unwrap();
+        .unwrap()
+        .new_path;
     assert_eq!(moved, "Docs/Untitled.md");
     stays_open(&fixture).await;
 

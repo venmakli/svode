@@ -176,7 +176,10 @@ test("dragging the folder of an open App or Collection without README into anoth
   const env = await environment((command, args) => {
     if (command === "move_content") {
       if (fail) throw { kind: "io", message: "Move failed" };
-      return `${String(args.toParent)}/${String(args.from).split("/").pop()}`;
+      return {
+        newPath: `${String(args.toParent)}/${String(args.from).split("/").pop()}`,
+        convertedParents: [],
+      };
     }
     if (command === "list_tree_children") return [];
     return null;
@@ -254,7 +257,10 @@ test("structural operations over a Space count as finished only after the open c
         .current!.getState()
         .treePathMutationsSettled(spacePath)
         .then(() => shownWhenSettled.push(env.shown()));
-      return `${String(args.toParent)}/${String(args.from).split("/").pop()}`;
+      return {
+        newPath: `${String(args.toParent)}/${String(args.from).split("/").pop()}`,
+        convertedParents: [],
+      };
     }
     if (command === "rename_content") {
       void useSpaceStoreRef

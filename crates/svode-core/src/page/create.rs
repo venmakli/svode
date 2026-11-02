@@ -424,11 +424,40 @@ fn resolve_parent(
     let Some(requested) = requested else {
         return Ok((None, None));
     };
+    match resolve_page_parent(space, requested)? {
+        PageParent::Directory(directory) => Ok((Some(directory), None)),
+        PageParent::Leaf { leaf, folder } => Ok((Some(folder.clone()), Some((leaf, folder)))),
+        PageParent::NotPage(_) => Err(not_a_markdown_parent()),
+    }
+}
+
+/// Parent directory a Page operation puts content under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PageParent {
+    /// An existing directory; empty for the Space root.
+    Directory(String),
+    /// The leaf Page `leaf` that first becomes the folder Page `folder`.
+    Leaf { leaf: String, folder: String },
+    /// An existing file that is not a Markdown Page.
+    NotPage(String),
+}
+
+/// The refusal of a create under a file that is not a Markdown Page.
+pub(crate) fn not_a_markdown_parent() -> PageError {
+    PageError::General("parent Page must be Markdown".into())
+}
+
+/// Resolve the requested parent of a create or a move: an existing directory
+/// is the parent as is; a leaf Page `X.md`, or `X` when only `X.md` exists,
+/// becomes the folder Page `X`. A leaf whose folder name a sibling takes
+/// portably is refused before any write, and a path that names nothing is
+/// `FileNotFound`.
+pub(crate) fn resolve_page_parent(space: &str, requested: &str) -> Result<PageParent, PageError> {
     let root = Path::new(space);
     let requested_path = Path::new(requested);
     let direct = root.join(requested_path);
-    if direct.is_dir() {
-        return Ok((Some(requested.to_string()), None));
+    if requested.is_empty() || direct.is_dir() {
+        return Ok(PageParent::Directory(requested.to_string()));
     }
     let leaf = if direct.is_file() {
         requested.to_string()
@@ -447,19 +476,24 @@ fn resolve_parent(
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
     {
-        return Err(PageError::General("parent Page must be Markdown".into()));
+        return Ok(PageParent::NotPage(leaf));
     }
     let stem = Path::new(&leaf)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .ok_or_else(|| PageError::General("parent Page has an invalid filename".into()))?;
     let base = Path::new(&leaf).parent().unwrap_or(Path::new(""));
-    let parent = if base.as_os_str().is_empty() {
+    let folder = if base.as_os_str().is_empty() {
         stem.to_string()
     } else {
         format!("{}/{stem}", base.to_string_lossy())
     };
-    Ok((Some(parent.clone()), Some((leaf, parent))))
+    // The leaf becomes a directory of this name: a sibling that takes it
+    // portably refuses the operation before its first write.
+    if store::name_taken_portably(&root.join(&folder), None)? {
+        return Err(PageError::FileAlreadyExists(folder));
+    }
+    Ok(PageParent::Leaf { leaf, folder })
 }
 
 #[cfg(not(test))]

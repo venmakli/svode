@@ -1282,6 +1282,10 @@ pub fn move_page_with_project(
 
     let abs_to = space.join(&new_rel);
 
+    // A move never creates its parent: a missing one refuses it unchanged.
+    if !space.join(to_parent).is_dir() {
+        return Err(PageError::FileNotFound(to_parent.to_string()));
+    }
     if name_taken_portably(&abs_to, None)? {
         return Err(PageError::FileAlreadyExists(new_rel));
     }
@@ -1303,11 +1307,6 @@ pub fn move_page_with_project(
                     .collect::<Vec<String>>()
             })
             .unwrap_or_default();
-
-    // Ensure target parent directory exists
-    if let Some(parent_dir) = abs_to.parent() {
-        fs::create_dir_all(parent_dir)?;
-    }
 
     fs::rename(&abs_from, &abs_to)?;
     update_order_after_move(space, from, &new_rel, from_is_dir, &target_sibling_order)?;
@@ -1674,13 +1673,21 @@ pub(crate) fn dir_readme_name(dir: &Path) -> Option<String> {
         .find(|name| name.eq_ignore_ascii_case("README.md"))
 }
 
-/// Turn a folder Page that holds nothing but itself into a leaf. Returns the
-/// leaf and the service files removed with the folder.
-pub fn convert_page_to_leaf(
-    space: &Path,
-    page_path: &str,
-    backlink_index: Option<&BacklinkIndex>,
-) -> Result<(Page, Vec<String>), PageError> {
+/// A folder Page that can become a leaf: the checks of
+/// [`convert_page_to_leaf`] passed, nothing is written yet.
+struct LeafConversion {
+    path: String,
+    readme_abs: PathBuf,
+    folder_abs: PathBuf,
+    folder_name: String,
+    leaf_abs: PathBuf,
+    contents: PageDirContents,
+}
+
+/// Checks that the folder Page `page_path` can become a leaf: a folder
+/// `README.md` without `schema.yaml`, whose directory holds nothing that
+/// blocks it, and whose leaf name is free.
+fn leaf_conversion(space: &Path, page_path: &str) -> Result<LeafConversion, PageError> {
     let path = normalize_page_path_arg(space, page_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
@@ -1694,14 +1701,15 @@ pub fn convert_page_to_leaf(
     }
     let folder_abs = readme_abs
         .parent()
-        .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
+        .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?
+        .to_path_buf();
     if folder_abs.join("schema.yaml").exists() {
         return Err(PageError::General(
             "EntryNotEmpty { entries: [], folders: [], other: [\"schema.yaml\"] }".to_string(),
         ));
     }
 
-    let contents = PageDirContents::read(folder_abs)?;
+    let contents = PageDirContents::read(&folder_abs)?;
     if contents.is_blocked() {
         return Err(contents.not_empty_error());
     }
@@ -1709,7 +1717,8 @@ pub fn convert_page_to_leaf(
     let folder_name = folder_abs
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| PageError::General("invalid folder name".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid folder name".to_string()))?
+        .to_string();
     let parent_abs = folder_abs
         .parent()
         .ok_or_else(|| PageError::General("folder has no parent".to_string()))?;
@@ -1717,6 +1726,53 @@ pub fn convert_page_to_leaf(
     if name_taken_portably(&leaf_abs, None)? {
         return Err(PageError::FileAlreadyExists(rel_from_abs(space, &leaf_abs)));
     }
+    Ok(LeafConversion {
+        path,
+        readme_abs,
+        folder_abs,
+        folder_name,
+        leaf_abs,
+        contents,
+    })
+}
+
+/// Whether [`convert_page_to_leaf`] would turn the folder Page `page_path`
+/// into a leaf now. A refusal is `false`; a file system failure is returned.
+pub(crate) fn converts_to_leaf(space: &Path, page_path: &str) -> Result<bool, PageError> {
+    match leaf_conversion(space, page_path) {
+        Ok(_) => Ok(true),
+        Err(PageError::Io(error)) => Err(PageError::Io(error)),
+        Err(_) => Ok(false),
+    }
+}
+
+/// The service files of a folder Page directory that its conversion to a
+/// leaf removes with the directory.
+pub(crate) fn folder_page_service_files(folder: &Path) -> Result<Vec<PathBuf>, PageError> {
+    Ok(PageDirContents::read(folder)?
+        .service_files
+        .into_iter()
+        .map(|name| folder.join(name))
+        .collect())
+}
+
+/// Turn a folder Page that holds nothing but itself into a leaf. Returns the
+/// leaf and the service files removed with the folder.
+pub fn convert_page_to_leaf(
+    space: &Path,
+    page_path: &str,
+    backlink_index: Option<&BacklinkIndex>,
+) -> Result<(Page, Vec<String>), PageError> {
+    let LeafConversion {
+        path,
+        readme_abs,
+        folder_abs,
+        folder_name,
+        leaf_abs,
+        contents,
+    } = leaf_conversion(space, page_path)?;
+    let folder_abs = folder_abs.as_path();
+    let folder_name = folder_name.as_str();
     fs::rename(&readme_abs, &leaf_abs)?;
     let (removed, removal) = RemovedPageDir::remove(folder_abs, &contents.service_files);
     if let Err(error) = removal {

@@ -22,11 +22,13 @@ use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource, dedupe_modified
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
 use crate::page::PageError;
+use crate::page::create::{PageParent, not_a_markdown_parent, resolve_page_parent};
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, Page};
 use crate::page::write::{SourceSnapshot, mapped_path};
 
 use super::commit::{StructuralCommitSink, schedule_structural_paths};
+use super::move_parent::MovePlan;
 use super::naming::{
     abs_page_path, basename, collection_schema_path, collection_schema_path_rel,
     grouped_abs_paths_by_space, normalize_rel_lossy, order_path, page_commit_name, page_entity,
@@ -496,39 +498,11 @@ pub(crate) fn resolved_create_parent(
     let Some(requested) = requested.map(str::trim).filter(|path| !path.is_empty()) else {
         return Ok((None, false));
     };
-    let root = Path::new(space);
-    let direct = root.join(requested);
-    if direct.is_dir() {
-        return Ok((Some(requested.to_string()), false));
+    match resolve_page_parent(space, requested)? {
+        PageParent::Directory(directory) => Ok((Some(directory), false)),
+        PageParent::Leaf { folder, .. } => Ok((Some(folder), true)),
+        PageParent::NotPage(_) => Err(not_a_markdown_parent()),
     }
-    let leaf = if direct.is_file() {
-        requested.to_string()
-    } else if Path::new(requested).extension().is_none() {
-        let candidate = format!("{requested}.md");
-        if root.join(&candidate).is_file() {
-            candidate
-        } else {
-            return Err(PageError::FileNotFound(requested.to_string()));
-        }
-    } else {
-        return Err(PageError::FileNotFound(requested.to_string()));
-    };
-    let stem = Path::new(&leaf)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .ok_or_else(|| PageError::General("parent Page has an invalid filename".into()))?;
-    let base = Path::new(&leaf).parent().unwrap_or(Path::new(""));
-    let parent = if base.as_os_str().is_empty() {
-        stem.to_string()
-    } else {
-        format!("{}/{stem}", base.to_string_lossy())
-    };
-    // The leaf parent becomes a directory of this name: a sibling that takes
-    // it portably refuses the create before its first write.
-    if store::name_taken_portably(&root.join(&parent), None)? {
-        return Err(PageError::FileAlreadyExists(parent));
-    }
-    Ok((Some(parent), true))
 }
 
 /// Structural history the steps of a compound operation register, held back
@@ -949,6 +923,17 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<ConvertToLeafOutcome, PageError> {
+    convert_to_leaf_of(space, file_path, project_path, runtime, OperationId::next()).await
+}
+
+/// [`convert_to_leaf`] as a step of the structural operation `operation`.
+async fn convert_to_leaf_of<E: GitDateExecutor>(
+    space: &str,
+    file_path: &str,
+    project_path: Option<&str>,
+    runtime: StructureRuntime<'_, E>,
+    operation: OperationId,
+) -> Result<ConvertToLeafOutcome, PageError> {
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
@@ -968,10 +953,10 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
         .strip_suffix(".md")
         .map(|root| format!("{root}/README.md"))
         .unwrap_or_else(|| converted.path.clone());
-    let change = StructuralChange::new(StructuralOp::ConvertToLeaf(page_history_commit_name(
-        space,
-        &converted.path,
-    )))
+    let change = StructuralChange::of(
+        operation,
+        StructuralOp::ConvertToLeaf(page_history_commit_name(space, &converted.path)),
+    )
     .relocating(page_relocation(space, &old_readme, &converted.path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
@@ -1268,39 +1253,69 @@ pub async fn rename<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Vec<String>, PageError> {
     super::rename_target::ensure_renamable_folder(space, from, to)?;
-    apply_move(space, from, Some(to), None, project_path, runtime)
+    apply_move(space, from, MoveTo::Rename(to), project_path, runtime)
         .await
         .map(|outcome| outcome.modified_paths)
 }
 
+/// A Page a move turned into a folder Page or back into a leaf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertedParent {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+/// A source moved under a new parent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovePageOutcome {
+    pub new_path: String,
+    /// The leaf Page parent that became a folder Page, then the folder Page
+    /// the source left that became a leaf; empty without conversions.
+    pub converted_parents: Vec<ConvertedParent>,
+    /// Service files removed with the directory of the folder Page that
+    /// became a leaf.
+    #[serde(skip)]
+    pub removed_paths: Vec<PathBuf>,
+}
+
+/// Move `from` under the requested `to_parent`, resolved by the parent rule
+/// of Page create. A leaf Page parent first becomes a folder Page, and the
+/// folder Page the source leaves becomes a leaf when nothing else keeps it a
+/// folder. The conversions and the move are one operation: one snapshot,
+/// one rollback and history registered together.
 pub async fn move_page<E: GitDateExecutor>(
     space: &str,
     from: &str,
     to_parent: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<String, PageError> {
-    apply_move(space, from, None, Some(to_parent), project_path, runtime)
+) -> Result<MovePageOutcome, PageError> {
+    let plan = super::move_parent::plan_move(space, from, to_parent)?;
+    apply_move(space, from, MoveTo::Parent(&plan), project_path, runtime)
         .await
-        .map(|outcome| outcome.new_path)
+        .map(|outcome| MovePageOutcome {
+            new_path: outcome.new_path,
+            converted_parents: outcome.converted_parents,
+            removed_paths: outcome.removed_paths,
+        })
+}
+
+/// Where a structural move puts its source.
+#[derive(Clone, Copy)]
+enum MoveTo<'a> {
+    /// A rename by path in the same parent.
+    Rename(&'a str),
+    /// A move under a resolved parent, with its parent conversions.
+    Parent(&'a MovePlan),
 }
 
 struct MoveOutcome {
     new_path: String,
     modified_paths: Vec<String>,
-}
-
-/// Path a move of `from` under `to_parent` lands on.
-fn moved_path(from: &str, to_parent: &str) -> Result<String, PageError> {
-    let name = Path::new(from)
-        .file_name()
-        .ok_or_else(|| PageError::General("invalid source path".to_string()))?
-        .to_string_lossy();
-    Ok(if to_parent.is_empty() {
-        name.to_string()
-    } else {
-        format!("{to_parent}/{name}")
-    })
+    converted_parents: Vec<ConvertedParent>,
+    removed_paths: Vec<PathBuf>,
 }
 
 /// Markdown sources and Collection schemas of a moved tree, which its links,
@@ -1337,11 +1352,7 @@ fn moved_tree_sources(path: &Path) -> Result<Vec<PathBuf>, PageError> {
 
 /// Snapshot of every file a rename or move of `from` to `to`, or the
 /// conversion of the leaf `from` into the folder Page `to`, may write, taken
-/// before its first write: the files of its authorization plan (the
-/// directories it authorizes hold no source of their own), the sidebar
-/// order, the moved tree, the schemas of the destination Collections that
-/// allocate unique ids and, without a Project, the relation and Space-local
-/// link sources the plan does not list. Returns the captured paths too.
+/// before its first write. Returns the captured paths too.
 async fn move_snapshot(
     state: &IndexRuntimeState,
     backlinks: &BacklinkIndex,
@@ -1350,6 +1361,28 @@ async fn move_snapshot(
     from: &str,
     to: &str,
 ) -> Result<(SourceSnapshot, Vec<PathBuf>), PageError> {
+    let root = Path::new(space);
+    let paths = move_snapshot_paths(state, backlinks, space, project_path, from, to).await?;
+    Ok((
+        SourceSnapshot::capture(&paths, Some((root.join(from), root.join(to))))?,
+        paths,
+    ))
+}
+
+/// Every file a relocation of `from` to `to` may write, keyed by its path
+/// before the relocation: the files of its authorization plan (the
+/// directories it authorizes hold no source of their own), the sidebar
+/// order, the moved tree, the schemas of the destination Collections that
+/// allocate unique ids and, without a Project, the relation and Space-local
+/// link sources the plan does not list.
+async fn move_snapshot_paths(
+    state: &IndexRuntimeState,
+    backlinks: &BacklinkIndex,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+) -> Result<Vec<PathBuf>, PageError> {
     let root = Path::new(space);
     let roots = (root.join(from), root.join(to));
     let before_move = (roots.1.clone(), roots.0.clone());
@@ -1384,61 +1417,158 @@ async fn move_snapshot(
         .collect::<Vec<_>>();
     paths.sort();
     paths.dedup();
-    Ok((SourceSnapshot::capture(&paths, Some(roots))?, paths))
+    Ok(paths)
 }
 
-/// Rename or move `from`: every step after the first write runs under one
-/// snapshot, so the operation applies all its effects or restores the
-/// touched set and returns the cause. History is registered only for the
-/// files that actually changed, grouped by the Space that owns them.
+/// The cause a failed conversion step returns: the operation snapshot holds
+/// what the step changed, so its rollback reports what stays changed.
+fn conversion_step_cause(error: PageError) -> PageError {
+    match error {
+        PageError::Recovery { cause, .. } => PageError::General(cause),
+        error => error,
+    }
+}
+
+/// Rename or move `from`, with the parent conversions of a move: every step
+/// after the first write runs under one snapshot, so the operation applies
+/// all its effects or restores the touched set and returns the cause.
+/// History is registered once everything succeeded, only for the files that
+/// actually changed, grouped by the Space that owns them, and every step
+/// shares one operation identity.
 async fn apply_move<E: GitDateExecutor>(
     space: &str,
     from: &str,
-    rename_to: Option<&str>,
-    to_parent: Option<&str>,
+    to: MoveTo<'_>,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<MoveOutcome, PageError> {
     let state = runtime.index;
-    let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
-    let was_dir = Path::new(space).join(from).is_dir();
+    let root = Path::new(space);
+    let backlinks = state.backlinks_for_space_dir(root).await;
+    let was_dir = root.join(from).is_dir();
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, from, was_dir).await?;
-    let planned = match rename_to {
-        Some(to) => to.to_string(),
-        None => moved_path(from, to_parent.unwrap_or_default())?,
+    let (rename_to, plan, planned) = match to {
+        MoveTo::Rename(to) => (Some(to), None, to),
+        MoveTo::Parent(plan) => (None, Some(plan), plan.planned.as_str()),
     };
-    let (snapshot, captured) =
-        move_snapshot(state, &backlinks, space, project_path, from, &planned).await?;
+    let mut captured =
+        move_snapshot_paths(state, &backlinks, space, project_path, from, planned).await?;
+    if let Some(plan) = plan {
+        for (old, new) in plan.conversions() {
+            captured.extend(
+                move_snapshot_paths(state, &backlinks, space, project_path, &old, &new).await?,
+            );
+        }
+        if let Some(folder) = plan.old_parent_dir() {
+            captured.extend(store::folder_page_service_files(&root.join(folder))?);
+        }
+        captured.sort();
+        captured.dedup();
+    }
+    let mut snapshot =
+        SourceSnapshot::capture(&captured, Some((root.join(from), root.join(planned))))?;
+    let operation = OperationId::next();
+    let held = runtime.commits.map(HeldCommits::new);
+    let steps = StructureRuntime {
+        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
+        ..runtime
+    };
+    let mut converted_parents = Vec::new();
+    let mut removed_paths = Vec::new();
+    let mut target_converted = false;
     let applied = async {
+        if let Some(plan) = plan
+            && let Some(leaf) = plan.target_leaf.as_deref()
+        {
+            target_converted = true;
+            let folder = root.join(&plan.parent);
+            let page = match convert_to_folder_with_publication(
+                space,
+                leaf,
+                project_path,
+                steps,
+                true,
+                operation,
+            )
+            .await
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    // A directory that already has the name is not this move's.
+                    if !matches!(&error, PageError::FileAlreadyExists(path) if *path == plan.parent)
+                    {
+                        snapshot.track_created(folder.join("README.md"));
+                        snapshot.track_created_dir(folder);
+                    }
+                    return Err(conversion_step_cause(error));
+                }
+            };
+            snapshot.track_created(root.join(&page.path));
+            snapshot.track_created_dir(folder);
+            converted_parents.push(ConvertedParent {
+                old_path: leaf.to_string(),
+                new_path: page.path,
+            });
+            #[cfg(test)]
+            crate::page::write::checkpoint("move_parent_folder")?;
+        }
         let new_path = move_sources(
             space,
             from,
             rename_to,
-            to_parent,
+            plan.map(|plan| plan.parent.as_str()),
             project_path,
-            runtime,
+            steps,
             &backlinks,
             was_dir,
         )
         .await?;
         let unique_id_paths = if rename_to.is_none() {
-            engine::unique_id_mutation_paths_for_item_tree(Path::new(space), &new_path)?
+            engine::unique_id_mutation_paths_for_item_tree(root, &new_path)?
         } else {
             Vec::new()
         };
-        Ok::<_, PageError>((
-            new_path,
-            unique_id_paths,
-            snapshot.changes()?,
-            snapshot.rewritten()?,
-        ))
+        let changed = snapshot.changes()?;
+        let rewritten = snapshot.rewritten()?;
+        let left = plan.and_then(|plan| {
+            Some((
+                plan.old_parent.as_deref()?,
+                plan.old_parent_dir()?,
+                plan.old_parent_leaf()?,
+            ))
+        });
+        if let Some((readme, folder, leaf)) = left
+            && store::converts_to_leaf(root, readme)?
+        {
+            snapshot.track_removed_dir(root.join(folder));
+            let converted =
+                match convert_to_leaf_of(space, readme, project_path, steps, operation).await {
+                    Ok(converted) => converted,
+                    Err(error) => {
+                        // A leaf that already has the name is not this move's.
+                        if !matches!(&error, PageError::FileAlreadyExists(path) if *path == leaf) {
+                            snapshot.track_created(root.join(&leaf));
+                        }
+                        return Err(conversion_step_cause(error));
+                    }
+                };
+            snapshot.track_created(root.join(&converted.page.path));
+            converted_parents.push(ConvertedParent {
+                old_path: readme.to_string(),
+                new_path: converted.page.path,
+            });
+            removed_paths = converted.removed_paths;
+            #[cfg(test)]
+            crate::page::write::checkpoint("move_parent_leaf")?;
+        }
+        Ok::<_, PageError>((new_path, unique_id_paths, changed, rewritten))
     }
     .await;
     let (new_path, unique_id_paths, changed, rewritten) = match applied {
         Ok(applied) => applied,
         Err(error) => {
-            let wrote = snapshot.relocated();
+            let wrote = target_converted || snapshot.relocated();
             let error = snapshot.rollback(error);
             if wrote {
                 republish_after_rollback(runtime, project_path, space, &captured).await;
@@ -1446,12 +1576,18 @@ async fn apply_move<E: GitDateExecutor>(
             return Err(error);
         }
     };
+    if let Some(held) = held {
+        held.release();
+    }
 
-    let change = StructuralChange::new(if rename_to.is_some() {
-        page_rename_op(space, from, &new_path)
-    } else {
-        StructuralOp::Move(page_commit_name(space, &new_path))
-    })
+    let change = StructuralChange::of(
+        operation,
+        if rename_to.is_some() {
+            page_rename_op(space, from, &new_path)
+        } else {
+            StructuralOp::Move(page_commit_name(space, &new_path))
+        },
+    )
     .relocating(page_relocation(space, from, &new_path));
     if let Some(commits) = runtime.commits {
         for (owner, mut paths) in grouped_abs_paths_by_space(project_path, space, &changed) {
@@ -1502,6 +1638,8 @@ async fn apply_move<E: GitDateExecutor>(
     Ok(MoveOutcome {
         new_path,
         modified_paths,
+        converted_parents,
+        removed_paths,
     })
 }
 

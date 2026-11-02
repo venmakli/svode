@@ -110,7 +110,7 @@ async function environment(page = PAGE) {
       if (command === "move_content") {
         const to = `${String(input.toParent)}/${String(input.from).split("/").pop()}`;
         await leave(String(input.from), to);
-        return to;
+        return { newPath: to, convertedParents: [] };
       }
       if (command === "update_page_field") {
         const from = String(input.filePath).replace(/\/README\.md$/, "");

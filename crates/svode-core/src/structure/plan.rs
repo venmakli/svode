@@ -42,6 +42,26 @@ pub async fn move_mutation_paths(
     Ok(paths)
 }
 
+/// Touched set of a move of `from` under the requested `to_parent`: the move
+/// itself and the conversions of a leaf Page parent and of the folder Page
+/// the source leaves. A parent the move refuses is refused before planning.
+pub async fn move_page_mutation_paths(
+    state: &IndexRuntimeState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to_parent: &str,
+) -> Result<Vec<PathBuf>, PageError> {
+    let plan = super::move_parent::plan_move(space, from, to_parent)?;
+    let mut paths = move_mutation_paths(state, space, project_path, from, &plan.planned).await?;
+    for (old, new) in plan.conversions() {
+        paths.extend(move_mutation_paths(state, space, project_path, &old, &new).await?);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 /// Touched set of a rename by path, planned only for a folder without a
 /// title: any other target is refused before planning.
 pub async fn rename_mutation_paths(

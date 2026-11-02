@@ -18,12 +18,12 @@ use svode_core::git::cli::GitCli;
 pub use svode_core::structure::delete_mutation_paths;
 pub use svode_core::structure::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, DeleteOutcome,
-    abs_page_path, basename, order_path, page_commit_name, page_entity, page_history_name,
-    page_in_sensitive_collection, page_paths_with_order, root_path_for_head,
+    MovePageOutcome, abs_page_path, basename, order_path, page_commit_name, page_entity,
+    page_history_name, page_in_sensitive_collection, page_paths_with_order, root_path_for_head,
 };
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,
-    move_mutation_paths as core_move_mutation_paths,
+    move_page_mutation_paths as core_move_page_mutation_paths,
     rename_mutation_paths as core_rename_mutation_paths,
 };
 
@@ -99,14 +99,14 @@ fn runtime<'a>(
     }
 }
 
-pub async fn move_mutation_paths(
+pub async fn move_page_mutation_paths(
     state: &IndexState,
     space: &str,
     project_path: Option<&str>,
     from: &str,
-    to: &str,
+    to_parent: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
-    Ok(core_move_mutation_paths(&state.core, space, project_path, from, to).await?)
+    Ok(core_move_page_mutation_paths(&state.core, space, project_path, from, to_parent).await?)
 }
 
 pub async fn rename_mutation_paths(
@@ -273,7 +273,7 @@ pub async fn move_page(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
+) -> Result<MovePageOutcome, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::move_page(
