@@ -15,7 +15,8 @@ export type DocumentFormatDto =
   | "pptm"
   | "odt"
   | "ods"
-  | "odp";
+  | "odp"
+  | "html";
 
 export interface DocumentSourceDescriptorDto {
   format: DocumentFormatDto;

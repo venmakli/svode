@@ -17,7 +17,8 @@ export type DocumentFormat =
   | "pptm"
   | "odt"
   | "ods"
-  | "odp";
+  | "odp"
+  | "html";
 
 /** A file of a Space, by its path inside it. */
 export interface SpaceDocumentTarget {
@@ -34,7 +35,10 @@ export interface SpaceDocumentTarget {
  * file and validates the external open.
  */
 export interface LocalDocumentFile {
-  /** The file's path, for its name and format. */
+  /**
+   * The file's path, for its name and format; absolute for an HTML file,
+   * which is served from its directory.
+   */
   path: string;
   inspect(): Promise<DocumentSourceDescriptor>;
   read(expectedGeneration: string): Promise<Uint8Array>;
@@ -229,6 +233,9 @@ export function documentFormatFromPath(path: string): DocumentFormat | null {
     case "ods":
     case "odp":
       return extension;
+    case "html":
+    case "htm":
+      return "html";
     default:
       return null;
   }

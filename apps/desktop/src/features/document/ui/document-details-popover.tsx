@@ -26,10 +26,13 @@ import type {
 export function DocumentDetailsPopover({
   source,
   parts,
+  path,
 }: {
   source: DocumentSourceDescriptor;
   /** Absent until a viewer has loaded the document. */
   parts: DocumentPartCount | null;
+  /** The file's path, for a document that names it. */
+  path?: string;
 }) {
   return (
     <Popover>
@@ -76,6 +79,16 @@ export function DocumentDetailsPopover({
               }).format(new Date(source.modifiedAt))}
             </time>
           </dd>
+          {path ? (
+            <>
+              <dt className="text-muted-foreground">
+                {m.document_details_path()}
+              </dt>
+              <dd className="break-all text-right" title={path}>
+                {path}
+              </dd>
+            </>
+          ) : null}
         </dl>
       </PopoverContent>
     </Popover>

@@ -636,7 +636,9 @@ fn classify_attachment_invalidations(
             kind: AttachmentInvalidationKind::Page,
         }];
     }
-    if crate::attachments::source::classify_binary_path(path).is_some() {
+    if crate::attachments::source::classify_binary_path(path).is_some()
+        || svode_core::attachments::format::is_html_path(path)
+    {
         return vec![AttachmentInvalidation {
             owner_path: parent,
             path: relative,

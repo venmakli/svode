@@ -3,7 +3,14 @@ import { expect, test } from "bun:test";
 import { probeDocumentTarget } from "./document-probe";
 
 test("document probe recognizes preview and external-only formats", () => {
-  for (const path of ["guide.pdf", "brief.DOCX", "table.xls", "slides.pptm"]) {
+  for (const path of [
+    "guide.pdf",
+    "brief.DOCX",
+    "table.xls",
+    "slides.pptm",
+    "reports/dash.html",
+    "old.HTM",
+  ]) {
     const result = probeDocumentTarget({
       path,
       sourceShape: "file",

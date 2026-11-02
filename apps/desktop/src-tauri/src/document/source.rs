@@ -34,6 +34,7 @@ pub(crate) enum DocumentFormat {
     Odt,
     Ods,
     Odp,
+    Html,
 }
 
 impl DocumentFormat {
@@ -53,6 +54,7 @@ impl DocumentFormat {
             "odt" => Some(Self::Odt),
             "ods" => Some(Self::Ods),
             "odp" => Some(Self::Odp),
+            "html" | "htm" => Some(Self::Html),
             _ => None,
         }
     }
@@ -63,6 +65,8 @@ impl DocumentFormat {
             Self::Docx => Some(DOCX_SOURCE_LIMIT),
             Self::Xlsx => Some(XLSX_SOURCE_LIMIT),
             Self::Pptx => Some(PPTX_SOURCE_LIMIT),
+            // Read for its source view; the page itself is served (Stage 11 `06`).
+            Self::Html => Some(super::html::HTML_DOCUMENT_LIMIT),
             Self::Doc
             | Self::Xls
             | Self::Ppt
@@ -412,6 +416,25 @@ mod tests {
             read_document_source(temp.path(), None, "guide.pdf", &descriptor.generation).unwrap();
         assert_eq!(bytes, b"%PDF fixture");
         assert_eq!(descriptor.format, DocumentFormat::Pdf);
+    }
+
+    #[test]
+    fn an_html_document_is_read_for_its_source_view() {
+        let temp = tempfile::tempdir().unwrap();
+        write_project(temp.path());
+        fs::write(temp.path().join("report.HTM"), b"<p>report").unwrap();
+        let descriptor = inspect_document_source(temp.path(), None, "report.HTM")
+            .unwrap()
+            .descriptor;
+        assert_eq!(descriptor.format, DocumentFormat::Html);
+        assert_eq!(
+            serde_json::to_value(descriptor.format).unwrap(),
+            serde_json::json!("html")
+        );
+        assert_eq!(
+            read_document_source(temp.path(), None, "report.HTM", &descriptor.generation).unwrap(),
+            b"<p>report"
+        );
     }
 
     #[test]

@@ -258,6 +258,7 @@ async fn list_owner_snapshot(
     root_schema_routing: bool,
 ) -> Result<AttachmentsSnapshot, AppError> {
     let (mut items, diagnostics) = scan_mixed_children(
+        &owner.space_path,
         &owner.owner_path,
         &owner.owner_relative_path,
         root_schema_routing,
@@ -303,16 +304,18 @@ fn scan_direct_children(
     owner_path: &Path,
     owner_relative_path: &str,
 ) -> Result<(Vec<AttachmentItem>, Vec<AttachmentSourceDiagnostic>), AppError> {
-    scan_mixed_children(owner_path, owner_relative_path, true)
+    scan_mixed_children(owner_path, owner_path, owner_relative_path, true)
 }
 
 fn scan_mixed_children(
+    space_root: &Path,
     owner_path: &Path,
     owner_relative_path: &str,
     root_schema_routing: bool,
 ) -> Result<(Vec<AttachmentItem>, Vec<AttachmentSourceDiagnostic>), AppError> {
     let owner_has_schema = root_schema_routing && has_direct_schema(owner_path);
     let owner_has_app = is_regular_source(&owner_path.join("app.yaml"));
+    let inside_app = is_inside_app(space_root, owner_path);
     let registered_spaces = child_folder_names(owner_path);
     let mut entries = fs::read_dir(owner_path)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
@@ -434,7 +437,7 @@ fn scan_mixed_children(
                 owner_path: Some(owner_path),
                 source_path,
                 has_app,
-                has_children: has_mixed_child_hint(&path),
+                has_children: has_mixed_child_hint(&path, inside_app || has_app),
                 icon,
                 source_shape: SourceShape::Directory,
                 kind,
@@ -491,7 +494,7 @@ fn scan_mixed_children(
             continue;
         }
 
-        let Some((kind, availability)) = classify_binary_extension(&extension) else {
+        let Some((kind, availability)) = classify_attachment_file(&path, inside_app) else {
             continue;
         };
         items.push(AttachmentItem {
@@ -509,7 +512,12 @@ fn scan_mixed_children(
             } else {
                 AttachmentKind::Media
             },
-            format: extension,
+            // `.htm` is the HTML format too.
+            format: if is_html_path(&path) {
+                "html".to_string()
+            } else {
+                extension
+            },
             availability,
             display_name: name,
             modified: modified_time(&metadata),
@@ -520,9 +528,11 @@ fn scan_mixed_children(
     Ok((items, diagnostics))
 }
 
+use svode_core::attachments::format::{classify_attachment_file, is_html_path, is_inside_app};
 pub(crate) use svode_core::attachments::format::{classify_binary_extension, classify_binary_path};
 
-fn has_mixed_child_hint(directory: &Path) -> bool {
+/// `inside_app`: `directory` is an App directory or lies inside one.
+fn has_mixed_child_hint(directory: &Path, inside_app: bool) -> bool {
     let Ok(entries) = fs::read_dir(directory) else {
         return true;
     };
@@ -554,7 +564,7 @@ fn has_mixed_child_hint(directory: &Path) -> bool {
                 .path()
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-                || classify_binary_path(&entry.path()).is_some())
+                || classify_attachment_file(&entry.path(), inside_app).is_some())
     })
 }
 
@@ -674,10 +684,12 @@ mod tests {
             ("app/collection/schema.yaml", "invalid"),
             ("app/notes.md", "Notes"),
             ("app/photo.png", "binary"),
+            ("app/index.html", "<p>"),
+            ("app/semantic/page.html", "<p>"),
         ] {
             fs::write(root.join(path), body).unwrap();
         }
-        let items = scan_mixed_children(&root.join("app"), "app", false)
+        let items = scan_mixed_children(root, &root.join("app"), "app", false)
             .unwrap()
             .0;
         assert_eq!(
@@ -693,10 +705,10 @@ mod tests {
                 "app/semantic/readme.md"
             ]
         );
-        assert!(has_mixed_child_hint(&root.join("app")));
-        assert!(!has_mixed_child_hint(&root.join("app/nested")));
+        assert!(has_mixed_child_hint(&root.join("app"), true));
+        assert!(!has_mixed_child_hint(&root.join("app/nested"), true));
         assert!(
-            scan_mixed_children(&root.join("app/semantic"), "app/semantic", false)
+            scan_mixed_children(root, &root.join("app/semantic"), "app/semantic", false)
                 .unwrap()
                 .0[0]
                 .path
@@ -717,14 +729,14 @@ mod tests {
         fs::remove_file(root.join("app/public/README.md")).unwrap();
         assert!(list_attachment_branch(owner(), "app/public").await.is_err());
         fs::write(root.join("app/schema.yaml"), "invalid: [").unwrap();
-        let routed = scan_mixed_children(&root.join("app"), "app", true)
+        let routed = scan_mixed_children(root, &root.join("app"), "app", true)
             .unwrap()
             .0;
         assert!(!routed.iter().any(|item| item.kind == AttachmentKind::Page));
         assert!(routed.iter().any(|item| item.path == "app/photo.png"));
         assert!(routed.iter().any(|item| item.path == "app/nested"));
         assert!(
-            scan_mixed_children(&root.join("app"), "app", false)
+            scan_mixed_children(root, &root.join("app"), "app", false)
                 .unwrap()
                 .0
                 .iter()
@@ -739,12 +751,71 @@ mod tests {
         fs::create_dir_all(root.join("src/deep")).unwrap();
         fs::write(root.join("app.yaml"), "invalid").unwrap();
         fs::write(root.join("src/deep/README.md"), "not traversed").unwrap();
-        assert!(scan_mixed_children(root, ".", false).unwrap().0.is_empty());
-        assert!(!has_mixed_child_hint(root));
+        assert!(
+            scan_mixed_children(root, root, ".", false)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        fs::write(root.join("index.html"), "<p>").unwrap();
+        assert!(
+            scan_mixed_children(root, root, ".", false)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert!(!has_mixed_child_hint(root, true));
         fs::write(root.join("asset.pdf"), "binary").unwrap();
         fs::write(root.join(".gitignore"), "asset.pdf").unwrap();
-        assert!(has_mixed_child_hint(root));
-        assert_eq!(scan_mixed_children(root, ".", false).unwrap().0.len(), 1);
+        assert!(has_mixed_child_hint(root, true));
+        assert_eq!(
+            scan_mixed_children(root, root, ".", false).unwrap().0.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn html_outside_an_app_is_a_document() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("reports")).unwrap();
+        fs::create_dir_all(root.join("dashboard/public")).unwrap();
+        fs::write(root.join("report.HTML"), "<p>report").unwrap();
+        fs::write(root.join("reports/old.htm"), "<p>").unwrap();
+        fs::write(root.join("dashboard/app.yaml"), "runtime: static").unwrap();
+        fs::write(root.join("dashboard/public/index.html"), "<p>").unwrap();
+
+        let items = scan_mixed_children(root, root, ".", false).unwrap().0;
+        let report = items
+            .iter()
+            .find(|item| item.path == "report.HTML")
+            .unwrap();
+        assert_eq!(report.kind, AttachmentKind::Document);
+        assert_eq!(report.format, "html");
+        assert_eq!(report.size_bytes, Some(9));
+        let reports = items.iter().find(|item| item.path == "reports").unwrap();
+        assert!(reports.has_children);
+        let old = scan_mixed_children(root, &root.join("reports"), "reports", false)
+            .unwrap()
+            .0;
+        assert_eq!(
+            (old[0].path.as_str(), old[0].format.as_str()),
+            ("reports/old.htm", "html")
+        );
+        assert_eq!(old[0].kind, AttachmentKind::Document);
+        // The files of an App and of its subdirectories are not Documents.
+        assert!(
+            scan_mixed_children(
+                root,
+                &root.join("dashboard/public"),
+                "dashboard/public",
+                false
+            )
+            .unwrap()
+            .0
+            .is_empty()
+        );
+        assert!(!has_mixed_child_hint(&root.join("dashboard/public"), true));
     }
 
     fn write_config(path: &Path, spaces: Option<Vec<SpaceRef>>) {

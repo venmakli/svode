@@ -25,8 +25,11 @@ import * as m from "@/paraglide/messages.js";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 
 import { useDocumentSession } from "../hooks/use-document-session";
+import { HtmlDocumentSurface } from "../html/html-document-surface";
 import {
+  documentFormatFromPath,
   documentPartCount,
+  documentTargetKey,
   normalizeRuntimePath,
   type DocumentFailure,
   type DocumentTarget,
@@ -38,13 +41,7 @@ import { PdfViewer } from "../pdf/pdf-viewer";
 import { XlsxViewer } from "../xlsx/xlsx-viewer";
 import { PptxViewer } from "../pptx/pptx-viewer";
 
-export function DocumentSurface({
-  changes,
-  onClose,
-  onOpenFullPage,
-  renderMainHeader,
-  ...source
-}: {
+interface DocumentSurfaceChrome {
   /** The "Changes" of the file in the peek top bar. */
   changes?: ReactNode;
   /** Shows the document in a peek, with the peek top bar ending in ×. */
@@ -56,18 +53,27 @@ export function DocumentSurface({
     viewTools?: ReactNode;
     openWith: OpenWithGroup;
   }) => ReactNode;
-} & (
-  | {
-      path: string;
-      projectPath: string;
-      spaceId: string | null;
-      spacePath: string;
-    }
-  | {
-      /** A file outside the Space, only to view it; keep the same object. */
-      file: LocalDocumentFile;
-    }
-)) {
+}
+
+export function DocumentSurface({
+  changes,
+  onClose,
+  onOpenFullPage,
+  renderMainHeader,
+  ...source
+}: DocumentSurfaceChrome &
+  (
+    | {
+        path: string;
+        projectPath: string;
+        spaceId: string | null;
+        spacePath: string;
+      }
+    | {
+        /** A file outside the Space, only to view it; keep the same object. */
+        file: LocalDocumentFile;
+      }
+  )) {
   const file = "file" in source ? source.file : null;
   const { path, projectPath, spaceId, spacePath } =
     "file" in source
@@ -89,8 +95,30 @@ export function DocumentSurface({
           },
     [file, path, projectPath, spaceId, spacePath],
   );
-  const session = useDocumentSession(target);
+  const chrome = { changes, onClose, onOpenFullPage, renderMainHeader };
   const title = documentDisplayName(target.path);
+  return documentFormatFromPath(target.path) === "html" ? (
+    <HtmlDocumentSurface
+      key={documentTargetKey(target)}
+      target={target}
+      title={title}
+      {...chrome}
+    />
+  ) : (
+    <PreviewDocumentSurface target={target} title={title} {...chrome} />
+  );
+}
+
+/** A document its viewer renders from its bytes: PDF and Office. */
+function PreviewDocumentSurface({
+  target,
+  title,
+  changes,
+  onClose,
+  onOpenFullPage,
+  renderMainHeader,
+}: DocumentSurfaceChrome & { target: DocumentTarget; title: string }) {
+  const session = useDocumentSession(target);
   const openFullPage = onOpenFullPage
     ? async () => {
         await session.prepareFullPageHandoff();
