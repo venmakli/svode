@@ -72,6 +72,7 @@ import { detailNotice, detailText, ItemDetail } from "./item-detail";
 import { LiveTurnEnd, LiveTurnMarker } from "./live-turn-marker";
 import { TurnChangedFiles } from "./turn-changed-files";
 import { TurnGallery } from "./turn-gallery";
+import { TurnWebPreviews } from "./turn-web-previews";
 import { TurnRail } from "./turn-rail";
 import * as m from "@/paraglide/messages.js";
 
@@ -184,14 +185,17 @@ function TurnView({
         />
       </MessageScrollerItem>
     ) : null;
-  // The gallery of created media, then the changed files end the turn,
-  // folded or open: after the agent's last message and whatever followed
-  // it (`08` R2, DF-180 R4).
+  // The gallery of created media, «Веб-превью» of its HTML files, then the
+  // changed files end the turn, folded or open: after the agent's last
+  // message and whatever followed it (`08` R2, DF-180 R4, Stage 11 `06`).
   const galleryRow =
     !turn.live && turnCreatedMediaCount(turn) > 0 ? (
       <TurnGallery key={`gallery:${turn.id}`} session={session} turn={turn} />
     ) : null;
   const changes = turnChanges(turn);
+  const webPreviewsRow = changes ? (
+    <TurnWebPreviews key={`web-previews:${turn.id}`} changes={changes} />
+  ) : null;
   const changesRow = changes ? (
     <MessageScrollerItem key={changedFilesKey(turn)}>
       <TurnChangedFiles
@@ -222,7 +226,7 @@ function TurnView({
     );
     if (summary && summary.afterId === entry.id) rows.push(summaryRow);
   }
-  rows.push(galleryRow, changesRow);
+  rows.push(galleryRow, webPreviewsRow, changesRow);
   return <>{rows}</>;
 }
 

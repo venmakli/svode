@@ -2705,6 +2705,7 @@
   "sessions_chat_changed_files": "Files changed: {count}",
   "sessions_chat_changed_file_diff": "Changes of {name} in this turn",
   "sessions_chat_changed_file_removed": "File deleted",
+  "sessions_chat_web_preview": "Web preview",
   "sessions_chat_changed_file_created": "Created",
   "sessions_chat_changed_file_modified": "Changed",
   "sessions_chat_changed_file_deleted": "Deleted",
