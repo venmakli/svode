@@ -34,6 +34,7 @@ const own: AgentActorItem = {
   name: "Documentation Agent",
   ownerLabel: "docs",
   ownerPath: "/repo/docs",
+  version: "v1",
 };
 const inherited: AgentActorItem = {
   ...own,
@@ -57,16 +58,14 @@ const participant: AgentActorItem = {
   name: "Mine",
 };
 
-test("Agent Actors uses the fixed schema and one shared edit/delete descriptor set", async () => {
+test("Agent Actors uses the fixed schema and one shared delete descriptor", async () => {
   const calls: string[] = [];
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: {
       createState: { status: "idle" },
       getDeleteState: () => ({ status: "idle" }),
-      getEditState: () => ({ status: "idle" }),
       onAdd: () => calls.push("add"),
       onDelete: (item) => calls.push(`delete:${item.ownerPath}`),
-      onEdit: (item) => calls.push(`edit:${item.ownerPath}`),
     },
     agents,
     facts,
@@ -99,13 +98,12 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
     descriptor.layout.kind === "list" && descriptor.layout.visibleProperties,
   ).toEqual(["agent", "status", "space"]);
   expect(descriptor.itemActions?.map((action) => action.id)).toEqual([
-    "edit-agent",
     "delete-agent",
   ]);
   await descriptor.create?.intents[0]?.run();
   for (const action of descriptor.itemActions ?? [])
     await action.run(inherited);
-  expect(calls).toEqual(["add", "edit:/repo", "delete:/repo"]);
+  expect(calls).toEqual(["add", "delete:/repo"]);
 });
 
 test("Agent Actors show the agent with its model, the device mode in the agent's words and the readiness", () => {
@@ -191,10 +189,8 @@ test("Agent Actors rows lead with the shared rounded agent avatar", () => {
     actions: {
       createState: { status: "idle" },
       getDeleteState: () => ({ status: "idle" }),
-      getEditState: () => ({ status: "idle" }),
       onAdd: () => undefined,
       onDelete: () => undefined,
-      onEdit: () => undefined,
     },
     agents,
     facts,
@@ -295,9 +291,7 @@ function disabledActions() {
   return {
     createState: state,
     getDeleteState: () => state,
-    getEditState: () => state,
     onAdd: () => undefined,
     onDelete: () => undefined,
-    onEdit: () => undefined,
   };
 }

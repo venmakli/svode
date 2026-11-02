@@ -12,17 +12,29 @@ import {
 } from "@/features/collection";
 import { AgentAvatar } from "@/features/identity";
 import type { SpaceNameResolver } from "@/features/space";
+import type { ReactNode } from "react";
+
 import {
   defineComputedCollectionProperty,
+  defineOwnerDefinedCollectionProperty,
   defineSpaceCollectionProperty,
   defineTitleCollectionProperty,
+  type CollectionPropertyActionState,
   type CollectionPropertyDefinition,
+  type CollectionPropertyEdit,
+  type CollectionPropertyOwnPopoverEditorInput,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
-import { compareAgentActorsByDefault } from "../model/agent-actor-draft";
+import {
+  agentActorBindingEdit,
+  compareAgentActorsByDefault,
+} from "../model/agent-actor-draft";
 import type { AgentActorFacts } from "../model/agent-actor-facts";
-import type { AgentActorItem } from "../model/agent-actor-types";
+import type {
+  AgentActorBindingEdit,
+  AgentActorItem,
+} from "../model/agent-actor-types";
 import {
   AGENT_ACTOR_READINESS,
   agentActorAgentValue,
@@ -33,15 +45,28 @@ import {
 export interface AgentActorsPresentationActions {
   createState: CollectionActionState;
   getDeleteState(item: AgentActorItem): CollectionActionState;
-  getEditState(item: AgentActorItem): CollectionActionState;
   onAdd(): void;
   onDelete(item: AgentActorItem): void;
-  onEdit(item: AgentActorItem): void;
+}
+
+/**
+ * The editing of an Agent's "Agent" and "Approval mode" (Stage 11 `04`,
+ * 4.I): one popover of the binding, saved whole when it closes.
+ */
+export interface AgentActorsPresentationEditing {
+  /** Whether the binding can change; a disabled reason shows at "Agent". */
+  getState(item: AgentActorItem): CollectionPropertyActionState;
+  update(item: AgentActorItem, edit: AgentActorBindingEdit): Promise<void>;
+  renderPopover(
+    input: CollectionPropertyOwnPopoverEditorInput<AgentActorItem>,
+    opensOnMode: boolean,
+  ): ReactNode;
 }
 
 export function createAgentActorsPresentation({
   actions,
   agents,
+  editing,
   facts,
   inheritedVisible,
   onActivate,
@@ -50,6 +75,7 @@ export function createAgentActorsPresentation({
 }: {
   actions: AgentActorsPresentationActions;
   agents: AgentAdapterDictionary;
+  editing?: AgentActorsPresentationEditing;
   facts(item: AgentActorItem): AgentActorFacts;
   inheritedVisible: boolean;
   onActivate?: CollectionPresentationDescriptor<AgentActorItem>["onActivate"];
@@ -61,6 +87,7 @@ export function createAgentActorsPresentation({
     descriptor: createAgentActorsPresentationDescriptor({
       actions,
       agents,
+      editing,
       facts,
       inheritedVisible,
       onActivate,
@@ -74,6 +101,7 @@ export function createAgentActorsPresentation({
 export function createAgentActorsPresentationDescriptor({
   actions,
   agents,
+  editing,
   facts,
   inheritedVisible,
   onActivate,
@@ -82,6 +110,8 @@ export function createAgentActorsPresentationDescriptor({
 }: {
   actions: AgentActorsPresentationActions;
   agents: AgentAdapterDictionary;
+  /** How the property panel edits an Agent; read-only without it. */
+  editing?: AgentActorsPresentationEditing;
   /** What the collection shows of an Agent on this device. */
   facts(item: AgentActorItem): AgentActorFacts;
   /** Whether the set holds Agents inherited from the project root. */
@@ -107,12 +137,42 @@ export function createAgentActorsPresentationDescriptor({
     [...new Set(names.filter((name): name is string => name !== null))].map(
       (name) => ({ color: "neutral" as const, name }),
     );
+  const bindingEdit = (
+    opensOnMode: boolean,
+    getState: (item: AgentActorItem) => CollectionPropertyActionState,
+  ): CollectionPropertyEdit<AgentActorItem> | undefined =>
+    editing && {
+      getState,
+      // The reason an Agent cannot be edited shows once, at "Agent".
+      showDisabledReason: !opensOnMode,
+      update: (item, value) =>
+        editing.update(item, value as AgentActorBindingEdit),
+      popover: {
+        getDraft: agentActorBindingEdit,
+        renderPopover: (input) => editing.renderPopover(input, opensOnMode),
+      },
+    };
+  const agentEdit = bindingEdit(false, (item) => editing!.getState(item));
+  // Empty for the participant's agent and an agent without modes, where
+  // "Approval mode" is read-only and the panel leaves it out.
+  const modeEdit = bindingEdit(true, (item) =>
+    facts(item).mode === null
+      ? { reason: "", status: "disabled" }
+      : editing!.getState(item),
+  );
   const properties: readonly CollectionPropertyDefinition<AgentActorItem>[] = [
     defineTitleCollectionProperty({ getValue: (item) => item.name }),
     defineSpaceCollectionProperty({ getValue: ownerSpaceName, items }),
-    defineAgentCollectionProperty({ agents, getAgent: agentValue, items }),
-    defineComputedCollectionProperty({
+    defineAgentCollectionProperty({
+      agents,
+      edit: agentEdit,
+      getAgent: agentValue,
+      items,
+    }),
+    // The device mode an Agent keeps: the owner's own, editable property.
+    defineOwnerDefinedCollectionProperty({
       capabilities: {
+        edit: modeEdit,
         filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
@@ -178,12 +238,6 @@ export function createAgentActorsPresentationDescriptor({
     },
     itemActions: [
       {
-        getState: actions.getEditState,
-        id: "edit-agent",
-        label: m.agent_actors_edit(),
-        run: actions.onEdit,
-      },
-      {
         getState: actions.getDeleteState,
         id: "delete-agent",
         label: m.agent_actors_delete(),
@@ -193,6 +247,8 @@ export function createAgentActorsPresentationDescriptor({
   };
 }
 
-export function agentActorItemId(item: AgentActorItem): string {
+export function agentActorItemId(
+  item: Pick<AgentActorItem, "id" | "ownerPath">,
+): string {
   return JSON.stringify([item.ownerPath, item.id]);
 }

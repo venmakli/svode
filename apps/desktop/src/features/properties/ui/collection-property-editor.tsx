@@ -15,6 +15,7 @@ import type {
   CollectionPropertyActionState,
   CollectionPropertyDefinition,
   CollectionPropertyEdit,
+  CollectionPropertyOwnPopoverEditorInput,
   CollectionPropertyPopoverEditor,
 } from "../model/collection-property";
 import type { ActorCandidate, Column, RelationContext } from "../model/types";
@@ -256,43 +257,61 @@ function CollectionPropertyPopover<Item>({
   const saved = popover.getDraft
     ? popover.getDraft(item)
     : property.getValue(item);
+  const value = property.getValue(item);
   const problem = open ? (edit.validate?.(draft, item) ?? null) : null;
-
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          escapedRef.current = false;
-          setDraft(saved);
-          setOpen(true);
-          onOpen();
-          return;
-        }
-        setOpen(false);
-        if (escapedRef.current || sameValue(draft, saved)) return;
-        if (problem) onDiscardInvalid(problem);
-        else onSave(draft);
-      }}
+  const onOpenChange = (next: boolean) => {
+    if (next) {
+      escapedRef.current = false;
+      setDraft(saved);
+      setOpen(true);
+      onOpen();
+      return;
+    }
+    setOpen(false);
+    if (escapedRef.current || sameValue(draft, saved)) return;
+    if (problem) onDiscardInvalid(problem);
+    else onSave(draft);
+  };
+  const trigger = (
+    <Button
+      type="button"
+      variant="ghost"
+      disabled={disabled}
+      className="h-auto min-h-8 w-full min-w-0 justify-start px-1.5 py-1 text-left font-normal whitespace-normal"
+      data-collection-property-popover-trigger={property.key}
     >
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={disabled}
-          className="h-auto min-h-8 w-full min-w-0 justify-start px-1.5 py-1 text-left font-normal whitespace-normal"
-        >
-          {isEmptyValue(property.getValue(item)) ? (
-            <span className="text-muted-foreground">{m.property_empty()}</span>
-          ) : (
-            <CollectionPropertyValue
-              context="detail"
-              property={property as CollectionPropertyDefinition<unknown>}
-              item={item}
-            />
-          )}
-        </Button>
-      </PopoverTrigger>
+      {isEmptyValue(value) ? (
+        <span className="text-muted-foreground">{m.property_empty()}</span>
+      ) : (
+        <CollectionPropertyValue
+          context="detail"
+          property={property as CollectionPropertyDefinition<unknown>}
+          item={item}
+        />
+      )}
+    </Button>
+  );
+
+  if ("renderPopover" in popover) {
+    return (
+      <OwnerPopover
+        render={popover.renderPopover}
+        draft={draft}
+        item={item}
+        problem={problem}
+        onDraftChange={setDraft}
+        trigger={trigger}
+        open={open}
+        onOpenChange={onOpenChange}
+        onEscapeKeyDown={() => {
+          escapedRef.current = true;
+        }}
+      />
+    );
+  }
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         align="start"
         className="w-80"
@@ -319,6 +338,16 @@ function CollectionPropertyPopover<Item>({
       </PopoverContent>
     </Popover>
   );
+}
+
+/** The popover of the owner's own around the property's value. */
+function OwnerPopover<Item>({
+  render,
+  ...input
+}: CollectionPropertyOwnPopoverEditorInput<Item> & {
+  render(input: CollectionPropertyOwnPopoverEditorInput<Item>): ReactNode;
+}) {
+  return render(input);
 }
 
 function standardProblem(column: Column, value: unknown): string | null {

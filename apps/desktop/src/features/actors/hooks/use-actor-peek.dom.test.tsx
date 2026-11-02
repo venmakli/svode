@@ -8,12 +8,8 @@ import { JSDOM } from "jsdom";
 import type { CollectionItemPeekController } from "@/features/collection/app-shell";
 
 import type { ActorPeekTarget } from "../model/actor-peek";
-import type {
-  AgentActorDraft,
-  AgentActorItem,
-} from "../model/agent-actor-types";
+import type { AgentActorItem } from "../model/agent-actor-types";
 import type { ActorCatalogItem, ActorCatalogSnapshot } from "../model/types";
-import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
 const person: ActorCatalogItem = {
   aliases: [],
@@ -36,6 +32,7 @@ const agent: AgentActorItem = {
   name: "Documentation Agent",
   ownerLabel: "repo",
   ownerPath: "/repo",
+  version: "v1",
 };
 const agentItemId = JSON.stringify([agent.ownerPath, agent.id]);
 
@@ -139,25 +136,11 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
       </div>
     ),
   }));
-  mock.module("../ui/agent-actor-detail", () => ({
-    AgentActorDetail: ({
-      draft,
-      editMode,
-    }: {
-      draft: AgentActorDraft;
-      editMode: boolean;
-    }) => (
-      <div data-agent-detail={editMode ? "form" : "read-only"}>
-        <InnerSwitch label={draft.name} />
-      </div>
-    ),
-  }));
 
   interface Controls {
     peek?: CollectionItemPeekController<ActorPeekTarget>;
     rerender?: () => void;
     setAgents?: (items: readonly AgentActorItem[]) => void;
-    setEditSession?: (session: AgentActorEditSession | null) => void;
     setSnapshot?: (snapshot: ActorCatalogSnapshot | null) => void;
   }
 
@@ -188,22 +171,14 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
       const [agentItems, setAgents] = useState<readonly AgentActorItem[]>([
         agent,
       ]);
-      const [editSession, setEditSession] =
-        useState<AgentActorEditSession | null>(null);
       const [, setVersion] = useState(0);
       const peek = useCollectionItemPeek<ActorPeekTarget>(actorPeekIdentity);
       const humanPeek = useActorPeek({ snapshot, spacePath: "/repo" });
       const agentPeek = useAgentActorPeek({
-        applyMutation: () => undefined,
-        agents: [],
-        editSession,
-        mutationPending: false,
-        offers: null,
-        peek,
+        editState: () => idle,
+        focusTitleRequest: null,
         items: agentItems,
-        setEditSession,
-        onOpenAgentSettings: () => undefined,
-        onRecheckOffers: () => undefined,
+        write: async () => undefined,
       });
       const humans = createActorsPresentation({
         mutations: {
@@ -222,10 +197,8 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
         actions: {
           createState: idle,
           getDeleteState: () => idle,
-          getEditState: () => idle,
           onAdd: () => undefined,
           onDelete: () => undefined,
-          onEdit: () => undefined,
         },
         agents,
         facts: () => ({
@@ -243,7 +216,6 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
           peek,
           rerender: () => setVersion((version) => version + 1),
           setAgents,
-          setEditSession,
           setSnapshot,
         });
       }, [peek]);
@@ -294,16 +266,14 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
   const menu = () =>
     topBar()?.querySelector('[aria-label="Row actions"]') ?? null;
   const peekOpen = () => doc.querySelector("[data-collection-item-peek]");
+  const titleInput = () =>
+    doc.querySelector<HTMLInputElement>("[data-object-content-header-title]");
+  const descriptionInput = () =>
+    doc.querySelector<HTMLTextAreaElement>(
+      "[data-object-content-header-description]",
+    );
   const innerSwitch = () =>
     doc.querySelector("[data-inner-switch]")?.getAttribute("data-inner-switch");
-  const button = (label: string) =>
-    [...doc.querySelectorAll<HTMLButtonElement>("button")].find(
-      (candidate) => candidate.textContent === label,
-    ) ?? null;
-  const close = () =>
-    run(() =>
-      doc.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click(),
-    );
 
   test("a person opens with identity and ⋯ in the top bar and follows the catalog", async () => {
     const { controls } = await setup();
@@ -344,49 +314,33 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
     expect(doc.activeElement?.id).toBe("row");
   }, 30000);
 
-  test("an Agent opens without an owner line, keeps ⋯ after editing and leaves its form alone", async () => {
+  test("an Agent opens without an owner line or a body, with its name and description in place and ⋯ after a change", async () => {
     const { controls } = await setup();
     await run(() =>
       controls.peek!.open({ itemId: agentItemId, presentationId: "agents" }),
     );
     expect(identity()).toBe("Documentation Agent");
-    expect(header()).toBe("Documentation AgentWrites documentation");
+    expect(titleInput()?.value).toBe("Documentation Agent");
+    expect(descriptionInput()?.value).toBe("Writes documentation");
     expect(doc.body.textContent?.includes("Owner")).toBe(false);
     expect(menu() === null).toBe(false);
+    // The screen ends with the property panel.
+    const column = doc.querySelector("[data-object-content-header]")
+      ?.parentElement as HTMLElement;
+    expect(
+      Array.from(column.children).map((child) =>
+        child.hasAttribute("data-object-content-header")
+          ? "header"
+          : child.hasAttribute("data-collection-property-panel")
+            ? "panel"
+            : child.tagName,
+      ),
+    ).toEqual(["header", "panel"]);
 
     // An external change draws in place.
-    await run(() =>
-      doc.querySelector<HTMLButtonElement>("[data-inner-switch]")!.click(),
-    );
     await run(() => controls.setAgents!([{ ...agent, name: "Docs Agent" }]));
     expect(identity()).toBe("Docs Agent");
-    expect(innerSwitch()).toBe("on");
-    expect(menu() === null).toBe(false);
-
-    // The edit form opens in the same peek; the agent's changes and its
-    // removal leave it alone.
-    await run(() =>
-      controls.setEditSession!({
-        draft: { ...agent, name: "Docs Agent" } as unknown as AgentActorDraft,
-        guard: { dirty: false },
-        item: { ...agent, name: "Docs Agent" },
-      }),
-    );
-    expect(
-      doc
-        .querySelector("[data-agent-detail]")
-        ?.getAttribute("data-agent-detail"),
-    ).toBe("form");
-    await run(() => controls.setAgents!([{ ...agent, name: "Docs Agent 2" }]));
-    expect(button("Save") === null).toBe(false);
-    await run(() => controls.setAgents!([]));
-    expect(button("Save") === null).toBe(false);
-    await run(() => controls.setAgents!([{ ...agent, name: "Docs Agent 2" }]));
-
-    // Cancel shows the current version with its ⋯ again.
-    await run(() => button("Cancel")!.click());
-    expect(button("Save")).toBeNull();
-    expect(identity()).toBe("Docs Agent 2");
+    expect(titleInput()?.value).toBe("Docs Agent");
     expect(menu() === null).toBe(false);
 
     // The agent leaving the catalog closes its peek.
@@ -394,34 +348,7 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
     expect(peekOpen()).toBeNull();
   }, 30000);
 
-  test("an unsaved form waits for the asynchronous confirm; a closed form does not reopen", async () => {
-    const { controls } = await setup();
-    const answers = [false, true];
-    let asked = 0;
-    // The Tauri dialog plugin replaces window.confirm with an async function.
-    dom.window.confirm = (() => {
-      asked += 1;
-      return Promise.resolve(answers.shift());
-    }) as unknown as typeof window.confirm;
-    await run(() =>
-      controls.setEditSession!({
-        draft: agent as unknown as AgentActorDraft,
-        guard: { dirty: true },
-        item: agent,
-      }),
-    );
-    expect(button("Save") === null).toBe(false);
-    await close();
-    expect(asked).toBe(1);
-    expect(button("Save") === null).toBe(false);
-    await close();
-    expect(asked).toBe(2);
-    expect(peekOpen()).toBeNull();
-    await run(() => controls.rerender!());
-    expect(peekOpen()).toBeNull();
-  }, 30000);
-
-  test("moving from an Agent's unsaved form to a person passes its guard once", async () => {
+  test("moving from an Agent to a person passes no guard of the Agent", async () => {
     const { controls } = await setup();
     let asked = 0;
     dom.window.confirm = (() => {
@@ -429,11 +356,7 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
       return Promise.resolve(true);
     }) as unknown as typeof window.confirm;
     await run(() =>
-      controls.setEditSession!({
-        draft: agent as unknown as AgentActorDraft,
-        guard: { dirty: true },
-        item: agent,
-      }),
+      controls.peek!.open({ itemId: agentItemId, presentationId: "agents" }),
     );
     await run(() =>
       controls.peek!.open({
@@ -441,8 +364,7 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
         presentationId: "humans",
       }),
     );
-    expect(asked).toBe(1);
+    expect(asked).toBe(0);
     expect(identity()).toBe("Ada Lovelace");
-    expect(button("Save")).toBeNull();
   }, 30000);
 }

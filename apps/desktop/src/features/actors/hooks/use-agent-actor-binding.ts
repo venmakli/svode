@@ -22,7 +22,7 @@ import {
 } from "../model/agent-actor-draft";
 import type {
   AgentActorAgentOption,
-  AgentActorDraft,
+  AgentActorBindingDraft,
 } from "../model/agent-actor-types";
 
 const NO_VALUES: readonly AgentSettingValue[] = [];
@@ -33,21 +33,24 @@ const UNAVAILABLE: AgentReadiness = {
   check: { state: "unavailable", reason: { code: "not_supported" } },
 };
 
-export type AgentActorBindingEditor = ReturnType<typeof useAgentActorBinding>;
+export type AgentActorBindingEditor = ReturnType<
+  typeof useAgentActorBinding<AgentActorBindingDraft>
+>;
 
 /**
  * The binding of an Actor's draft in the agent settings popover (Stage 11
  * `03`, host "Actor binding"): the bindable agents as tabs and the
  * participant's agent beside them, the agent's declared settings with the
  * values the draft keeps and its device mode as the last row. While the
- * form is open (`cwd`, the Space of the Actor's catalog) the agent's draft
- * session gives the settings; without it the agent's last declarations do.
+ * popover is open (`cwd`, the Space of the Actor's catalog) the agent's
+ * draft session gives the settings; without it the agent's last
+ * declarations do.
  * Values are kept only from declared options; a kept value the agent no
  * longer declares shows with a note until another is chosen, and one of
  * the setting the agent declares in category `mode` is never written to
  * the catalog.
  */
-export function useAgentActorBinding({
+export function useAgentActorBinding<Draft extends AgentActorBindingDraft>({
   agents,
   cwd,
   draft,
@@ -60,20 +63,20 @@ export function useAgentActorBinding({
   agents: readonly AgentActorAgentOption[];
   /** Where the agent's draft session opens; null opens none. */
   cwd: string | null;
-  draft: AgentActorDraft;
+  draft: Draft;
   /** The binding can change; otherwise it only shows. */
   editable: boolean;
   /** How the chat offers the agents; null while they are read. */
   offers: ChatAgents | null;
-  onChange(draft: AgentActorDraft): void;
+  onChange(draft: Draft): void;
   /** Reads the agents' offers again, as after a sign-in. */
   onRecheck(): void;
 }) {
   const agent = bindingAgent(draft.binding);
-  const participant = draft.binding?.kind === "participant";
+  const participant = draft.binding.kind === "participant";
   const known = agent !== null && agents.some((option) => option.id === agent);
   const portable =
-    draft.binding?.kind === "agent" ? draft.binding.settings : NO_VALUES;
+    draft.binding.kind === "agent" ? draft.binding.settings : NO_VALUES;
   const mode =
     agent !== null && draft.mode?.agent === agent ? draft.mode : null;
   // The setting the agent declares in category `mode`, once it is known.
@@ -248,7 +251,7 @@ export function useAgentActorBinding({
     /** The agent's setting of category `mode`, once it is known. */
     modeSetting,
     /** The draft as the catalog takes it: no value of the mode's setting. */
-    forSave: (next: AgentActorDraft) =>
+    forSave: (next: Draft) =>
       modeSettingId ? withoutBindingSettings(next, [modeSettingId]) : next,
     /** The sign-in terminal of the binding's agent while it is open. */
     signIn,

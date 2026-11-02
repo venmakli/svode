@@ -46,7 +46,7 @@ export async function loadAgentActors(
     fingerprints: Object.freeze({ ...dto.ownerFingerprints }),
     launchSpacePath,
     items: Object.freeze(
-      dto.resolution.actors.map(({ actor, mode, ownerPath }) =>
+      dto.resolution.actors.map(({ actor, mode, ownerPath, version }) =>
         Object.freeze({
           actorRef: `agent:${actor.id}` as const,
           binding: normalizeBinding(actor.binding),
@@ -57,6 +57,7 @@ export async function loadAgentActors(
           name: actor.name,
           ownerLabel: actorOwnerLabel(ownerPath),
           ownerPath,
+          version,
         }),
       ),
     ),
@@ -126,8 +127,12 @@ export async function previewAgentActorDeleteReferences(
   });
 }
 
+/**
+ * One write of one Agent, applied while the Agent is at `expectedVersion`
+ * (null for a new Agent), whatever else changed in its catalog.
+ */
 export async function mutateAgentActor(input: {
-  expectedFingerprint: string;
+  expectedVersion: string | null;
   mutation: AgentActorMutationInputDto;
   ownerPath: string;
   projectPath: string;
@@ -135,13 +140,13 @@ export async function mutateAgentActor(input: {
   const result = await mutateAgentActorCommand(
     input.projectPath,
     input.ownerPath,
-    input.expectedFingerprint,
+    input.expectedVersion,
     input.mutation,
   );
   if (result.status === "stale") return "stale";
   if (result.status === "blocked") return { blocked: result.message };
   return Object.freeze({
-    fingerprint: result.fingerprint,
+    version: result.version,
     persistence: Object.freeze({ ...result.persistence }),
     rootPointer: result.rootPointer
       ? Object.freeze({ ...result.rootPointer })
@@ -153,14 +158,14 @@ export { getAgentActorCatalogSaveReview, saveAgentActorCatalog };
 export type { AgentActorCatalogSaveReviewDto };
 
 export function toAgentActorMutationActor(input: {
-  binding: AgentActorBinding | null;
-  description: string;
+  binding: AgentActorBinding;
+  description: string | null;
   id: string;
   name: string;
 }) {
   return {
     binding: toBindingDto(input.binding),
-    description: input.description.trim() || null,
+    description: input.description?.trim() || null,
     id: input.id,
     name: input.name.trim(),
   };
@@ -183,8 +188,7 @@ function normalizeBinding(binding: AgentActorBindingDto): AgentActorBinding {
   });
 }
 
-function toBindingDto(binding: AgentActorBinding | null): AgentActorBindingDto {
-  if (!binding) throw new Error("An Agent Actor needs a binding");
+function toBindingDto(binding: AgentActorBinding): AgentActorBindingDto {
   if (binding.kind === "participant") return { participant: true };
   return {
     agent: binding.agent,

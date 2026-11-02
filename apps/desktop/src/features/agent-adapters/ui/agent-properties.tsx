@@ -9,6 +9,7 @@ import {
 import {
   defineCommonCollectionProperty,
   type CollectionPropertyDefinition,
+  type CollectionPropertyEdit,
   type PropertyOption,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -38,14 +39,17 @@ export function agentPropertyLabel(
 /**
  * "Agent": one agent of the dictionary, drawn by its icon and name; options,
  * filter and sort follow the dictionary. The participant's agent is an
- * option where an item has it.
+ * option where an item has it. An owner that keeps the agent of its items
+ * may declare its editing, as Agent Actors edit their binding.
  */
 export function defineAgentCollectionProperty<Item>({
   agents,
+  edit,
   getAgent,
   items,
 }: {
   agents: AgentAdapterDictionary;
+  edit?: CollectionPropertyEdit<Item>;
   getAgent(item: Item): AgentPropertyValue | null;
   items: readonly Item[];
 }): CollectionPropertyDefinition<Item> {
@@ -59,7 +63,7 @@ export function defineAgentCollectionProperty<Item>({
       name: m.agent_actors_participant_agent(),
     });
   }
-  return defineCommonCollectionProperty<Item>("agent", {
+  const property = defineCommonCollectionProperty<Item>("agent", {
     display: {
       render: (_value, item) => {
         const value = getAgent(item);
@@ -72,6 +76,13 @@ export function defineAgentCollectionProperty<Item>({
     },
     standard: { options, type: "select" },
   });
+  return edit
+    ? {
+        ...property,
+        capabilities: { ...property.capabilities, edit },
+        origin: "owner_defined",
+      }
+    : property;
 }
 
 function AgentValue({

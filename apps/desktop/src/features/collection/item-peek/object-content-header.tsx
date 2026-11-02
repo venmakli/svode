@@ -194,7 +194,11 @@ function EditableObjectContentHeader({
             placeholder={m.editor_description_placeholder()}
             data-object-content-header-description
             className="min-h-5 min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-[13px] leading-5 text-muted-foreground outline-none placeholder:text-muted-foreground/40 [overflow-wrap:anywhere]"
-            onFocus={descriptionField.onFocus}
+            onFocus={() => {
+              descriptionField.onFocus();
+              // The field stays while its text is cleared.
+              setEditingDescription(true);
+            }}
             onChange={(event) =>
               descriptionField.change(event.target.value.replace(/\n/g, " "))
             }

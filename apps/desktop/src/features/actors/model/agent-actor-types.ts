@@ -38,6 +38,8 @@ export interface AgentActorItem {
   name: string;
   ownerLabel: string;
   ownerPath: string;
+  /** The version a write of this Agent expects: its definition and mode. */
+  version: string;
 }
 
 export interface AgentActorCatalogDiagnostic {
@@ -60,15 +62,25 @@ export interface AgentActorCatalogSnapshot {
   items: readonly AgentActorItem[];
 }
 
-export interface AgentActorDraft {
-  /** Null until an agent or the participant's agent is chosen. */
-  binding: AgentActorBinding | null;
-  description: string;
-  id: string | null;
+/** How an Agent runs: its binding and its device mode. */
+export interface AgentActorBindingDraft {
+  binding: AgentActorBinding;
   /** Kept as it is until the binding editor edits it. */
   mode: AgentActorMode | null;
+}
+
+/**
+ * The binding an Agent's popover edits, with the version of the Agent when
+ * the popover opened: a change of the Agent since then is a conflict.
+ */
+export interface AgentActorBindingEdit extends AgentActorBindingDraft {
+  since: string;
+}
+
+/** What a write of an Agent puts into the catalog and on this device. */
+export interface AgentActorState extends AgentActorBindingDraft {
+  description: string | null;
   name: string;
-  ownerPath: string;
 }
 
 export type AgentActorPersistenceOutcome =
@@ -85,7 +97,8 @@ export type AgentActorPersistenceOutcome =
   | { status: "failed"; message: string };
 
 export interface AgentActorMutationApplied {
-  fingerprint: string;
+  /** The version of the Agent after the write; null once it is deleted. */
+  version: string | null;
   persistence: AgentActorPersistenceOutcome;
   rootPointer: AgentActorPersistenceOutcome | null;
 }

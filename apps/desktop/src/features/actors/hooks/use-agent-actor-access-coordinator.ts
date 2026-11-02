@@ -11,7 +11,6 @@ import type { AgentActorItem } from "../model/agent-actor-types";
 
 export type AgentActorAccessIntent =
   | { kind: "add-agent"; ownerPath: string }
-  | { kind: "edit-agent"; ownerPath: string; item: AgentActorItem }
   | { kind: "delete-agent"; ownerPath: string; item: AgentActorItem }
   | { kind: "save-agent-catalog"; ownerPath: string };
 
@@ -52,10 +51,7 @@ export function useAgentActorAccessCoordinator({
         continue: () => onContinue(intent),
         intentKey: intent.kind,
         intentLabel: intentLabel(intent),
-        placement:
-          intent.kind === "add-agent" || intent.kind === "save-agent-catalog"
-            ? "inline"
-            : "dialog",
+        placement: intent.kind === "save-agent-catalog" ? "inline" : "dialog",
         targets: [
           targetFor(
             intent.ownerPath,
@@ -102,9 +98,7 @@ export function useAgentActorAccessCoordinator({
 function intentLabel(intent: AgentActorAccessIntent) {
   if (intent.kind === "add-agent") return m.agent_actors_add();
   if (intent.kind === "delete-agent") return m.agent_actors_delete();
-  if (intent.kind === "save-agent-catalog")
-    return m.agent_actors_save_catalog();
-  return m.agent_actors_edit();
+  return m.agent_actors_save_catalog();
 }
 
 function repositoryNameFromPath(path: string) {

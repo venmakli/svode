@@ -863,7 +863,7 @@ fn new_runtime_id() -> String {
 mod tests {
     use super::*;
     use crate::agent_actors::{CatalogMutation, mutate_catalog};
-    use svode_core::agent_actors::{ActorBinding, AgentActor, read_catalog};
+    use svode_core::agent_actors::{ActorBinding, AgentActor};
     use svode_core::default_agent::DefaultAgent;
     use svode_core::routines::model::{RoutineLaunchRecovery, RoutineOwnerInputKind};
 
@@ -881,10 +881,9 @@ mod tests {
         let root = temp.path().join("project");
         write(&root.join(".svode/config.json"), r#"{"name":"Project"}"#);
         let root = root.canonicalize().unwrap();
-        let (_, fingerprint) = read_catalog(&root).unwrap();
         mutate_catalog(
             &root,
-            &fingerprint,
+            None,
             CatalogMutation::Create(AgentActor {
                 id: ACTOR.into(),
                 name: "My tasks".into(),

@@ -44,6 +44,8 @@ export interface AgentActorsReadResultDto {
       actor: AgentActorDto;
       ownerPath: string;
       mode: AgentActorModeDto | null;
+      /** The version a write of the Actor expects: its definition and mode. */
+      version: string;
     }[];
     diagnostics: { ownerPath: string; code: string; message: string }[];
   };
@@ -99,11 +101,13 @@ export type AgentActorPersistenceOutcomeDto =
 export type AgentActorMutationResultDto =
   | {
       status: "applied";
-      fingerprint: string;
+      /** The version of the Actor after the write; null once it is deleted. */
+      version: string | null;
       persistence: AgentActorPersistenceOutcomeDto;
       rootPointer?: AgentActorPersistenceOutcomeDto | null;
     }
-  | { status: "stale"; fingerprint?: string | null }
+  /** The Actor changed since it was read: nothing was written. */
+  | { status: "stale" }
   | { status: "blocked"; message: string };
 
 export interface AgentActorCatalogSaveReviewDto {
@@ -164,14 +168,19 @@ export function previewAgentActorDeleteReferences(
   );
 }
 
+/**
+ * One write of one Actor, applied while the Actor is at `expectedVersion`,
+ * the version it was read at (null for a new Actor), whatever else changed
+ * in its catalog.
+ */
 export function mutateAgentActor(
   projectPath: string,
   ownerPath: string,
-  expectedFingerprint: string,
+  expectedVersion: string | null,
   mutation: AgentActorMutationInputDto,
 ) {
   return invokeCommand<AgentActorMutationResultDto>("agent_actors_mutate", {
-    expectedFingerprint,
+    expectedVersion,
     mutation,
     ownerPath,
     projectPath,

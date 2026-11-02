@@ -105,16 +105,26 @@ export interface CollectionPropertyEdit<Item> {
   popover?: CollectionPropertyPopoverEditor<Item>;
 }
 
-/** The editor of a composite property inside its popover. */
-export interface CollectionPropertyPopoverEditor<Item> {
+/**
+ * The editor of a composite property: its editor inside the popover of the
+ * panel, or a popover of its own that opens from the property's value, as a
+ * popover of several screens.
+ */
+export type CollectionPropertyPopoverEditor<Item> = {
   /**
    * The value the editor edits, such as the whole composite value behind a
    * label the property shows, filters and sorts by; the property's value
    * without it. `validate` and `update` receive drafts of this value.
    */
   getDraft?(item: Item): unknown;
-  render(input: CollectionPropertyPopoverEditorInput<Item>): ReactNode;
-}
+} & (
+  | { render(input: CollectionPropertyPopoverEditorInput<Item>): ReactNode }
+  | {
+      renderPopover(
+        input: CollectionPropertyOwnPopoverEditorInput<Item>,
+      ): ReactNode;
+    }
+);
 
 export interface CollectionPropertyPopoverEditorInput<Item> {
   item: Item;
@@ -123,6 +133,19 @@ export interface CollectionPropertyPopoverEditorInput<Item> {
   /** Why the draft cannot be saved, shown below the editor; null when it can. */
   problem: string | null;
   onDraftChange(draft: unknown): void;
+}
+
+/**
+ * A popover of the owner's own: it opens from `trigger`, the property's value,
+ * reports Escape, which drops the draft, and closing it saves the draft.
+ */
+export interface CollectionPropertyOwnPopoverEditorInput<
+  Item,
+> extends CollectionPropertyPopoverEditorInput<Item> {
+  trigger: ReactNode;
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  onEscapeKeyDown(): void;
 }
 
 export interface CollectionPropertyCapabilities<Item> {

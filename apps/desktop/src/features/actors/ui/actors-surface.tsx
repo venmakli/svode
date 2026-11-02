@@ -249,6 +249,7 @@ export function ActorsSurface({
   const agentActorsPresentation = createAgentActorsPresentation({
     actions: agentActors.actions,
     agents,
+    editing: agentActors.editing,
     facts: agentActors.facts,
     inheritedVisible: agentActors.inheritedVisible,
     onActivate: peek.activation((_item: AgentActorItem, context) => ({

@@ -12,7 +12,8 @@ use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::git::require_cli;
 use crate::space::types::SpaceGitType;
 use svode_core::agent_actors::local::{
-    ActorMode, read_actor_modes, set_actor_mode, translate_local_modes,
+    ActorMode, actor_version, read_actor_modes, read_actor_versions, set_actor_mode,
+    translate_local_modes,
 };
 use svode_core::agent_actors::{
     AgentActor, AgentActorCatalogDiagnostic, AgentActorResolution, CatalogError, catalog_path,
@@ -74,6 +75,8 @@ pub struct AgentActorRead {
     /// The effective mode of the Actor on this device; `None` is the
     /// agent's native default, and always for the participant's agent.
     pub mode: Option<ActorMode>,
+    /// The version a write of this Actor expects: its definition and mode.
+    pub version: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -157,14 +160,14 @@ pub struct AgentActorDeleteReferencePreview {
 )]
 pub enum AgentActorMutationResult {
     Applied {
-        fingerprint: String,
+        /// The version of the Actor after the write; none once it is deleted.
+        version: Option<String>,
         persistence: ExactPathPersistenceOutcome,
         #[serde(skip_serializing_if = "Option::is_none")]
         root_pointer: Option<ExactPathPersistenceOutcome>,
     },
-    Stale {
-        fingerprint: Option<String>,
-    },
+    /// The Actor changed since the window read it: nothing was written.
+    Stale,
     Blocked {
         message: String,
     },
@@ -215,8 +218,10 @@ fn read_items(resolution: AgentActorResolution) -> AgentActorsReadResolution {
             let owner_modes = modes
                 .entry(resolved.owner_path.clone())
                 .or_insert_with(|| owner_modes(Path::new(&resolved.owner_path)));
+            let mode = owner_modes.get(&resolved.actor.id).cloned();
             AgentActorRead {
-                mode: owner_modes.get(&resolved.actor.id).cloned(),
+                version: actor_version(&resolved.actor, mode.as_ref()),
+                mode,
                 actor: resolved.actor,
                 owner_path: resolved.owner_path,
             }
@@ -554,14 +559,17 @@ fn save_review_matches(
         && review.root_pointer_fingerprint.as_deref() == root_pointer_fingerprint
 }
 
-/// One owner-targeted mutation. Access and exact-path safety are captured
-/// before any write while the target repository lock remains held.
+/// One owner-targeted mutation of one Actor. Access and exact-path safety
+/// are captured before any write while the target repository lock remains
+/// held. The write applies while the Actor is at `expected_version`, the
+/// version the window read (none for a new Actor), whatever else changed in
+/// its catalog.
 #[tauri::command]
 pub async fn agent_actors_mutate(
     app: AppHandle,
     project_path: String,
     owner_path: String,
-    expected_fingerprint: String,
+    expected_version: Option<String>,
     mutation: AgentActorMutationInput,
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
@@ -604,25 +612,21 @@ pub async fn agent_actors_mutate(
     }
     let mutation = match mutation {
         AgentActorMutationInput::SetMode { actor_id, mode } => {
-            let fingerprint =
-                match set_actor_mode(&owner, &expected_fingerprint, &actor_id, mode.as_ref()) {
-                    Ok(fingerprint) => fingerprint,
-                    Err(CatalogError::Stale) => {
-                        return Ok(AgentActorMutationResult::Stale {
-                            fingerprint: read_catalog(&owner)
-                                .ok()
-                                .map(|(_, fingerprint)| fingerprint),
-                        });
-                    }
-                    Err(error) => {
-                        return Ok(AgentActorMutationResult::Blocked {
-                            message: error.to_string(),
-                        });
-                    }
-                };
+            let Some(expected_version) = expected_version.as_deref() else {
+                return Ok(AgentActorMutationResult::Stale);
+            };
+            let version = match set_actor_mode(&owner, expected_version, &actor_id, mode.as_ref()) {
+                Ok(version) => version,
+                Err(CatalogError::Stale) => return Ok(AgentActorMutationResult::Stale),
+                Err(error) => {
+                    return Ok(AgentActorMutationResult::Blocked {
+                        message: error.to_string(),
+                    });
+                }
+            };
             emit_catalog_invalidation(&app, &owner);
             return Ok(AgentActorMutationResult::Applied {
-                fingerprint,
+                version: Some(version),
                 persistence: ExactPathPersistenceOutcome::Clean,
                 root_pointer: None,
             });
@@ -648,22 +652,20 @@ pub async fn agent_actors_mutate(
     } else {
         None
     };
-    let next =
-        match mutate_catalog_compound(&owner, &expected_fingerprint, mutation.into_compound()) {
-            Ok(catalog) => catalog,
-            Err(CatalogError::Stale) => {
-                return Ok(AgentActorMutationResult::Stale {
-                    fingerprint: read_catalog(&owner)
-                        .ok()
-                        .map(|(_, fingerprint)| fingerprint),
-                });
-            }
-            Err(error) => {
-                return Ok(AgentActorMutationResult::Blocked {
-                    message: error.to_string(),
-                });
-            }
-        };
+    let actor_id = mutation.actor_id().to_owned();
+    let next = match mutate_catalog_compound(
+        &owner,
+        expected_version.as_deref(),
+        mutation.into_compound(),
+    ) {
+        Ok(catalog) => catalog,
+        Err(CatalogError::Stale) => return Ok(AgentActorMutationResult::Stale),
+        Err(error) => {
+            return Ok(AgentActorMutationResult::Blocked {
+                message: error.to_string(),
+            });
+        }
+    };
     let target_matches_expected = read_catalog(&owner)
         .map(|(current, _)| current == next)
         .unwrap_or(false);
@@ -678,9 +680,9 @@ pub async fn agent_actors_mutate(
             target_matches_expected,
         )
         .await;
-    let fingerprint = read_catalog(&owner)
-        .map(|(_, fingerprint)| fingerprint)
-        .unwrap_or_default();
+    let version = read_actor_versions(&owner)
+        .ok()
+        .and_then(|mut versions| versions.remove(&actor_id));
     emit_catalog_invalidation(&app, &owner);
     let root_pointer = if persistence == ExactPathPersistenceOutcome::Committed {
         if let Some((target, root_plan)) = root_pointer_plan {
@@ -705,7 +707,7 @@ pub async fn agent_actors_mutate(
         None
     };
     Ok(AgentActorMutationResult::Applied {
-        fingerprint,
+        version,
         persistence,
         root_pointer,
     })

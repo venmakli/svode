@@ -49,6 +49,7 @@ export type {
   CollectionPropertyOwner,
   CollectionPropertyPopoverEditor,
   CollectionPropertyPopoverEditorInput,
+  CollectionPropertyOwnPopoverEditorInput,
   CollectionPropertySortSemantics,
   CollectionPropertyValueSemantics,
   CollectionStandardPropertySemantics,

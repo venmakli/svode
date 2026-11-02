@@ -137,10 +137,21 @@ export interface AgentSettingsPopoverProps {
   onCloseAutoFocus?: PopoverProps["onCloseAutoFocus"];
   /** A press outside the popover, before it closes. */
   onPointerDownOutside?: PopoverProps["onPointerDownOutside"];
+  /** Escape, before the popover closes. */
+  onEscapeKeyDown?: PopoverProps["onEscapeKeyDown"];
+  /**
+   * The popover opens on the screen of the mode's values, as the "Approval
+   * mode" of an Actor does; on the main screen until the agent's mode is
+   * known, and always without `modeRow`.
+   */
+  opensOnMode?: boolean;
 }
 
 /** The main screen of the popover, or the screen of one setting's values. */
 type AgentPane = "main" | `setting:${string}`;
+
+/** The screen of the mode's values, whichever setting the agent names so. */
+const MODE_PANE = "setting: mode";
 
 /** A setting of the main screen under the label it shows with. */
 interface SettingEntry {
@@ -178,6 +189,8 @@ export function AgentSettingsPopover({
   onConfigureAgents,
   onCloseAutoFocus,
   onPointerDownOutside,
+  onEscapeKeyDown,
+  opensOnMode = false,
 }: AgentSettingsPopoverProps) {
   const dictionary = useAgentAdapterDictionary();
   // An opened popover with tabs starts on the chosen one (DF-261).
@@ -241,10 +254,16 @@ export function AgentSettingsPopover({
         ({ setting }) => !choice?.withoutVariants?.includes(setting.id),
       )
     : [];
+  const requestedPane: AgentPane =
+    pane === MODE_PANE
+      ? modeRow && controls.mode
+        ? `setting:${controls.mode.id}`
+        : "main"
+      : pane;
   const shownPane = screens.some(
-    ({ setting }) => pane === `setting:${setting.id}`,
+    ({ setting }) => requestedPane === `setting:${setting.id}`,
   )
-    ? pane
+    ? requestedPane
     : "main";
   const rows = (
     <SettingRows
@@ -271,7 +290,7 @@ export function AgentSettingsPopover({
       open={open}
       onOpenChange={(next) => {
         if (next) {
-          setPane("main");
+          setPane(opensOnMode ? MODE_PANE : "main");
           setReturnTo(null);
         }
         onOpenChange(next);
@@ -282,6 +301,7 @@ export function AgentSettingsPopover({
         if (agentTabsFocus.current?.focus()) event.preventDefault();
       }}
       onPointerDownOutside={onPointerDownOutside}
+      onEscapeKeyDown={onEscapeKeyDown}
       onCloseAutoFocus={onCloseAutoFocus}
       mainPane="main"
       pane={shownPane}

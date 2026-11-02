@@ -1,48 +1,34 @@
 import type {
   AgentActorBinding,
-  AgentActorDraft,
+  AgentActorBindingDraft,
+  AgentActorBindingEdit,
   AgentActorItem,
+  AgentActorState,
 } from "./agent-actor-types";
-
-export type AgentActorCreateStep = "identity" | "agent" | "review";
-
-export interface AgentActorDraftValidation {
-  binding: "binding_required" | null;
-  name: "name_required" | null;
-}
-
-/** A new draft starts without an agent; an edit draft keeps the Actor's. */
-export function createAgentActorDraft(
-  ownerPath: string,
-  item?: AgentActorItem,
-): AgentActorDraft {
-  return {
-    binding: item ? cloneBinding(item.binding) : null,
-    description: item?.description ?? "",
-    id: item?.id ?? null,
-    mode: item?.mode ? { ...item.mode } : null,
-    name: item?.name ?? "",
-    ownerPath,
-  };
-}
 
 /** A binding of `agent` without values: they belong to the agent. */
 export function agentBinding(agent: string): AgentActorBinding {
   return { agent, kind: "agent", settings: [] };
 }
 
-export function cloneBinding(binding: AgentActorBinding): AgentActorBinding {
-  return binding.kind === "agent"
-    ? { ...binding, settings: binding.settings.map((value) => ({ ...value })) }
-    : { kind: "participant" };
+/** What a write of `item` starts from. */
+export function agentActorState(item: AgentActorItem): AgentActorState {
+  return {
+    binding: item.binding,
+    description: item.description,
+    mode: item.mode,
+    name: item.name,
+  };
 }
 
-export function cloneAgentActorDraft(draft: AgentActorDraft): AgentActorDraft {
-  return {
-    ...draft,
-    binding: draft.binding ? cloneBinding(draft.binding) : null,
-    mode: draft.mode ? { ...draft.mode } : null,
-  };
+/**
+ * The binding an Agent's popover starts from, with the version of the Agent
+ * when it opened.
+ */
+export function agentActorBindingEdit(
+  item: AgentActorItem,
+): AgentActorBindingEdit {
+  return { binding: item.binding, mode: item.mode, since: item.version };
 }
 
 /** The agent of a binding; `null` for the participant's agent or none. */
@@ -54,10 +40,10 @@ export function bindingAgent(binding: AgentActorBinding | null): string | null {
  * Change the agent of the draft's binding. Its values and the device mode
  * belong to the previous agent, so the new binding starts without them.
  */
-export function withBindingAgent(
-  draft: AgentActorDraft,
+export function withBindingAgent<Draft extends AgentActorBindingDraft>(
+  draft: Draft,
   agent: string,
-): AgentActorDraft {
+): Draft {
   if (bindingAgent(draft.binding) === agent) return draft;
   return { ...draft, binding: agentBinding(agent), mode: null };
 }
@@ -66,10 +52,10 @@ export function withBindingAgent(
  * Bind the draft to the participant's agent, which runs with the default
  * agent of the device and its mode: no values and no device mode.
  */
-export function withParticipantBinding(
-  draft: AgentActorDraft,
-): AgentActorDraft {
-  if (draft.binding?.kind === "participant") return draft;
+export function withParticipantBinding<Draft extends AgentActorBindingDraft>(
+  draft: Draft,
+): Draft {
+  if (draft.binding.kind === "participant") return draft;
   return { ...draft, binding: { kind: "participant" }, mode: null };
 }
 
@@ -77,13 +63,13 @@ export function withParticipantBinding(
  * The draft without the binding's values of `settings`: the values of a
  * setting the agent declares in category `mode` never go to the catalog.
  */
-export function withoutBindingSettings(
-  draft: AgentActorDraft,
+export function withoutBindingSettings<Draft extends AgentActorBindingDraft>(
+  draft: Draft,
   settings: readonly string[],
-): AgentActorDraft {
+): Draft {
   const binding = draft.binding;
   if (
-    binding?.kind !== "agent" ||
+    binding.kind !== "agent" ||
     !binding.settings.some((value) => settings.includes(value.setting))
   ) {
     return draft;
@@ -100,54 +86,34 @@ export function withoutBindingSettings(
 }
 
 /**
- * Whether the draft changes nothing of the Actor in the catalog: a change
- * of the device mode alone is a local-only write.
+ * Whether `next` changes nothing of the Agent in the catalog from `base`: a
+ * change of the device mode alone is a local-only write.
  */
 export function isAgentActorPortableUnchanged(
-  draft: AgentActorDraft,
-  item: AgentActorItem,
+  next: AgentActorState,
+  base: AgentActorState,
 ): boolean {
   return (
-    draft.id === item.id &&
-    draft.name.trim() === item.name &&
-    (draft.description.trim() || null) === item.description &&
-    JSON.stringify(draft.binding) === JSON.stringify(item.binding)
+    next.name.trim() === base.name.trim() &&
+    (next.description?.trim() || null) === (base.description?.trim() || null) &&
+    JSON.stringify(next.binding) === JSON.stringify(base.binding)
   );
 }
 
-export function validateAgentActorDraft(
-  draft: AgentActorDraft,
-): AgentActorDraftValidation {
-  return {
-    binding:
-      draft.binding === null ||
-      (draft.binding.kind === "agent" && !draft.binding.agent)
-        ? "binding_required"
-        : null,
-    name: draft.name.trim().length === 0 ? "name_required" : null,
-  };
-}
-
-export function firstInvalidAgentActorCreateStep(
-  validation: AgentActorDraftValidation,
-): AgentActorCreateStep | null {
-  if (validation.name) return "identity";
-  if (validation.binding) return "agent";
-  return null;
-}
-
-export function areAgentActorDraftsEqual(
-  left: AgentActorDraft,
-  right: AgentActorDraft,
-): boolean {
-  return (
-    left.id === right.id &&
-    left.ownerPath === right.ownerPath &&
-    left.name === right.name &&
-    left.description === right.description &&
-    JSON.stringify(left.binding) === JSON.stringify(right.binding) &&
-    JSON.stringify(left.mode) === JSON.stringify(right.mode)
-  );
+/**
+ * The name of a new Agent: `base`, or `base 2`, `base 3`, … while the
+ * catalog it goes to has an Agent of that name.
+ */
+export function uniqueAgentActorName(
+  base: string,
+  taken: readonly string[],
+): string {
+  const names = new Set(taken.map((name) => name.trim().toLocaleLowerCase()));
+  if (!names.has(base.toLocaleLowerCase())) return base;
+  for (let index = 2; ; index += 1) {
+    const candidate = `${base} ${index}`;
+    if (!names.has(candidate.toLocaleLowerCase())) return candidate;
+  }
 }
 
 export function compareAgentActorsByDefault(

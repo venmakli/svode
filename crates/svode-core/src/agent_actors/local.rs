@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::v1::{ApprovalMode, LocalApprovalV1, translate_mode};
-use super::{ActorBinding, AgentActorCatalog, CatalogError, read_catalog_versioned};
+use super::{ActorBinding, AgentActor, AgentActorCatalog, CatalogError, read_catalog_versioned};
 use crate::agent_adapters::AgentId;
 use crate::routines::local::{self as local_config, LocalConfig, LocalConfigError};
 
@@ -124,25 +124,59 @@ pub fn mode_for_binding(binding: &ActorBinding, mode: Option<ActorMode>) -> Opti
     mode.filter(|mode| binding.agent() == Some(&mode.agent))
 }
 
+/// The version of one Actor: its definition in the catalog and its effective
+/// mode on this device. A write of an Actor expects the version it was read
+/// at, so a change of another Actor of the same catalog never makes it stale.
+pub fn actor_version(actor: &AgentActor, mode: Option<&ActorMode>) -> String {
+    let bytes = serde_json::to_vec(&(actor, mode)).expect("an Actor serializes");
+    super::fingerprint(&bytes)
+}
+
+/// The versions of the Actors of `owner` on this device, by actor id.
+pub fn read_actor_versions(owner: &Path) -> Result<HashMap<String, String>, CatalogError> {
+    let read = read_catalog_versioned(owner)?;
+    let modes = read_actor_modes(owner)?;
+    Ok(read
+        .catalog
+        .actors
+        .iter()
+        .map(|actor| (actor.id.clone(), actor_version(actor, modes.get(&actor.id))))
+        .collect())
+}
+
+/// Checks that the Actor `actor_id` of `owner` is still at the version a
+/// write expects; `None` expects no such Actor, as a creation does. A changed
+/// or gone Actor is stale, whatever else changed in the catalog.
+pub fn check_actor_version(
+    owner: &Path,
+    actor_id: &str,
+    expected: Option<&str>,
+) -> Result<(), CatalogError> {
+    let versions = read_actor_versions(owner)?;
+    if versions.get(actor_id).map(String::as_str) != expected {
+        return Err(CatalogError::Stale);
+    }
+    Ok(())
+}
+
 /// The local-only mode change of an existing Actor: it neither rewrites nor
 /// commits the catalog. The mode must be for the agent of the Actor's
-/// binding; `None` returns the Actor to the agent's native default.
+/// binding; `None` returns the Actor to the agent's native default. Returns
+/// the version of the Actor after the change.
 pub fn set_actor_mode(
     owner: &Path,
-    expected_fingerprint: &str,
+    expected_version: &str,
     actor_id: &str,
     mode: Option<&ActorMode>,
 ) -> Result<String, CatalogError> {
     let read = read_catalog_versioned(owner)?;
-    if read.fingerprint != expected_fingerprint {
-        return Err(CatalogError::Stale);
-    }
     let actor = read
         .catalog
         .actors
         .iter()
         .find(|actor| actor.id == actor_id)
-        .ok_or_else(|| CatalogError::Invalid(format!("missing_actor_id: agent:{actor_id}")))?;
+        .ok_or(CatalogError::Stale)?;
+    check_actor_version(owner, actor_id, Some(expected_version))?;
     if let Some(mode) = mode {
         if actor.binding.agent() != Some(&mode.agent) {
             return Err(CatalogError::Invalid(format!(
@@ -152,7 +186,7 @@ pub fn set_actor_mode(
         }
     }
     store_mode(owner, actor_id, mode)?;
-    Ok(read.fingerprint)
+    Ok(actor_version(actor, mode))
 }
 
 fn is_translated(local: &LocalConfig) -> bool {
@@ -412,9 +446,9 @@ mod tests {
                 {"id": ACTOR, "name": "A", "binding": {"agent": "codex", "settings": []}}
             ]}),
         );
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
+        let version = read_actor_versions(d.path()).unwrap()[ACTOR].clone();
         let codex_mode = mode(AgentAdapterKind::Codex, "read-only");
-        set_actor_mode(d.path(), &fingerprint, ACTOR, Some(&codex_mode)).unwrap();
+        set_actor_mode(d.path(), &version, ACTOR, Some(&codex_mode)).unwrap();
         assert_eq!(
             read_actor_mode(d.path(), ACTOR).unwrap(),
             Some(codex_mode.clone())
@@ -447,11 +481,11 @@ mod tests {
             ]}),
         );
         let before = fs::read(super::super::catalog_path(d.path())).unwrap();
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
+        let version = read_actor_versions(d.path()).unwrap()[ACTOR].clone();
         assert!(matches!(
             set_actor_mode(
                 d.path(),
-                &fingerprint,
+                &version,
                 ACTOR,
                 Some(&mode(AgentAdapterKind::Codex, "agent"))
             ),
@@ -462,8 +496,8 @@ mod tests {
             Err(CatalogError::Stale)
         ));
         assert_eq!(
-            set_actor_mode(d.path(), &fingerprint, ACTOR, None).unwrap(),
-            fingerprint
+            set_actor_mode(d.path(), &version, ACTOR, None).unwrap(),
+            version
         );
         assert_eq!(
             fs::read(super::super::catalog_path(d.path())).unwrap(),
@@ -489,5 +523,67 @@ mod tests {
         ));
         assert!(translate_local_modes(d.path()).is_err());
         assert_eq!(fs::read(local_path(d.path())).unwrap(), before);
+    }
+
+    const OTHER: &str = "01arz3ndektsv4rrffq69g5faw";
+
+    fn two_codex_actors(d: &Path, second_name: &str) {
+        write_raw(
+            d,
+            serde_json::json!({"schemaVersion": 2, "actors": [
+                {"id": ACTOR, "name": "A", "binding": {"agent": "codex", "settings": []}},
+                {"id": OTHER, "name": second_name, "binding": {"agent": "codex", "settings": []}}
+            ]}),
+        );
+    }
+
+    #[test]
+    fn the_version_of_an_actor_follows_its_definition_and_its_mode_only() {
+        let d = tempdir().unwrap();
+        two_codex_actors(d.path(), "B");
+        let before = read_actor_versions(d.path()).unwrap();
+
+        // Another Actor of the catalog changes: this one keeps its version.
+        two_codex_actors(d.path(), "B renamed");
+        let after_other = read_actor_versions(d.path()).unwrap();
+        assert_eq!(after_other[ACTOR], before[ACTOR]);
+        assert_ne!(after_other[OTHER], before[OTHER]);
+        assert!(check_actor_version(d.path(), ACTOR, Some(&before[ACTOR])).is_ok());
+        assert_eq!(
+            check_actor_version(d.path(), OTHER, Some(&before[OTHER])),
+            Err(CatalogError::Stale)
+        );
+
+        // Its mode on this device is part of its version.
+        let changed = set_actor_mode(
+            d.path(),
+            &before[ACTOR],
+            ACTOR,
+            Some(&mode(AgentAdapterKind::Codex, "agent")),
+        )
+        .unwrap();
+        assert_ne!(changed, before[ACTOR]);
+        assert_eq!(read_actor_versions(d.path()).unwrap()[ACTOR], changed);
+        assert_eq!(
+            set_actor_mode(d.path(), &before[ACTOR], ACTOR, None),
+            Err(CatalogError::Stale)
+        );
+    }
+
+    #[test]
+    fn a_creation_expects_no_actor_and_a_gone_actor_is_stale() {
+        let d = tempdir().unwrap();
+        two_codex_actors(d.path(), "B");
+        let versions = read_actor_versions(d.path()).unwrap();
+        let fresh = "01arz3ndektsv4rrffq69g5fax";
+        assert!(check_actor_version(d.path(), fresh, None).is_ok());
+        assert_eq!(
+            check_actor_version(d.path(), ACTOR, None),
+            Err(CatalogError::Stale)
+        );
+        assert_eq!(
+            set_actor_mode(d.path(), &versions[ACTOR], fresh, None),
+            Err(CatalogError::Stale)
+        );
     }
 }

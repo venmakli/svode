@@ -17,20 +17,17 @@ import type {
  * What the Agents collection shows of each Agent on this device (Stage 11
  * `03`): the model and mode names the agents declared last, and the
  * readiness of the binding's agent or of the default agent. The chat's
- * offer of the agents is read once while there are Agents or an editor is
- * open, and on demand, as after a sign-in; reading starts no agent process.
+ * offer of the agents is read once while there are Agents, and on demand,
+ * as after a sign-in; reading starts no agent process.
  */
 export function useAgentActorFacts({
   agents,
-  editing,
   items,
 }: {
   agents: readonly AgentActorAgentOption[];
-  /** An Agent's editor is open and needs the agents' offers. */
-  editing: boolean;
   items: readonly AgentActorItem[] | null;
 }) {
-  const chat = useChatAgents(editing || (items?.length ?? 0) > 0);
+  const chat = useChatAgents((items?.length ?? 0) > 0);
   const defaultAgent = useDefaultAgent();
   const participant = items?.some(
     (item) => item.binding.kind === "participant",

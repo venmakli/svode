@@ -11,4 +11,3 @@ export {
   agentActorCandidates,
   agentActorReferenceLabel,
 } from "./lib/agent-actor-candidates";
-export { AgentActorReferenceValue } from "./ui/agent-actor-reference-value";

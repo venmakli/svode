@@ -36,6 +36,7 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
       name,
       ownerLabel: "docs",
       ownerPath: "/repo/docs",
+      version: "v1",
     };
   }
   const agentActors: AgentActorItem[] = [
@@ -91,10 +92,8 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
             actions: {
               createState: idle,
               getDeleteState: () => idle,
-              getEditState: () => idle,
               onAdd: () => writes.push("add"),
               onDelete: (item) => writes.push(`delete:${item.id}`),
-              onEdit: (item) => writes.push(`edit:${item.id}`),
             },
             agents,
             facts,

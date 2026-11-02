@@ -5,10 +5,7 @@ import { act, useState, type ReactNode } from "react";
 import type { Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
-import type {
-  AgentActorDraft,
-  AgentActorItem,
-} from "../model/agent-actor-types";
+import type { AgentActorItem } from "../model/agent-actor-types";
 
 if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   test("Agent Actor binding editor DOM", () => {
@@ -47,7 +44,9 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   const calls: { command: string; payload: Record<string, unknown> }[] = [];
   const channels = new Map<string, { id: number; index: number }>();
   let defaultAgent: unknown = null;
-  let mutation: unknown = null;
+  /** The answers of the next writes; an applied write by default. */
+  let mutateAnswers: (() => unknown)[] = [];
+  let versionCounter = 1;
 
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
@@ -76,14 +75,17 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       }
       case "agent_actors_generate_id":
         return "01arz3ndektsv4rrffq69g5fax";
-      case "agent_actors_mutate":
-        mutation = payload.mutation;
+      case "agent_actors_mutate": {
+        const answer = mutateAnswers.shift();
+        if (answer) return answer();
+        versionCounter += 1;
         return {
           status: "applied",
-          fingerprint: "next",
-          persistence: { status: "clean" },
+          version: `v${versionCounter}`,
+          persistence: { status: "committed" },
           rootPointer: null,
         };
+      }
       case "agent_runtime_set_setting":
       case "agent_runtime_unsubscribe":
       case "agent_runtime_release_draft":
@@ -97,14 +99,20 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   const { setLocale } = await import("@/paraglide/runtime");
   setLocale("en", { reload: false });
   const { TooltipProvider } = await import("@/components/ui/tooltip");
-  const { useRepositoryAccessPreflight } = await import("@/features/git");
-  const { AgentActorEditorDialog } =
-    await import("./agent-actor-editor-dialog");
-  const { AgentActorDetail } = await import("./agent-actor-detail");
-  const { createAgentActorDraft } = await import("../model/agent-actor-draft");
+  const { createAgentAdapterDictionary } =
+    await import("@/features/agent-adapters");
+  const { CollectionPropertyPanel } =
+    await import("@/features/properties/panel");
+  const { createAgentActorsPresentationDescriptor } =
+    await import("./agent-actors-presentation");
+  const { AgentActorBindingPopover } =
+    await import("./agent-actor-binding-popover");
   const { useAgentActorMutations } =
     await import("../hooks/use-agent-actor-mutations");
 
+  const dictionary = createAgentAdapterDictionary(
+    bindable.map(({ id, label }) => ({ id, displayName: label })),
+  );
   const offers = {
     agents: [
       { agent: "codex", name: "Codex", offer: { state: "available" } },
@@ -129,7 +137,8 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       calls.length = 0;
       channels.clear();
       defaultAgent = null;
-      mutation = null;
+      mutateAnswers = [];
+      versionCounter = 1;
       openedSettings = 0;
       try {
         await fn();
@@ -143,26 +152,29 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   }
 
   bindingTest(
-    "the wizard creates an Agent with a concrete agent: Identity, Agent and Review, values and the mode from the agent's draft session in the Space of the catalog until the journey closes",
+    "the panel shows Space, Agent, Approval mode and Readiness in this order, and no Approval mode for the participant's agent",
     async () => {
-      const saved: AgentActorDraft[] = [];
-      const initial = createAgentActorDraft("/repo/docs");
-      initial.name = "Docs Agent";
-      await mount(<Wizard initial={initial} onSave={(d) => saved.push(d)} />);
-      expect(step()).toBe("identity");
-      await clickButton("Continue");
-      expect(step()).toBe("agent");
-      expect(trigger().textContent).toBe(m.agent_actors_agent_choose());
-      // Without an agent the journey does not go on.
-      await clickButton("Continue");
-      expect(step()).toBe("agent");
-      expect(document.body.textContent?.includes("Choose an agent.")).toBe(
-        true,
+      await mount(<Panel items={[item({})]} />);
+      expect(panelKeys()).toEqual(["space", "agent", "approval", "status"]);
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      await mount(
+        <Panel
+          items={[item({ binding: { kind: "participant" }, mode: null })]}
+        />,
       );
+      expect(panelKeys()).toEqual(["space", "agent", "status"]);
+    },
+  );
+
+  bindingTest(
+    "Agent: the popover changes the draft binding and saves it whole once it closes; the agent's draft session runs in the Space of the catalog only while it is open",
+    async () => {
+      await mount(<Panel items={[item({})]} />);
       expect(
         calls.some((call) => call.command === "agent_runtime_hold_draft"),
       ).toBe(false);
-
       await click(trigger());
       // The bindable agents and the participant's agent; no custom agent.
       expect(tabNames()).toEqual([
@@ -171,8 +183,6 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
         "Grok Build",
         "Participant's agent",
       ]);
-      await click(tab("Codex"));
-      expect(popover() !== null).toBe(true);
       expect(lastCall("agent_runtime_hold_draft")).toEqual({
         agent: "codex",
         cwd: "/repo/docs",
@@ -184,67 +194,179 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
         "Collaboration mode",
         "Approval",
       ]);
-      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
+      // The draft session confirms the values the Agent keeps.
+      await deliver("d1", {
+        change: "settings",
+        value: settings({ model: "gpt-6-sol", mode: "agent" }),
+      });
+      await chooseValue(m.sessions_chat_model(), "GPT-5.6 Luna");
       expect(lastCall("agent_runtime_set_setting")).toEqual({
         session: codexDraftKey,
-        value: { setting: "model", value: "gpt-6-sol" },
+        value: { setting: "model", value: "gpt-5.6-luna" },
       });
       await deliver("d1", {
         change: "settings",
-        value: settings({ model: "gpt-6-sol" }),
+        value: settings({ model: "gpt-5.6-luna", mode: "agent" }),
       });
-      await chooseValue("Approval", "Auto review");
-      expect(draft()?.binding).toEqual({
-        agent: "codex",
-        kind: "agent",
-        settings: [{ setting: "model", value: "gpt-6-sol" }],
+      await chooseValue("Approval", "Read Only");
+      await deliver("d1", {
+        change: "settings",
+        value: settings({ model: "gpt-5.6-luna", mode: "read-only" }),
       });
-      expect(draft()?.mode).toEqual({
-        agent: "codex",
-        setting: "mode",
-        value: "agent",
-      });
-      await escape();
-      expect(popover()).toBe(null);
-      expect(trigger().textContent?.includes("GPT-6 Sol")).toBe(true);
-
-      await clickButton("Continue");
-      expect(step()).toBe("review");
-      const review = document.querySelector("[data-agent-actor-review]");
-      expect(
-        review?.querySelector("[data-agent-actor-binding]")?.textContent,
-      ).toBe("GPT-6 SolLow");
-      expect(review?.textContent?.includes("Approval")).toBe(true);
-      expect(review?.textContent?.includes("Auto review")).toBe(true);
-      expect(review?.textContent?.includes("On this device")).toBe(true);
-      // The draft session stays through the steps of the open journey.
+      // Nothing is written while the popover is open.
+      expect(mutations()).toEqual([]);
       expect(lastCall("agent_runtime_release_draft")).toBe(undefined);
 
-      await clickButton("Add agent");
-      expect(saved.at(-1)?.binding).toEqual({
-        agent: "codex",
-        kind: "agent",
-        settings: [{ setting: "model", value: "gpt-6-sol" }],
-      });
-      // Closing the journey releases the agent's draft session.
-      await clickButton("Cancel");
-      await clickButton("Discard draft");
-      expect(draft()).toBe(null);
+      await click(trigger());
+      expect(popover()).toBe(null);
+      expect(mutations()).toEqual([
+        {
+          expectedVersion: "v1",
+          mutation: {
+            kind: "update",
+            actor: {
+              binding: {
+                agent: "codex",
+                settings: [{ setting: "model", value: "gpt-5.6-luna" }],
+              },
+              description: null,
+              id: ACTOR,
+              name: "Docs Agent",
+            },
+            mode: { agent: "codex", setting: "mode", value: "read-only" },
+          },
+          ownerPath: "/repo/docs",
+          projectPath: "/repo",
+        },
+      ]);
+      await settle();
       expect(lastCall("agent_runtime_release_draft")).toEqual({ hold: 5 });
+    },
+  );
+
+  bindingTest(
+    "changing the agent leaves the mode unselected; Escape drops the draft",
+    async () => {
+      await mount(<Panel items={[item({})]} />);
+      await click(trigger());
+      await click(tab("Grok Build"));
+      expect(popover() !== null).toBe(true);
+      await escape();
+      expect(popover()).toBe(null);
+      expect(mutations()).toEqual([]);
+
+      await click(trigger());
+      await click(tab("Grok Build"));
+      await click(trigger());
+      expect(mutations().map((write) => write.mutation)).toEqual([
+        {
+          kind: "update",
+          actor: {
+            binding: { agent: "grok-build", settings: [] },
+            description: null,
+            id: ACTOR,
+            name: "Docs Agent",
+          },
+          mode: null,
+        },
+      ]);
+    },
+  );
+
+  bindingTest(
+    "Approval mode opens the same popover on the mode's values and writes the mode only on this device",
+    async () => {
+      await mount(<Panel items={[item({})]} />);
+      await click(trigger("approval"));
+      expect(lastCall("agent_runtime_hold_draft")).toEqual({
+        agent: "codex",
+        cwd: "/repo/docs",
+      });
+      await deliver("d1", {
+        change: "settings",
+        value: settings({ model: "gpt-6-sol", mode: "agent" }),
+      });
+      expect(tabNames()).toEqual([]);
+      expect(commandItems()).toEqual(["Read Only", "Auto review"]);
+      await click(commandItem("Read Only"));
+      await deliver("d1", {
+        change: "settings",
+        value: settings({ model: "gpt-6-sol", mode: "read-only" }),
+      });
+      await click(trigger("approval"));
+      expect(mutations()).toEqual([
+        {
+          expectedVersion: "v1",
+          mutation: {
+            kind: "set_mode",
+            actorId: ACTOR,
+            mode: { agent: "codex", setting: "mode", value: "read-only" },
+          },
+          ownerPath: "/repo/docs",
+          projectPath: "/repo",
+        },
+      ]);
+      await settle();
+      expect(lastCall("agent_runtime_release_draft")).toEqual({ hold: 5 });
+    },
+  );
+
+  bindingTest(
+    "an inherited Agent writes to the catalog of its owner Space",
+    async () => {
+      await mount(
+        <Panel
+          items={[
+            item({ inherited: true, ownerLabel: "repo", ownerPath: "/repo" }),
+          ]}
+        />,
+      );
+      await click(trigger());
+      expect(lastCall("agent_runtime_hold_draft")).toEqual({
+        agent: "codex",
+        cwd: "/repo",
+      });
+      await click(tab("Grok Build"));
+      await click(trigger());
+      expect(mutations()[0]?.ownerPath).toBe("/repo");
+    },
+  );
+
+  bindingTest(
+    "a changed Agent is a conflict at Agent without a write; a read-only catalog shows the reason at Agent",
+    async () => {
+      mutateAnswers = [() => ({ status: "stale" })];
+      await mount(<Panel items={[item({})]} />);
+      await click(trigger());
+      await click(tab("Grok Build"));
+      await click(trigger());
+      await settle();
+      expect(propertyMessage("agent")).toBe(m.agent_actors_property_stale());
+      expect(trigger().textContent?.includes("Codex")).toBe(true);
+
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      await mount(
+        <Panel
+          items={[item({})]}
+          readOnly={m.agent_actors_catalog_read_only()}
+        />,
+      );
+      expect(propertyMessage("agent")).toBe(m.agent_actors_catalog_read_only());
+      expect((trigger() as HTMLButtonElement).disabled).toBe(true);
+      expect((trigger("approval") as HTMLButtonElement).disabled).toBe(true);
+      expect(propertyMessage("approval")).toBe(null);
     },
   );
 
   bindingTest(
     "the participant's agent tab explains the binding, names this device's default agent, or leads to the settings without one",
     async () => {
-      const initial = createAgentActorDraft("/repo/docs");
-      initial.name = "Mine";
-      await mount(<Wizard initial={initial} onSave={() => undefined} />);
-      await clickButton("Continue");
+      await mount(<Panel items={[item({})]} />);
       await click(trigger());
       await click(tab("Participant's agent"));
       expect(popover() !== null).toBe(true);
-      expect(draft()?.binding).toEqual({ kind: "participant" });
       const content = popover()?.querySelector(
         "[data-agent-actor-participant]",
       );
@@ -256,21 +378,24 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       expect(
         content?.textContent?.includes(m.agent_actors_participant_no_default()),
       ).toBe(true);
-      expect(
-        calls.some((call) => call.command === "agent_runtime_hold_draft"),
-      ).toBe(false);
       await click(
         buttonIn(popover(), m.agent_actors_participant_choose_in_settings()),
       );
       expect(openedSettings).toBe(1);
       expect(popover()).toBe(null);
-      expect(trigger().textContent).toBe("Participant's agent");
-      await clickButton("Continue");
-      expect(
-        document
-          .querySelector("[data-agent-actor-review]")
-          ?.textContent?.includes("On this device"),
-      ).toBe(false);
+      // Leaving for the settings closes the popover, which saves the binding.
+      expect(mutations().map((write) => write.mutation)).toEqual([
+        {
+          kind: "update",
+          actor: {
+            binding: { participant: true },
+            description: null,
+            id: ACTOR,
+            name: "Docs Agent",
+          },
+          mode: null,
+        },
+      ]);
     },
   );
 
@@ -281,11 +406,11 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
         agent: "codex",
         settings: [{ setting: "model", value: "gpt-6-sol" }],
       };
-      const initial = createAgentActorDraft("/repo/docs");
-      initial.name = "Mine";
-      initial.binding = { kind: "participant" };
-      await mount(<Wizard initial={initial} onSave={() => undefined} />);
-      await clickButton("Continue");
+      await mount(
+        <Panel
+          items={[item({ binding: { kind: "participant" }, mode: null })]}
+        />,
+      );
       await click(trigger());
       const content = popover()?.querySelector(
         "[data-agent-actor-participant]",
@@ -298,73 +423,31 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   );
 
   bindingTest(
-    "a kept value the agent no longer declares shows with a note and is kept; a value of the mode's setting in the catalog shows with a note and is not saved",
+    "a kept value the agent no longer declares and a value of the mode's setting in the catalog show with a note",
     async () => {
-      const saved: AgentActorDraft[] = [];
       await mount(
-        <EditForm
-          item={item({
-            binding: {
-              agent: "codex",
-              kind: "agent",
-              settings: [
-                { setting: "model", value: "gpt-4-old" },
-                { setting: "mode", value: "agent" },
-              ],
-            },
-            mode: null,
-          })}
-          onSave={(d) => saved.push(d)}
+        <Panel
+          items={[
+            item({
+              binding: {
+                agent: "codex",
+                kind: "agent",
+                settings: [
+                  { setting: "model", value: "gpt-4-old" },
+                  { setting: "mode", value: "agent" },
+                ],
+              },
+              mode: null,
+            }),
+          ]}
         />,
       );
-      expect(lastCall("agent_runtime_hold_draft")).toEqual({
-        agent: "codex",
-        cwd: "/repo/docs",
-      });
       await click(trigger());
       expect(rowValue(m.sessions_chat_model())).toBe("gpt-4-old");
       // Both the model and the hand-edited mode are marked.
       expect(staleNotes()).toBe(2);
       await escape();
-      await clickButton("Save");
-      expect(saved.at(-1)?.binding).toEqual({
-        agent: "codex",
-        kind: "agent",
-        settings: [{ setting: "model", value: "gpt-4-old" }],
-      });
-    },
-  );
-
-  bindingTest(
-    "a change of the mode alone is a local-only write, any other change writes the catalog",
-    async () => {
-      const actor = item({});
-      const mode = { agent: "codex", setting: "mode", value: "read-only" };
-      await mount(<MutationHarness item={actor} draft={{ mode }} />);
-      await clickButton("Apply");
-      expect(mutation).toEqual({ kind: "set_mode", actorId: actor.id, mode });
-
-      for (const root of mounted.splice(0)) {
-        await act(async () => root.unmount());
-      }
-      await mount(
-        <MutationHarness item={actor} draft={{ mode, name: "Reviewer" }} />,
-      );
-      await clickButton("Apply");
-      expect(mutation).toEqual({
-        kind: "update",
-        actor: {
-          binding: {
-            agent: "codex",
-            settings:
-              actor.binding.kind === "agent" ? actor.binding.settings : [],
-          },
-          description: null,
-          id: actor.id,
-          name: "Reviewer",
-        },
-        mode,
-      });
+      expect(mutations()).toEqual([]);
     },
   );
 
@@ -372,19 +455,20 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     "an agent without variants shows the kept values as they are with its recovery; values cannot change, the agent can",
     async () => {
       await mount(
-        <EditForm
-          item={item({
-            binding: {
-              agent: "claude-code",
-              kind: "agent",
-              settings: [
-                { setting: "model", value: "sonnet" },
-                { setting: "effort", value: "high" },
-              ],
-            },
-            mode: { agent: "claude-code", setting: "mode", value: "plan" },
-          })}
-          onSave={() => undefined}
+        <Panel
+          items={[
+            item({
+              binding: {
+                agent: "claude-code",
+                kind: "agent",
+                settings: [
+                  { setting: "model", value: "sonnet" },
+                  { setting: "effort", value: "high" },
+                ],
+              },
+              mode: { agent: "claude-code", setting: "mode", value: "plan" },
+            }),
+          ]}
         />,
       );
       await click(trigger());
@@ -404,12 +488,19 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       // The kept values are not choices.
       expect(settingRow("model")?.tagName).toBe("DIV");
       await click(tab("Codex"));
-      expect(draft()?.binding).toEqual({
-        agent: "codex",
-        kind: "agent",
-        settings: [],
-      });
-      expect(draft()?.mode).toBe(null);
+      await click(trigger());
+      expect(mutations().map((write) => write.mutation)).toEqual([
+        {
+          kind: "update",
+          actor: {
+            binding: { agent: "codex", settings: [] },
+            description: null,
+            id: ACTOR,
+            name: "Docs Agent",
+          },
+          mode: null,
+        },
+      ]);
     },
   );
 
@@ -417,36 +508,33 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     "a binding this version cannot bind, as a custom agent of a V1 catalog, shows as unavailable and changes to another agent",
     async () => {
       await mount(
-        <EditForm
-          item={item({
-            binding: {
-              agent: "custom-mine",
-              kind: "agent",
-              settings: [{ setting: "model", value: "local" }],
-            },
-            mode: null,
-          })}
-          onSave={() => undefined}
+        <Panel
+          items={[
+            item({
+              binding: {
+                agent: "custom-mine",
+                kind: "agent",
+                settings: [{ setting: "model", value: "local" }],
+              },
+              mode: null,
+            }),
+          ]}
         />,
       );
-      expect(
-        document.querySelector("[data-agent-adapter-unknown]")?.textContent,
-      ).toBe(m.agent_actors_adapter_unknown());
+      await click(trigger());
       expect(
         calls.some((call) => call.command === "agent_runtime_hold_draft"),
       ).toBe(false);
-      await click(trigger());
       expect(
         popover()?.textContent?.includes(m.settings_agents_state_deferred()),
       ).toBe(true);
       expect(rowValue("model")).toBe("local");
       await click(tab("Codex"));
-      expect(draft()?.binding).toEqual({
-        agent: "codex",
-        kind: "agent",
-        settings: [],
-      });
-      expect(document.querySelector("[data-agent-adapter-unknown]")).toBe(null);
+      await click(trigger());
+      expect(
+        (mutations()[0]?.mutation as { actor: { binding: unknown } }).actor
+          .binding,
+      ).toEqual({ agent: "codex", settings: [] });
     },
   );
 
@@ -454,12 +542,13 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     "an agent without modes has no mode row; without a draft session its last declarations give the values, kept at once",
     async () => {
       await mount(
-        <EditForm
-          item={item({
-            binding: { agent: "grok-build", kind: "agent", settings: [] },
-            mode: null,
-          })}
-          onSave={() => undefined}
+        <Panel
+          items={[
+            item({
+              binding: { agent: "grok-build", kind: "agent", settings: [] },
+              mode: null,
+            }),
+          ]}
         />,
       );
       await click(trigger());
@@ -470,139 +559,129 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
         ),
       ).toBe(true);
       await chooseValue(m.sessions_chat_model(), "Grok 5 Fast");
-      expect(draft()?.binding).toEqual({
-        agent: "grok-build",
-        kind: "agent",
-        settings: [{ setting: "model", value: "grok-5-fast" }],
-      });
-      expect(draft()?.mode).toBe(null);
       expect(
         calls.some((call) => call.command === "agent_runtime_set_setting"),
       ).toBe(false);
-    },
-  );
-
-  bindingTest(
-    "the edit form holds the agent's draft session in the Space of the catalog and releases it once the form closes",
-    async () => {
-      const root = await mount(
-        <EditForm item={item({})} onSave={() => undefined} />,
-      );
-      expect(lastCall("agent_runtime_hold_draft")).toEqual({
-        agent: "codex",
-        cwd: "/repo/docs",
-      });
-      expect(lastCall("agent_runtime_release_draft")).toBe(undefined);
-      await act(async () => root.unmount());
-      mounted.splice(mounted.indexOf(root), 1);
-      await settle();
-      expect(lastCall("agent_runtime_release_draft")).toEqual({ hold: 5 });
-    },
-  );
-
-  bindingTest(
-    "the Detail shows the binding from the agent's last declarations without starting it or offering changes",
-    async () => {
-      await mount(<ReadOnly item={item({})} />);
-      expect(trigger().textContent?.includes("GPT-6 Sol")).toBe(true);
       await click(trigger());
-      expect(tabNames()).toEqual(["Codex"]);
-      expect(rowValue("Approval")).toBe("Auto review");
-      // The values only show here.
-      expect(settingRow("Approval")?.tagName).toBe("DIV");
-      expect(settingRow(m.sessions_chat_model())?.tagName).toBe("DIV");
-      expect(
-        calls.some((call) =>
-          ["agent_runtime_hold_draft", "agent_runtime_subscribe"].includes(
-            call.command,
-          ),
-        ),
-      ).toBe(false);
+      expect(mutations().map((write) => write.mutation)).toEqual([
+        {
+          kind: "update",
+          actor: {
+            binding: {
+              agent: "grok-build",
+              settings: [{ setting: "model", value: "grok-5-fast" }],
+            },
+            description: null,
+            id: ACTOR,
+            name: "Docs Agent",
+          },
+          mode: null,
+        },
+      ]);
     },
   );
 
-  function Wizard({
-    initial,
-    onSave,
-  }: {
-    initial: AgentActorDraft;
-    onSave(draft: AgentActorDraft): void;
-  }) {
-    const [current, setCurrent] = useState<AgentActorDraft | null>(initial);
-    const accessRecovery = useRepositoryAccessPreflight();
-    return (
-      <>
-        <span data-draft>{JSON.stringify(current)}</span>
-        <AgentActorEditorDialog
-          accessRecovery={accessRecovery}
-          agents={bindable}
-          draft={current}
-          failure={null}
-          offers={offers as never}
-          pending={false}
-          requesting={false}
-          onChange={setCurrent}
-          onClose={() => setCurrent(null)}
-          onOpenAgentSettings={() => (openedSettings += 1)}
-          onRecheckOffers={() => undefined}
-          onSave={() => current && onSave(current)}
-        />
-      </>
-    );
-  }
+  bindingTest(
+    "the writes of one Agent run one after another, each from the version the previous one left; Agents of one catalog keep their own versions",
+    async () => {
+      const first = deferred<unknown>();
+      mutateAnswers = [() => first.promise];
+      const other = item({
+        actorRef: "agent:01arz3ndektsv4rrffq69g5faw",
+        id: "01arz3ndektsv4rrffq69g5faw",
+        name: "Reviewer",
+        version: "w1",
+      });
+      await mount(<Writer items={[item({}), other]} />);
+      await click(buttonIn(document.body, "rename"));
+      await click(buttonIn(document.body, "describe"));
+      await click(buttonIn(document.body, "rename other"));
+      // The second write of the Agent waits for the first; the other Agent
+      // does not.
+      expect(mutations().map((write) => write.expectedVersion)).toEqual([
+        "v1",
+        "w1",
+      ]);
+      await act(async () => {
+        first.resolve({
+          status: "applied",
+          version: "v9",
+          persistence: { status: "committed" },
+          rootPointer: null,
+        });
+      });
+      await settle();
+      const writes = mutations();
+      expect(writes.map((write) => write.expectedVersion)).toEqual([
+        "v1",
+        "w1",
+        "v9",
+      ]);
+      // The second write keeps the name the first one wrote.
+      expect(
+        (
+          writes[2]?.mutation as {
+            actor: { name: string; description: string };
+          }
+        ).actor,
+      ).toEqual({
+        binding: {
+          agent: "codex",
+          settings: [{ setting: "model", value: "gpt-6-sol" }],
+        },
+        description: "Writes docs",
+        id: ACTOR,
+        name: "Docs",
+      });
+    },
+  );
 
-  function EditForm({
-    item: actor,
-    onSave,
-  }: {
-    item: AgentActorItem;
-    onSave(draft: AgentActorDraft): void;
-  }) {
-    const [current, setCurrent] = useState(() =>
-      createAgentActorDraft(actor.ownerPath, actor),
-    );
-    return (
-      <>
-        <span data-draft>{JSON.stringify(current)}</span>
-        <AgentActorDetail
-          agents={bindable}
-          draft={current}
-          editMode
-          offers={offers as never}
-          onChange={setCurrent}
-          onOpenAgentSettings={() => (openedSettings += 1)}
-          onRecheckOffers={() => undefined}
-          onSave={onSave}
-        />
-        <button type="submit" form={`agent-actor-detail-${actor.id}`}>
-          Save
-        </button>
-      </>
-    );
-  }
+  bindingTest(
+    "a new Agent is named after the Agents of its catalog and bound to the participant's agent",
+    async () => {
+      const created: (string | null)[] = [];
+      await mount(
+        <Writer
+          items={[
+            item({ name: "New agent" }),
+            item({
+              actorRef: "agent:01arz3ndektsv4rrffq69g5faw",
+              id: "01arz3ndektsv4rrffq69g5faw",
+              name: "New agent 2",
+              ownerPath: "/repo",
+              inherited: true,
+            }),
+          ]}
+          onCreated={(id) => created.push(id)}
+        />,
+      );
+      await click(buttonIn(document.body, "create"));
+      expect(mutations()).toEqual([
+        {
+          expectedVersion: null,
+          mutation: {
+            kind: "create",
+            actor: {
+              binding: { participant: true },
+              description: null,
+              id: "01arz3ndektsv4rrffq69g5fax",
+              name: "New agent 2",
+            },
+            mode: null,
+          },
+          ownerPath: "/repo/docs",
+          projectPath: "/repo",
+        },
+      ]);
+      expect(created).toEqual([
+        JSON.stringify(["/repo/docs", "01arz3ndektsv4rrffq69g5fax"]),
+      ]);
+    },
+  );
 
-  function ReadOnly({ item: actor }: { item: AgentActorItem }) {
-    return (
-      <AgentActorDetail
-        agents={bindable}
-        draft={createAgentActorDraft(actor.ownerPath, actor)}
-        editMode={false}
-        offers={offers as never}
-        onChange={() => undefined}
-        onOpenAgentSettings={() => (openedSettings += 1)}
-        onRecheckOffers={() => undefined}
-        onSave={() => undefined}
-      />
-    );
-  }
+  const ACTOR = "01arz3ndektsv4rrffq69g5fav";
 
-  function MutationHarness({
-    item: actor,
-    draft: patch,
-  }: {
-    item: AgentActorItem;
-    draft: Partial<AgentActorDraft>;
-  }) {
+  function useEditing(items: readonly AgentActorItem[]) {
     const mutations = useAgentActorMutations({
       projectPath: "/repo",
       refresh: () => undefined,
@@ -610,23 +689,130 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       snapshot: {
         agents: bindable,
         diagnostics: [],
-        fingerprints: { [actor.ownerPath]: "fingerprint" },
-        launchSpacePath: actor.ownerPath,
-        items: [actor],
+        fingerprints: { "/repo/docs": "f", "/repo": "g" },
+        launchSpacePath: "/repo/docs",
+        items,
       },
     });
+    return mutations;
+  }
+
+  function Panel({
+    items,
+    readOnly = null,
+  }: {
+    items: readonly AgentActorItem[];
+    readOnly?: string | null;
+  }) {
+    const owner = useEditing(items);
+    const descriptor = createAgentActorsPresentationDescriptor({
+      actions: {
+        createState: { status: "idle" },
+        getDeleteState: () => ({ status: "idle" }),
+        onAdd: () => undefined,
+        onDelete: () => undefined,
+      },
+      agents: dictionary,
+      editing: {
+        getState: () =>
+          readOnly
+            ? { reason: readOnly, status: "disabled" }
+            : { status: "idle" },
+        update: (actor, edit) =>
+          owner.write(
+            actor,
+            (current) => ({
+              ...current,
+              binding: edit.binding,
+              mode: edit.mode,
+            }),
+            edit.since,
+          ),
+        renderPopover: (input, opensOnMode) => (
+          <AgentActorBindingPopover
+            agents={bindable}
+            input={input}
+            offers={offers as never}
+            opensOnMode={opensOnMode}
+            onOpenAgentSettings={() => (openedSettings += 1)}
+            onRecheckOffers={() => undefined}
+          />
+        ),
+      },
+      facts: (actor) => ({
+        model: null,
+        mode:
+          actor.binding.kind === "participant" ||
+          actor.binding.agent === "grok-build"
+            ? null
+            : { kind: "agent_default" },
+        readiness: "ready",
+      }),
+      inheritedVisible: false,
+      items,
+      spaceName: () => "Docs",
+    });
     return (
-      <button
-        type="button"
-        onClick={() =>
-          void mutations.apply("update", actor.ownerPath, {
-            ...createAgentActorDraft(actor.ownerPath, actor),
-            ...patch,
-          })
-        }
-      >
-        Apply
-      </button>
+      <CollectionPropertyPanel
+        item={items[0]!}
+        properties={descriptor.properties}
+      />
+    );
+  }
+
+  function Writer({
+    items,
+    onCreated = () => undefined,
+  }: {
+    items: readonly AgentActorItem[];
+    onCreated?(id: string | null): void;
+  }) {
+    const owner = useEditing(items);
+    const [, setErrors] = useState<string[]>([]);
+    const keep = (write: Promise<void>) =>
+      void write.catch((error: Error) =>
+        setErrors((current) => [...current, error.message]),
+      );
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            keep(
+              owner.write(items[0]!, (state) => ({ ...state, name: "Docs" })),
+            )
+          }
+        >
+          rename
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            keep(
+              owner.write(items[0]!, (state) => ({
+                ...state,
+                description: "Writes docs",
+              })),
+            )
+          }
+        >
+          describe
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            keep(owner.write(items[1]!, (state) => ({ ...state, name: "R" })))
+          }
+        >
+          rename other
+        </button>
+        <button
+          type="button"
+          onClick={() => void owner.create("/repo/docs").then(onCreated)}
+        >
+          create
+        </button>
+      </>
     );
   }
 
@@ -645,8 +831,31 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       name: "Docs Agent",
       ownerLabel: "docs",
       ownerPath: "/repo/docs",
+      version: "v1",
       ...patch,
     };
+  }
+
+  function deferred<Value>() {
+    let resolve!: (value: Value) => void;
+    const promise = new Promise<Value>((next) => {
+      resolve = next;
+    });
+    return { promise, resolve };
+  }
+
+  function commandItems() {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
+    ).map((element) => element.querySelector("span > span")?.textContent ?? "");
+  }
+
+  function commandItem(option: string) {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
+    ).find(
+      (element) => element.querySelector("span > span")?.textContent === option,
+    );
   }
 
   function holdDraft(agent: string) {
@@ -720,14 +929,14 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     return [];
   }
 
-  function settings(current: { model?: string } = {}) {
+  function settings(current: { model?: string; mode?: string } = {}) {
     return [
       {
         id: "mode",
         name: "Approval",
         description: null,
         category: "mode",
-        currentValue: "read-only",
+        currentValue: current.mode ?? "read-only",
         options: [
           { value: "read-only", name: "Read Only", description: null },
           { value: "agent", name: "Auto review", description: null },
@@ -832,28 +1041,36 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     return root;
   }
 
-  function draft(): AgentActorDraft | null {
-    return JSON.parse(
-      document.querySelector("[data-draft]")?.textContent ?? "null",
-    );
-  }
-
-  function step() {
-    return document
-      .querySelector('[data-collection-create-flow="agent-actor"]')
-      ?.getAttribute("data-collection-create-step");
-  }
-
   function lastCall(command: string) {
     return calls.filter((call) => call.command === command).at(-1)?.payload;
   }
 
-  function trigger() {
+  function trigger(property = "agent") {
     const button = document.querySelector<HTMLElement>(
-      "button[data-agent-actor-binding]",
+      `button[data-collection-property-popover-trigger="${property}"]`,
     );
-    if (!button) throw new Error("no binding row");
+    if (!button) throw new Error(`no trigger of ${property}`);
     return button;
+  }
+
+  function panelKeys() {
+    return Array.from(
+      document.querySelectorAll("[data-collection-panel-property]"),
+    ).map((row) => row.getAttribute("data-collection-panel-property"));
+  }
+
+  function propertyMessage(property: string) {
+    return (
+      document.querySelector(
+        `[data-collection-panel-property="${property}"] [data-collection-panel-property-message]`,
+      )?.textContent ?? null
+    );
+  }
+
+  function mutations() {
+    return calls
+      .filter((call) => call.command === "agent_actors_mutate")
+      .map((call) => call.payload);
   }
 
   function popover() {
@@ -919,12 +1136,6 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     return Array.from(container?.querySelectorAll("button") ?? []).find(
       (element) => element.textContent?.trim() === label,
     );
-  }
-
-  async function clickButton(label: string) {
-    const button = buttonIn(document.body, label);
-    if (!button) throw new Error(`no button ${label}`);
-    await click(button);
   }
 
   /** Opens the screen of a setting and chooses a value there. */

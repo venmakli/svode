@@ -52,6 +52,8 @@ interface MultiPanePopoverProps<TPane extends string> {
   onCloseAutoFocus?: PopoverContentProps["onCloseAutoFocus"];
   /** A press outside the popover, before it closes. */
   onPointerDownOutside?: PopoverContentProps["onPointerDownOutside"];
+  /** Escape, before the popover closes. */
+  onEscapeKeyDown?: PopoverContentProps["onEscapeKeyDown"];
   className?: string;
 }
 
@@ -74,6 +76,7 @@ export function MultiPanePopover<TPane extends string>({
   onOpenAutoFocus,
   onCloseAutoFocus,
   onPointerDownOutside,
+  onEscapeKeyDown,
   className,
 }: MultiPanePopoverProps<TPane>) {
   const [innerPane, setInnerPane] = useState<TPane>(initialPane ?? mainPane);
@@ -119,6 +122,7 @@ export function MultiPanePopover<TPane extends string>({
         onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
         onPointerDownOutside={onPointerDownOutside}
+        onEscapeKeyDown={onEscapeKeyDown}
         className={cn(
           "flex w-80 max-h-[min(640px,var(--radix-popover-content-available-height))] flex-col gap-0 overflow-hidden !rounded-[10px] !p-0 !shadow-[0_0_0_1px_rgba(0,0,0,0.08),0_12px_32px_-8px_rgba(0,0,0,0.18),0_4px_8px_-2px_rgba(0,0,0,0.08)]",
           className,

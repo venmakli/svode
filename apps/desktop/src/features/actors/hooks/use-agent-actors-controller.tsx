@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type {
   CollectionActionState,
@@ -6,6 +6,7 @@ import type {
 } from "@/features/collection";
 import type { CollectionItemPeekController } from "@/features/collection/app-shell";
 import { RepositoryAccessPreflightDialog } from "@/features/git";
+import type { CollectionPropertyActionState } from "@/features/properties";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import { useSpaceNames } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
@@ -13,6 +14,7 @@ import * as m from "@/paraglide/messages.js";
 import type { ActorPeekTarget } from "../model/actor-peek";
 import type {
   AgentActorAgentOption,
+  AgentActorCatalogSnapshot,
   AgentActorItem,
 } from "../model/agent-actor-types";
 import {
@@ -25,11 +27,12 @@ import { useAgentActorPeek } from "./use-agent-actor-peek";
 import { useAgentActorFacts } from "./use-agent-actor-facts";
 import {
   useAgentActorMutations,
-  type AgentActorMutationAccessContext,
+  type AgentActorAccessDenial,
 } from "./use-agent-actor-mutations";
+import { AgentActorBindingPopover } from "../ui/agent-actor-binding-popover";
 import { AgentActorDeleteDialog } from "../ui/agent-actor-delete-dialog";
-import { AgentActorEditorDialog } from "../ui/agent-actor-editor-dialog";
 import { AgentActorSaveDialog } from "../ui/agent-actor-save-dialog";
+import type { AgentActorsPresentationEditing } from "../ui/agent-actors-presentation";
 import { CatalogRetryButton } from "../ui/catalog-retry-button";
 
 const NO_AGENTS: readonly AgentActorAgentOption[] = [];
@@ -84,43 +87,64 @@ export function useAgentActorsController({
     snapshot,
   });
   const {
-    apply: applyMutation,
     closeDelete,
-    createDraft,
+    confirmDelete,
+    create,
     deleteActor,
     deleteReferences,
-    editSession,
     failure: mutationFailure,
-    openCreate,
     openDelete,
-    openEdit,
     pending: mutationPending,
-    setCreateDraft,
-    setEditSession,
+    write,
   } = mutations;
+
+  // A created Agent opens in the peek with focus in its name, once.
+  const [focusTitleRequest, setFocusTitleRequest] = useState<{
+    itemId: string;
+    request: number;
+  } | null>(null);
+  const { open: openPeek } = peek;
+  const shownItemId =
+    peek.target?.presentationId === "agents" ? peek.target.itemId : null;
+  const [lastShownItemId, setLastShownItemId] = useState(shownItemId);
+  if (lastShownItemId !== shownItemId) {
+    setLastShownItemId(shownItemId);
+    if (
+      focusTitleRequest !== null &&
+      shownItemId !== focusTitleRequest.itemId
+    ) {
+      setFocusTitleRequest(null);
+    }
+  }
+  const createAndOpen = useCallback(
+    async (ownerPath: string) => {
+      const itemId = await create(ownerPath);
+      if (itemId === null) return;
+      openPeek({ presentationId: "agents", itemId });
+      setFocusTitleRequest((current) => ({
+        itemId,
+        request: (current?.request ?? 0) + 1,
+      }));
+    },
+    [create, openPeek],
+  );
 
   const continueIntent = useCallback(
     (intent: AgentActorAccessIntent) => {
       if (intent.kind === "add-agent") {
-        if (createDraft)
-          void applyMutation("create", intent.ownerPath, createDraft);
+        void createAndOpen(intent.ownerPath);
         return;
       }
       if (intent.kind === "delete-agent") {
         openDelete(intent.item);
         return;
       }
-      if (intent.kind === "save-agent-catalog") {
-        void catalogSave.confirm();
-        return;
-      }
-      openEdit(intent.item);
+      void catalogSave.confirm();
     },
-    [applyMutation, catalogSave, createDraft, openDelete, openEdit],
+    [catalogSave, createAndOpen, openDelete],
   );
   const agentFacts = useAgentActorFacts({
     agents: snapshot?.agents ?? NO_AGENTS,
-    editing: createDraft !== null || editSession !== null,
     items: snapshot?.items ?? null,
   });
   const accessCoordinator = useAgentActorAccessCoordinator({
@@ -129,55 +153,75 @@ export function useAgentActorsController({
   });
   const requestAccess = accessCoordinator.request;
 
+  const editState = useCallback(
+    (item: AgentActorItem): CollectionPropertyActionState => {
+      if (readOnly) {
+        return {
+          reason: m.repository_work_status_read_only(),
+          status: "disabled",
+        };
+      }
+      const reason = snapshot ? agentActorReadOnlyReason(snapshot, item) : null;
+      return reason ? { reason, status: "disabled" } : { status: "idle" };
+    },
+    [readOnly, snapshot],
+  );
+  const agents = snapshot?.agents ?? NO_AGENTS;
+  const offers = agentFacts.offers;
+  const reloadOffers = agentFacts.reloadOffers;
+  const editing = useMemo<AgentActorsPresentationEditing>(
+    () => ({
+      getState: editState,
+      update: (item, edit) =>
+        write(
+          item,
+          (current) => ({ ...current, binding: edit.binding, mode: edit.mode }),
+          edit.since,
+        ),
+      renderPopover: (input, opensOnMode) => (
+        <AgentActorBindingPopover
+          agents={agents}
+          input={input}
+          offers={offers}
+          opensOnMode={opensOnMode}
+          onOpenAgentSettings={onOpenAgentSettings}
+          onRecheckOffers={reloadOffers}
+        />
+      ),
+    }),
+    [agents, editState, offers, onOpenAgentSettings, reloadOffers, write],
+  );
+
   const agentPeek = useAgentActorPeek({
-    accessRecovery: accessCoordinator.recovery,
-    applyMutation,
-    agents: snapshot?.agents ?? NO_AGENTS,
-    editSession,
-    mutationPending,
-    offers: agentFacts.offers,
-    peek,
-    readOnly,
+    editState,
+    focusTitleRequest,
     items: snapshot?.items ?? null,
-    setEditSession,
-    onOpenAgentSettings,
-    onRecheckOffers: agentFacts.reloadOffers,
+    write,
   });
 
   function handleMutationAccessDenied(
     error: unknown,
-    context: AgentActorMutationAccessContext,
+    denial: AgentActorAccessDenial,
   ) {
-    const item =
-      "ownerLabel" in context.draftOrItem ? context.draftOrItem : null;
-    const retry = () => {
-      if (context.kind === "delete" && item) {
-        openDelete(item);
-        return;
-      }
-      return mutations.apply(
-        context.kind,
-        context.ownerPath,
-        context.draftOrItem,
-      );
-    };
     return accessCoordinator.recoverFromError(error, {
-      continue: retry,
-      intentKey: `agent-actor-${context.kind}-apply`,
+      continue: denial.retry,
+      intentKey: `agent-actor-${denial.kind}-apply`,
       intentLabel:
-        context.kind === "delete"
+        denial.kind === "delete"
           ? m.agent_actors_delete()
-          : m.agent_actors_save(),
+          : denial.kind === "create"
+            ? m.agent_actors_add()
+            : m.agent_actors_edit(),
       onPlanChanged: () => {
-        if (context.kind === "delete" && item) {
-          openDelete(item);
+        if (denial.kind === "delete" && denial.item) {
+          openDelete(denial.item);
           return;
         }
         return catalog.refresh();
       },
-      ownerName: item?.ownerLabel,
-      ownerPath: context.ownerPath,
-      placement: "inline",
+      ownerName: denial.item?.ownerLabel,
+      ownerPath: denial.ownerPath,
+      placement: denial.kind === "delete" ? "inline" : "dialog",
     });
   }
 
@@ -256,28 +300,6 @@ export function useAgentActorsController({
   const overlays = (
     <>
       <RepositoryAccessPreflightDialog recovery={accessCoordinator.recovery} />
-      <AgentActorEditorDialog
-        accessRecovery={accessCoordinator.recovery}
-        agents={snapshot?.agents ?? NO_AGENTS}
-        draft={createDraft}
-        failure={mutationFailure}
-        offers={agentFacts.offers}
-        pending={mutationPending}
-        requesting={accessCoordinator.requesting}
-        readOnly={readOnly}
-        onChange={setCreateDraft}
-        onOpenAgentSettings={onOpenAgentSettings}
-        onRecheckOffers={agentFacts.reloadOffers}
-        onClose={() => {
-          if (mutationPending) return;
-          accessCoordinator.recovery.close();
-          setCreateDraft(null);
-        }}
-        onSave={() =>
-          createDraft &&
-          requestAccess({ kind: "add-agent", ownerPath: createDraft.ownerPath })
-        }
-      />
       <AgentActorDeleteDialog
         accessRecovery={accessCoordinator.recovery}
         actor={deleteActor}
@@ -286,10 +308,7 @@ export function useAgentActorsController({
         referenceState={deleteReferences}
         readOnly={readOnly}
         onClose={() => !mutationPending && closeDelete()}
-        onConfirm={() =>
-          deleteActor &&
-          void applyMutation("delete", deleteActor.ownerPath, deleteActor)
-        }
+        onConfirm={() => deleteActor && void confirmDelete(deleteActor)}
         onRetry={() => deleteActor && openDelete(deleteActor)}
       />
       <AgentActorSaveDialog
@@ -317,11 +336,9 @@ export function useAgentActorsController({
       createState: actionStateForOwner(owner.spacePath),
       getDeleteState: (item: AgentActorItem) =>
         actionStateForOwner(item.ownerPath),
-      getEditState: (item: AgentActorItem) =>
-        actionStateForOwner(item.ownerPath),
       onAdd: () => {
         if (readOnly) return;
-        openCreate(owner.spacePath);
+        requestAccess({ kind: "add-agent", ownerPath: owner.spacePath });
       },
       onDelete: (item: AgentActorItem) => {
         if (readOnly) return;
@@ -331,11 +348,8 @@ export function useAgentActorsController({
           item,
         });
       },
-      onEdit: (item: AgentActorItem) => {
-        if (readOnly) return;
-        requestAccess({ kind: "edit-agent", ownerPath: item.ownerPath, item });
-      },
     },
+    editing,
     /** What the Agents collection shows of an Agent on this device. */
     facts: agentFacts.facts,
     inheritedVisible: snapshot?.items.some((item) => item.inherited) ?? false,
@@ -344,4 +358,34 @@ export function useAgentActorsController({
     presentationState,
     spaceName,
   };
+}
+
+/**
+ * Why an Agent cannot be edited (Stage 11 `04`, 4.I): its catalog is open
+ * only for reading, as one of an unknown schema version, with unknown fields
+ * or a diagnostic of its source, or its id is ambiguous; null when it can.
+ */
+export function agentActorReadOnlyReason(
+  snapshot: AgentActorCatalogSnapshot,
+  item: AgentActorItem,
+): string | null {
+  const diagnostics = snapshot.diagnostics.filter(
+    (diagnostic) => diagnostic.ownerPath === item.ownerPath,
+  );
+  if (
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "ambiguous_actor_id" &&
+        diagnostic.message.includes(item.actorRef),
+    )
+  ) {
+    return m.agent_actors_reference_ambiguous();
+  }
+  if (
+    !snapshot.fingerprints[item.ownerPath] ||
+    diagnostics.some((diagnostic) => diagnostic.code === "catalog_unavailable")
+  ) {
+    return m.agent_actors_catalog_read_only();
+  }
+  return null;
 }

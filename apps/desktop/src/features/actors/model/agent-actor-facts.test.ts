@@ -25,6 +25,7 @@ const codex: AgentActorItem = {
   name: "Reviewer",
   ownerLabel: "docs",
   ownerPath: "/repo/docs",
+  version: "v1",
 };
 const participant: AgentActorItem = {
   ...codex,

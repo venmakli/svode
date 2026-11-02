@@ -1,6 +1,4 @@
 import { useCallback, useRef, useState } from "react";
-
-import { useSignalUserEdit } from "@/features/navigation";
 import { toast } from "sonner";
 
 import * as m from "@/paraglide/messages.js";
@@ -17,29 +15,39 @@ import {
   actorRootPointerDescription,
 } from "../lib/persistence-feedback";
 import {
-  createAgentActorDraft,
+  agentActorState,
   isAgentActorPortableUnchanged,
+  uniqueAgentActorName,
 } from "../model/agent-actor-draft";
 import type {
   AgentActorCatalogSnapshot,
   AgentActorDeleteReferenceState,
-  AgentActorDraft,
-  AgentActorMutationApplied,
   AgentActorItem,
+  AgentActorMutationApplied,
+  AgentActorState,
 } from "../model/agent-actor-types";
+import { agentActorItemId } from "../ui/agent-actors-presentation";
 
-export interface AgentActorEditSession {
-  draft: AgentActorDraft;
-  guard: { dirty: boolean };
-  item: AgentActorItem;
-}
-
-export interface AgentActorMutationAccessContext {
-  draftOrItem: AgentActorDraft | AgentActorItem;
+/** A write the repository access refused, and how to run it again. */
+export interface AgentActorAccessDenial {
+  item: AgentActorItem | null;
   kind: "create" | "update" | "delete";
   ownerPath: string;
+  retry(): void | Promise<void>;
 }
 
+/** The state an Agent's write left, by the version it left. */
+type Written = Map<string, { state: AgentActorState; version: string }>;
+
+/**
+ * The writes of Agents (Stage 11 `04`, 4.I): each property is saved at once,
+ * and a creation is a write too. The writes of one Agent run one after
+ * another, each from the version and the state the previous one left. A
+ * write applies while its Agent is at the version it was read at, whatever
+ * else changed in the catalog; a changed Agent is a conflict without a
+ * write, after which the catalog is read again. A write rejects with the
+ * reason it was not saved.
+ */
 export function useAgentActorMutations({
   projectPath,
   refresh,
@@ -53,26 +61,181 @@ export function useAgentActorMutations({
   snapshot: AgentActorCatalogSnapshot | null;
   onAccessDenied?(
     error: unknown,
-    context: AgentActorMutationAccessContext,
+    denial: AgentActorAccessDenial,
   ): boolean | Promise<boolean>;
 }) {
-  const [createDraft, setCreateDraft] = useState<AgentActorDraft | null>(null);
-  const [editSession, setEditSession] = useState<AgentActorEditSession | null>(
-    null,
-  );
+  const chains = useRef(new Map<string, Promise<unknown>>());
+  const written = useRef(new Map<string, Written>());
   const [deleteActor, setDeleteActor] = useState<AgentActorItem | null>(null);
   const [deleteReferences, setDeleteReferences] =
     useState<AgentActorDeleteReferenceState>({ phase: "idle" });
   const deletePreviewRequestRef = useRef(0);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  // An edit of an Agent the main area shows keeps it in Now.
-  const signalUserEdit = useSignalUserEdit();
 
-  const openCreate = useCallback((ownerPath: string) => {
-    setFailure(null);
-    setCreateDraft(createAgentActorDraft(ownerPath));
-  }, []);
+  /**
+   * The version and the state of an Agent read at `seen`, after the writes
+   * of this window that started from it.
+   */
+  const current = useCallback(
+    (key: string, seen: string, read: AgentActorState) => {
+      const writes = written.current.get(key);
+      let version = seen;
+      let state = read;
+      const visited = new Set<string>();
+      for (
+        let next = writes?.get(version);
+        next && !visited.has(version);
+        next = writes?.get(version)
+      ) {
+        visited.add(version);
+        version = next.version;
+        state = next.state;
+      }
+      return { state, version };
+    },
+    [],
+  );
+
+  const write = useCallback(
+    (
+      item: AgentActorItem,
+      change: (state: AgentActorState) => AgentActorState,
+      seen: string = item.version,
+    ): Promise<void> => {
+      const key = agentActorItemId(item);
+      const previous = chains.current.get(key) ?? Promise.resolve();
+      const run = previous
+        .catch(() => undefined)
+        .then(async () => {
+          const base = current(key, seen, agentActorState(item));
+          const next = change(base.state);
+          const mutation = isAgentActorPortableUnchanged(next, base.state)
+            ? ({
+                kind: "set_mode",
+                actorId: item.id,
+                mode: toAgentActorModeDto(next.mode),
+              } as const)
+            : ({
+                kind: "update",
+                actor: toAgentActorMutationActor({ ...next, id: item.id }),
+                mode: toAgentActorModeDto(next.mode),
+              } as const);
+          let result: Awaited<ReturnType<typeof mutateAgentActor>>;
+          try {
+            result = await mutateAgentActor({
+              expectedVersion: base.version,
+              mutation,
+              ownerPath: item.ownerPath,
+              projectPath,
+            });
+          } catch (error) {
+            await onAccessDenied?.(error, {
+              item,
+              kind: "update",
+              ownerPath: item.ownerPath,
+              retry: () =>
+                void write(item, change, seen).catch(() => undefined),
+            });
+            throw new Error(errorMessage(error), { cause: error });
+          }
+          if (result === "stale") {
+            void refresh();
+            throw new Error(m.agent_actors_property_stale());
+          }
+          if ("blocked" in result) {
+            throw new Error(
+              result.blocked || m.agent_actors_mutation_blocked(),
+            );
+          }
+          if (result.version) {
+            const writes = written.current.get(key) ?? new Map();
+            writes.set(base.version, {
+              state: { ...next, name: next.name.trim() },
+              version: result.version,
+            });
+            written.current.set(key, writes);
+          }
+          showPersistenceAttention(result, () => saveCatalog(item.ownerPath));
+          void refresh();
+        });
+      chains.current.set(key, run);
+      const release = () => {
+        if (chains.current.get(key) === run) chains.current.delete(key);
+      };
+      run.then(release, release);
+      return run;
+    },
+    [current, onAccessDenied, projectPath, refresh, saveCatalog],
+  );
+
+  /**
+   * Creates an Agent in the catalog of `ownerPath` as a page is created:
+   * "New agent" (or "New agent 2", … while the catalog has that name)
+   * without a description, bound to the participant's agent. Resolves to its
+   * item id once the catalog shows it; null when it was not created.
+   */
+  const create = useCallback(
+    async (ownerPath: string): Promise<string | null> => {
+      if (!snapshot) return null;
+      setPending(true);
+      try {
+        const name = uniqueAgentActorName(
+          m.agent_actors_new_name(),
+          snapshot.items
+            .filter((item) => item.ownerPath === ownerPath)
+            .map((item) => item.name),
+        );
+        const id = await createAgentActorId();
+        const result = await mutateAgentActor({
+          expectedVersion: null,
+          mutation: {
+            kind: "create",
+            actor: toAgentActorMutationActor({
+              binding: { kind: "participant" },
+              description: null,
+              id,
+              name,
+            }),
+            mode: null,
+          },
+          ownerPath,
+          projectPath,
+        });
+        if (result === "stale" || "blocked" in result) {
+          toast.error(m.agent_actors_create_failed(), {
+            description:
+              result === "stale"
+                ? m.agent_actors_property_stale()
+                : result.blocked,
+          });
+          return null;
+        }
+        showPersistenceAttention(result, () => saveCatalog(ownerPath));
+        await refresh();
+        return agentActorItemId({ id, ownerPath });
+      } catch (error) {
+        if (
+          await onAccessDenied?.(error, {
+            item: null,
+            kind: "create",
+            ownerPath,
+            retry: () => void create(ownerPath),
+          })
+        ) {
+          return null;
+        }
+        toast.error(m.agent_actors_create_failed(), {
+          description: errorMessage(error),
+        });
+        return null;
+      } finally {
+        setPending(false);
+      }
+    },
+    [onAccessDenied, projectPath, refresh, saveCatalog, snapshot],
+  );
+
   const closeDelete = useCallback(() => {
     ++deletePreviewRequestRef.current;
     setDeleteActor(null);
@@ -105,71 +268,39 @@ export function useAgentActorMutations({
     },
     [projectPath],
   );
-  const openEdit = useCallback((item: AgentActorItem) => {
-    setFailure(null);
-    setEditSession({
-      draft: createAgentActorDraft(item.ownerPath, item),
-      guard: { dirty: false },
-      item,
-    });
-  }, []);
 
-  const apply = useCallback(
-    async (
-      kind: "create" | "update" | "delete",
-      targetOwnerPath: string,
-      draftOrItem: AgentActorDraft | AgentActorItem,
-    ) => {
-      if (!snapshot) return;
-      const fingerprint = snapshot.fingerprints[targetOwnerPath];
-      if (!fingerprint) {
-        setFailure(m.agent_actors_catalog_unavailable());
-        return;
-      }
+  const confirmDelete = useCallback(
+    async (item: AgentActorItem) => {
       setPending(true);
       setFailure(null);
       try {
-        const mutation =
-          kind === "delete"
-            ? ({ kind, actorId: (draftOrItem as AgentActorItem).id } as const)
-            : await draftMutation(
-                kind,
-                draftOrItem as AgentActorDraft,
-                snapshot.items.find(
-                  (item) =>
-                    item.ownerPath === targetOwnerPath &&
-                    item.id === (draftOrItem as AgentActorDraft).id,
-                ),
-              );
+        const key = agentActorItemId(item);
         const result = await mutateAgentActor({
-          expectedFingerprint: fingerprint,
-          mutation,
-          ownerPath: targetOwnerPath,
+          expectedVersion: current(key, item.version, agentActorState(item))
+            .version,
+          mutation: { kind: "delete", actorId: item.id },
+          ownerPath: item.ownerPath,
           projectPath,
         });
         if (result === "stale") {
-          setFailure(m.agent_actors_mutation_stale());
+          setFailure(m.agent_actors_property_stale());
+          void refresh();
           return;
         }
         if ("blocked" in result) {
           setFailure(result.blocked);
           return;
         }
-        showMutationOutcome(result, () => saveCatalog(targetOwnerPath));
-        if (kind === "update") signalUserEdit();
-        setCreateDraft(null);
-        setDeleteActor(null);
-        setDeleteReferences({ phase: "idle" });
-        if (editSession) editSession.guard.dirty = false;
-        // An edited Agent shows again in its peek; a deleted one closes it.
-        setEditSession(null);
+        showPersistenceAttention(result, () => saveCatalog(item.ownerPath));
+        closeDelete();
         await refresh();
       } catch (error) {
         if (
           await onAccessDenied?.(error, {
-            draftOrItem,
-            kind,
-            ownerPath: targetOwnerPath,
+            item,
+            kind: "delete",
+            ownerPath: item.ownerPath,
+            retry: () => openDelete(item),
           })
         ) {
           return;
@@ -180,97 +311,60 @@ export function useAgentActorMutations({
       }
     },
     [
-      editSession,
+      closeDelete,
+      current,
+      onAccessDenied,
+      openDelete,
       projectPath,
       refresh,
       saveCatalog,
-      signalUserEdit,
-      snapshot,
-      onAccessDenied,
     ],
   );
 
   return {
-    apply,
     closeDelete,
-    createDraft,
+    confirmDelete,
+    create,
     deleteActor,
     deleteReferences,
-    editSession,
     failure,
-    openCreate,
     openDelete,
-    openEdit,
     pending,
-    setCreateDraft,
-    setEditSession,
+    write,
   };
 }
 
 /**
- * The write of a draft: a change of the device mode alone is local-only
- * and leaves the catalog and Git as they are (Stage 11 `03`).
+ * A write that left its commit to the user, or whose commit failed, says so
+ * with the way to save the catalog; a committed write needs no notice.
  */
-async function draftMutation(
-  kind: "create" | "update",
-  draft: AgentActorDraft,
-  current: AgentActorItem | undefined,
-) {
-  if (
-    kind === "update" &&
-    current &&
-    isAgentActorPortableUnchanged(draft, current)
-  ) {
-    return {
-      kind: "set_mode",
-      actorId: current.id,
-      mode: toAgentActorModeDto(draft.mode),
-    } as const;
-  }
-  const id = draft.id ?? (await createAgentActorId());
-  return {
-    kind,
-    actor: toAgentActorMutationActor({ ...draft, id }),
-    mode: toAgentActorModeDto(draft.mode),
-  } as const;
-}
-
-function showMutationOutcome(
+function showPersistenceAttention(
   result: AgentActorMutationApplied,
   saveCatalog: () => void,
 ) {
   const rootNeedsAttention = actorPersistenceNeedsAttention(
     result.rootPointer ?? undefined,
   );
-  const action =
-    actorPersistenceNeedsAttention(result.persistence) || rootNeedsAttention
-      ? { label: m.agent_actors_save_catalog(), onClick: saveCatalog }
-      : undefined;
+  if (
+    !actorPersistenceNeedsAttention(result.persistence) &&
+    !rootNeedsAttention
+  )
+    return;
+  const action = { label: m.agent_actors_save_catalog(), onClick: saveCatalog };
   const description = rootNeedsAttention
     ? actorRootPointerDescription(result.rootPointer ?? undefined)
     : undefined;
-  if (result.persistence.status === "committed") {
-    toast[rootNeedsAttention ? "warning" : "success"](
-      m.agent_actors_mutation_committed(),
-      { action, description },
-    );
-  } else if (result.persistence.status === "pending") {
-    toast.info(m.agent_actors_mutation_pending(), {
-      action,
-      description,
-    });
-  } else if (result.persistence.status === "failed") {
+  if (result.persistence.status === "failed") {
     toast.error(m.agent_actors_mutation_commit_failed(), {
       action,
       description: [result.persistence.message, description]
         .filter(Boolean)
         .join(" "),
     });
+  } else if (result.persistence.status === "pending") {
+    toast.info(m.agent_actors_mutation_pending(), { action, description });
   } else {
-    toast[rootNeedsAttention ? "warning" : "success"](
-      m.agent_actors_mutation_saved(),
-      { action, description },
-    );
+    toast.warning(m.agent_actors_mutation_saved(), { action, description });
   }
 }
 

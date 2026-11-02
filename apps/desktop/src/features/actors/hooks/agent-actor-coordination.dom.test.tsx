@@ -18,9 +18,10 @@ const actor: AgentActorItem = {
   name: "Documentation Agent",
   ownerLabel: "repo",
   ownerPath: "/repo",
+  version: "v1",
 };
 
-test("same-owner create and edit intents continue without an unrelated rerender", async () => {
+test("same-owner create and delete intents continue without an unrelated rerender", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   const access = deferred<unknown>();
@@ -61,11 +62,11 @@ test("same-owner create and edit intents continue without an unrelated rerender"
 
     await act(async () => {
       dom.window.document
-        .querySelector<HTMLButtonElement>("[data-request-edit]")!
+        .querySelector<HTMLButtonElement>("[data-request-delete]")!
         .click();
       await nextTurn();
     });
-    expect(continued).toEqual(["add-agent", "edit-agent"]);
+    expect(continued).toEqual(["add-agent", "delete-agent"]);
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();
@@ -89,10 +90,10 @@ function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
       />
       <button
         type="button"
-        data-request-edit
+        data-request-delete
         onClick={() =>
           coordinator.request({
-            kind: "edit-agent",
+            kind: "delete-agent",
             ownerPath: "/repo",
             item: actor,
           })

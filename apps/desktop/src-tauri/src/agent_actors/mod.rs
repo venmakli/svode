@@ -7,7 +7,6 @@
 
 pub mod commands;
 
-use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::Path;
@@ -15,7 +14,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use svode_core::agent_actors::local::{
-    ActorMode, mode_for_binding, store_mode, stored_mode, translate_local_modes,
+    ActorMode, check_actor_version, mode_for_binding, store_mode, stored_mode,
+    translate_local_modes,
 };
 use svode_core::agent_actors::{
     AgentActor, AgentActorCatalog, CatalogError, catalog_path, check_binding_write, read_catalog,
@@ -26,7 +26,6 @@ use svode_core::agent_actors::{
 pub enum CatalogMutation {
     Create(AgentActor),
     Update(AgentActor),
-    Reorder(Vec<String>),
     Delete(String),
 }
 
@@ -51,9 +50,6 @@ pub enum AgentActorMutationInput {
         #[serde(default)]
         mode: Option<ActorMode>,
     },
-    Reorder {
-        actor_ids: Vec<String>,
-    },
     Delete {
         actor_id: String,
     },
@@ -66,6 +62,14 @@ pub enum AgentActorMutationInput {
 }
 
 impl AgentActorMutationInput {
+    /// The Actor the mutation writes.
+    pub(crate) fn actor_id(&self) -> &str {
+        match self {
+            Self::Create { actor, .. } | Self::Update { actor, .. } => &actor.id,
+            Self::Delete { actor_id } | Self::SetMode { actor_id, .. } => actor_id,
+        }
+    }
+
     pub(crate) fn create_actor_id(&self) -> Option<&str> {
         match self {
             Self::Create { actor, .. } => Some(&actor.id),
@@ -83,10 +87,6 @@ impl AgentActorMutationInput {
                 mode: Some(mode_for_binding(&actor.binding, mode)),
                 mutation: CatalogMutation::Update(actor),
             },
-            Self::Reorder { actor_ids } => CompoundCatalogMutation {
-                mutation: CatalogMutation::Reorder(actor_ids),
-                mode: None,
-            },
             Self::Delete { actor_id } => CompoundCatalogMutation {
                 mutation: CatalogMutation::Delete(actor_id),
                 mode: None,
@@ -100,7 +100,7 @@ impl AgentActorMutationInput {
 
 /// The portable operation and its optional owner-local mode change are
 /// intentionally one domain operation. `mode: None` leaves the overlay
-/// untouched (reorder/delete), `Some(None)` clears the mode; delete removes
+/// untouched (delete), `Some(None)` clears the mode; delete removes
 /// a stale record only after the portable catalog has been published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompoundCatalogMutation {
@@ -111,13 +111,11 @@ pub struct CompoundCatalogMutation {
 #[cfg(test)]
 pub fn mutate_catalog(
     owner: &Path,
-    expected_fingerprint: &str,
+    expected_version: Option<&str>,
     mutation: CatalogMutation,
 ) -> Result<AgentActorCatalog, CatalogError> {
-    let (next, actual) = next_catalog(owner, mutation)?;
-    if actual != expected_fingerprint {
-        return Err(CatalogError::Stale);
-    }
+    let next = next_catalog(owner, mutation.clone())?;
+    check_actor_version(owner, mutation_actor_id(&mutation), expected_version)?;
     publish_catalog(owner, &next)?;
     Ok(next)
 }
@@ -127,25 +125,27 @@ pub fn mutate_catalog(
 /// the following portable atomic replace fails. The device translates the
 /// owner's V1 approval modes before the first write, so a translation never
 /// lands on an Actor whose agent this write changes.
+///
+/// The write applies while its Actor is at `expected_version` (`None`: no
+/// such Actor yet), whatever else changed in the catalog: the next catalog
+/// is built from the current file.
 pub fn mutate_catalog_compound(
     owner: &Path,
-    expected_fingerprint: &str,
+    expected_version: Option<&str>,
     compound: CompoundCatalogMutation,
 ) -> Result<AgentActorCatalog, CatalogError> {
-    let (next, actual) = next_catalog(owner, compound.mutation.clone())?;
-    if actual != expected_fingerprint {
-        return Err(CatalogError::Stale);
-    }
+    let next = next_catalog(owner, compound.mutation.clone())?;
+    check_actor_version(
+        owner,
+        mutation_actor_id(&compound.mutation),
+        expected_version,
+    )?;
     translate_local_modes(owner)?;
 
     let actor_id = compound
         .mode
         .as_ref()
-        .map(|_| {
-            mutation_actor_id(&compound.mutation)
-                .ok_or_else(|| CatalogError::Invalid("a mode needs an actor id".into()))
-        })
-        .transpose()?;
+        .map(|_| mutation_actor_id(&compound.mutation));
     let local_before = actor_id
         .map(|actor_id| stored_mode(owner, actor_id))
         .transpose()?;
@@ -160,13 +160,11 @@ pub fn mutate_catalog_compound(
         return Err(error);
     }
 
-    if matches!(compound.mutation, CatalogMutation::Delete(_)) {
-        if let Some(id) = mutation_actor_id(&compound.mutation) {
-            if let Err(error) = store_mode(owner, id, None) {
-                tracing::warn!(
-                    "agent actor catalog was deleted but local mode cleanup failed: {error}"
-                );
-            }
+    if let CatalogMutation::Delete(id) = &compound.mutation {
+        if let Err(error) = store_mode(owner, id, None) {
+            tracing::warn!(
+                "agent actor catalog was deleted but local mode cleanup failed: {error}"
+            );
         }
     }
     Ok(next)
@@ -175,8 +173,8 @@ pub fn mutate_catalog_compound(
 fn next_catalog(
     owner: &Path,
     mutation: CatalogMutation,
-) -> Result<(AgentActorCatalog, String), CatalogError> {
-    let (mut catalog, fingerprint) = read_catalog(owner)?;
+) -> Result<AgentActorCatalog, CatalogError> {
+    let (mut catalog, _) = read_catalog(owner)?;
     match mutation {
         CatalogMutation::Create(actor) => {
             let actor = normalize_actor(actor);
@@ -197,29 +195,9 @@ fn next_catalog(
             *item = actor;
         }
         CatalogMutation::Delete(id) => catalog.actors.retain(|a| a.id != id),
-        CatalogMutation::Reorder(ids) => {
-            if ids.len() != catalog.actors.len()
-                || ids.iter().collect::<HashSet<_>>().len() != ids.len()
-            {
-                return Err(CatalogError::Invalid("invalid actor order".into()));
-            }
-            let mut by_id: HashMap<_, _> = catalog
-                .actors
-                .drain(..)
-                .map(|a| (a.id.clone(), a))
-                .collect();
-            catalog.actors = ids
-                .into_iter()
-                .map(|id| {
-                    by_id.remove(&id).ok_or_else(|| {
-                        CatalogError::Invalid("order references missing actor".into())
-                    })
-                })
-                .collect::<Result<_, _>>()?;
-        }
     }
     validate_catalog(&catalog)?;
-    Ok((catalog, fingerprint))
+    Ok(catalog)
 }
 
 fn publish_catalog(owner: &Path, catalog: &AgentActorCatalog) -> Result<(), CatalogError> {
@@ -239,11 +217,10 @@ fn publish_catalog(owner: &Path, catalog: &AgentActorCatalog) -> Result<(), Cata
     }
 }
 
-fn mutation_actor_id(mutation: &CatalogMutation) -> Option<&str> {
+fn mutation_actor_id(mutation: &CatalogMutation) -> &str {
     match mutation {
-        CatalogMutation::Create(actor) | CatalogMutation::Update(actor) => Some(&actor.id),
-        CatalogMutation::Delete(id) => Some(id),
-        CatalogMutation::Reorder(_) => None,
+        CatalogMutation::Create(actor) | CatalogMutation::Update(actor) => &actor.id,
+        CatalogMutation::Delete(id) => id,
     }
 }
 
@@ -276,7 +253,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CatalogError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use svode_core::agent_actors::local::{read_actor_mode, set_actor_mode};
+    use svode_core::agent_actors::local::{read_actor_mode, read_actor_versions, set_actor_mode};
     use svode_core::agent_actors::{ActorBinding, AgentSettingValue};
     use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
     use tempfile::tempdir;
@@ -322,16 +299,24 @@ mod tests {
         serde_json::from_slice(&fs::read(catalog_path(owner)).unwrap()).unwrap()
     }
 
+    /// The version of `id` the window read last.
+    fn version(owner: &Path, id: &str) -> String {
+        read_actor_versions(owner).unwrap()[id].clone()
+    }
+
     #[test]
     fn schema_and_stale_are_guarded() {
         let d = tempdir().unwrap();
-        let (_, fp) = read_catalog(d.path()).unwrap();
         let id = "01arZ3ndektsv4rrffq69g5fav".to_lowercase();
-        let c = mutate_catalog(d.path(), &fp, CatalogMutation::Create(actor(&id))).unwrap();
+        let c = mutate_catalog(d.path(), None, CatalogMutation::Create(actor(&id))).unwrap();
         assert_eq!(c.actors.len(), 1);
         assert!(matches!(
-            mutate_catalog(d.path(), &fp, CatalogMutation::Delete(id)),
+            mutate_catalog(d.path(), None, CatalogMutation::Delete(id.clone())),
             Err(CatalogError::Stale)
+        ));
+        assert!(matches!(
+            mutate_catalog(d.path(), None, CatalogMutation::Create(actor(&id))),
+            Err(CatalogError::Invalid(_))
         ));
     }
 
@@ -360,12 +345,13 @@ mod tests {
         })
         .to_string();
         fs::write(&path, &v1).unwrap();
-        let (catalog, fp) = read_catalog(d.path()).unwrap();
+        let (catalog, _) = read_catalog(d.path()).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), v1);
 
         let mut renamed = catalog.actors[1].clone();
         renamed.name = "Renamed".into();
-        mutate_catalog(d.path(), &fp, CatalogMutation::Update(renamed)).unwrap();
+        let expected = version(d.path(), other);
+        mutate_catalog(d.path(), Some(&expected), CatalogMutation::Update(renamed)).unwrap();
         assert_eq!(
             written(d.path()),
             serde_json::json!({
@@ -427,11 +413,12 @@ mod tests {
         )
         .unwrap();
 
-        let (catalog, fp) = read_catalog(d.path()).unwrap();
+        let (catalog, _) = read_catalog(d.path()).unwrap();
         assert_eq!(catalog.actors.len(), 3);
         let mut edited = catalog.actors[2].clone();
         edited.name = "Renamed".into();
-        mutate_catalog(d.path(), &fp, CatalogMutation::Update(edited)).unwrap();
+        let expected = version(d.path(), other);
+        mutate_catalog(d.path(), Some(&expected), CatalogMutation::Update(edited)).unwrap();
 
         let value = written(d.path());
         assert_eq!(
@@ -448,10 +435,11 @@ mod tests {
 
         // Renaming the custom Actor keeps its binding; a new custom binding
         // is refused.
-        let (catalog, fp) = read_catalog(d.path()).unwrap();
+        let (catalog, _) = read_catalog(d.path()).unwrap();
         let mut renamed = catalog.actors[1].clone();
         renamed.name = "Still mine".into();
-        mutate_catalog(d.path(), &fp, CatalogMutation::Update(renamed)).unwrap();
+        let expected = version(d.path(), custom);
+        mutate_catalog(d.path(), Some(&expected), CatalogMutation::Update(renamed)).unwrap();
         assert_eq!(
             written(d.path())["actors"][1]["binding"]["agent"],
             "custom-hermes"
@@ -462,7 +450,6 @@ mod tests {
     #[test]
     fn a_custom_agent_binding_is_refused_and_the_catalog_stays_as_it_was() {
         let d = tempdir().unwrap();
-        let (_, fp) = read_catalog(d.path()).unwrap();
         let id = "01arz3ndektsv4rrffq69g5fav".to_string();
         let mut custom = actor(&id);
         custom.binding = ActorBinding::Agent {
@@ -471,7 +458,7 @@ mod tests {
         };
         let refused = mutate_catalog_compound(
             d.path(),
-            &fp,
+            None,
             compound(CatalogMutation::Create(custom.clone()), Some(None)),
         );
         assert!(matches!(refused, Err(CatalogError::Invalid(_))));
@@ -479,16 +466,15 @@ mod tests {
 
         mutate_catalog_compound(
             d.path(),
-            &fp,
+            None,
             compound(CatalogMutation::Create(actor(&id)), None),
         )
         .unwrap();
         let before = fs::read(catalog_path(d.path())).unwrap();
-        let (_, fp) = read_catalog(d.path()).unwrap();
         assert!(matches!(
             mutate_catalog_compound(
                 d.path(),
-                &fp,
+                Some(&version(d.path(), &id)),
                 compound(CatalogMutation::Update(custom), None),
             ),
             Err(CatalogError::Invalid(_))
@@ -499,11 +485,10 @@ mod tests {
     #[test]
     fn compound_create_writes_the_local_mode_and_delete_cleans_it() {
         let d = tempdir().unwrap();
-        let (_, fp) = read_catalog(d.path()).unwrap();
         let id = "01arz3ndektsv4rrffq69g5fav".to_string();
         mutate_catalog_compound(
             d.path(),
-            &fp,
+            None,
             compound(
                 CatalogMutation::Create(actor(&id)),
                 Some(Some(codex_mode("agent"))),
@@ -525,10 +510,9 @@ mod tests {
                 .unwrap()
                 .contains("\"mode\"")
         );
-        let (_, fp) = read_catalog(d.path()).unwrap();
         mutate_catalog_compound(
             d.path(),
-            &fp,
+            Some(&version(d.path(), &id)),
             compound(CatalogMutation::Delete(id.clone()), None),
         )
         .unwrap();
@@ -538,13 +522,12 @@ mod tests {
     #[test]
     fn changing_the_agent_of_the_binding_leaves_the_mode_unselected() {
         let d = tempdir().unwrap();
-        let (_, fp) = read_catalog(d.path()).unwrap();
         let id = "01arz3ndektsv4rrffq69g5fav".to_string();
         let created = AgentActorMutationInput::Create {
             actor: actor(&id),
             mode: Some(codex_mode("read-only")),
         };
-        mutate_catalog_compound(d.path(), &fp, created.into_compound()).unwrap();
+        mutate_catalog_compound(d.path(), None, created.into_compound()).unwrap();
 
         let mut claude = actor(&id);
         claude.binding = ActorBinding::Agent {
@@ -556,8 +539,8 @@ mod tests {
             actor: claude,
             mode: Some(codex_mode("read-only")),
         };
-        let (_, fp) = read_catalog(d.path()).unwrap();
-        mutate_catalog_compound(d.path(), &fp, updated.into_compound()).unwrap();
+        let expected = version(d.path(), &id);
+        mutate_catalog_compound(d.path(), Some(&expected), updated.into_compound()).unwrap();
         assert_eq!(read_actor_mode(d.path(), &id).unwrap(), None);
         assert_eq!(
             svode_core::agent_actors::local::stored_mode(d.path(), &id).unwrap(),
@@ -586,7 +569,7 @@ mod tests {
             serde_json::json!({"agentActors": {id: {"approvalMode": "full"}}}).to_string(),
         )
         .unwrap();
-        let (catalog, fp) = read_catalog(d.path()).unwrap();
+        let (catalog, _) = read_catalog(d.path()).unwrap();
         let mut hermes = catalog.actors[0].clone();
         hermes.binding = ActorBinding::Agent {
             agent: AgentAdapterKind::Hermes.id(),
@@ -594,7 +577,7 @@ mod tests {
         };
         mutate_catalog_compound(
             d.path(),
-            &fp,
+            Some(&version(d.path(), id)),
             AgentActorMutationInput::Update {
                 actor: hermes,
                 mode: None,
@@ -611,23 +594,15 @@ mod tests {
     }
 
     #[test]
-    fn local_only_mode_preserves_catalog_and_rejects_stale_fingerprint() {
+    fn local_only_mode_preserves_catalog_and_rejects_a_stale_version() {
         let d = tempdir().unwrap();
         let id = "01arz3ndektsv4rrffq69g5fav".to_string();
-        let (_, initial_fingerprint) = read_catalog(d.path()).unwrap();
-        mutate_catalog(
-            d.path(),
-            &initial_fingerprint,
-            CatalogMutation::Create(actor(&id)),
-        )
-        .unwrap();
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(&id))).unwrap();
         let catalog_before = fs::read(catalog_path(d.path())).unwrap();
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
+        let initial = version(d.path(), &id);
 
-        assert_eq!(
-            set_actor_mode(d.path(), &fingerprint, &id, Some(&codex_mode("agent"))).unwrap(),
-            fingerprint
-        );
+        let changed = set_actor_mode(d.path(), &initial, &id, Some(&codex_mode("agent"))).unwrap();
+        assert_eq!(changed, version(d.path(), &id));
         assert_eq!(fs::read(catalog_path(d.path())).unwrap(), catalog_before);
         assert_eq!(
             read_actor_mode(d.path(), &id).unwrap(),
@@ -635,7 +610,7 @@ mod tests {
         );
 
         assert!(matches!(
-            set_actor_mode(d.path(), &initial_fingerprint, &id, None),
+            set_actor_mode(d.path(), &initial, &id, None),
             Err(CatalogError::Stale)
         ));
         assert_eq!(
@@ -648,58 +623,176 @@ mod tests {
     fn mutations_normalize_human_text_fields() {
         let d = tempdir().unwrap();
         let id = "01arz3ndektsv4rrffq69g5fav";
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
         let mut value = actor(id);
         value.name = "  Documentation Agent  ".into();
         value.description = Some("   ".into());
-        let catalog =
-            mutate_catalog(d.path(), &fingerprint, CatalogMutation::Create(value)).unwrap();
+        let catalog = mutate_catalog(d.path(), None, CatalogMutation::Create(value)).unwrap();
         assert_eq!(catalog.actors[0].name, "Documentation Agent");
         assert_eq!(catalog.actors[0].description, None);
     }
 
     #[test]
-    fn catalog_crud_preserves_explicit_order_and_stable_identity() {
+    fn catalog_crud_preserves_order_and_stable_identity() {
         let d = tempdir().unwrap();
         let first_id = "01arz3ndektsv4rrffq69g5fav";
         let second_id = "01arz3ndektsv4rrffq69g5faw";
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
-        mutate_catalog(
-            d.path(),
-            &fingerprint,
-            CatalogMutation::Create(actor(first_id)),
-        )
-        .unwrap();
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(first_id))).unwrap();
         let mut participant = actor(second_id);
         participant.binding = ActorBinding::Participant;
-        mutate_catalog(d.path(), &fingerprint, CatalogMutation::Create(participant)).unwrap();
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
-        let reordered = mutate_catalog(
+        let created = mutate_catalog(d.path(), None, CatalogMutation::Create(participant)).unwrap();
+        assert_eq!(created.actors[1].binding, ActorBinding::Participant);
+
+        let mut updated = created.actors[0].clone();
+        updated.name = "Renamed".into();
+        let updated = mutate_catalog(
             d.path(),
-            &fingerprint,
-            CatalogMutation::Reorder(vec![second_id.into(), first_id.into()]),
+            Some(&version(d.path(), first_id)),
+            CatalogMutation::Update(updated),
         )
         .unwrap();
-        assert_eq!(reordered.actors[0].id, second_id);
-        assert_eq!(reordered.actors[0].binding, ActorBinding::Participant);
+        assert_eq!(updated.actors[0].id, first_id);
+        assert_eq!(updated.actors[0].name, "Renamed");
 
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
-        let mut updated = reordered.actors[1].clone();
-        updated.name = "Renamed".into();
-        let updated =
-            mutate_catalog(d.path(), &fingerprint, CatalogMutation::Update(updated)).unwrap();
-        assert_eq!(updated.actors[1].id, first_id);
-        assert_eq!(updated.actors[1].name, "Renamed");
-
-        let (_, fingerprint) = read_catalog(d.path()).unwrap();
         let deleted = mutate_catalog(
             d.path(),
-            &fingerprint,
+            Some(&version(d.path(), second_id)),
             CatalogMutation::Delete(second_id.into()),
         )
         .unwrap();
         assert_eq!(deleted.actors.len(), 1);
         assert_eq!(deleted.actors[0].id, first_id);
+    }
+
+    /// Stage 11 `04`, 4.I: a write of an Agent applies while this Agent and
+    /// its device mode are as the window read them, whatever else changed in
+    /// the catalog; a change of the Agent itself is a conflict without a
+    /// write.
+    #[test]
+    fn an_edit_applies_after_another_agent_changed_and_conflicts_after_its_own_change() {
+        let d = tempdir().unwrap();
+        let a = "01arz3ndektsv4rrffq69g5fav";
+        let b = "01arz3ndektsv4rrffq69g5faw";
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(a))).unwrap();
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(b))).unwrap();
+        let read_a = version(d.path(), a);
+        let read_b = version(d.path(), b);
+
+        // Agent B changes, as by a sync or another window.
+        let mut renamed_b = actor(b);
+        renamed_b.name = "B elsewhere".into();
+        mutate_catalog(d.path(), Some(&read_b), CatalogMutation::Update(renamed_b)).unwrap();
+
+        // The edit of A read before applies to the current catalog.
+        let mut renamed_a = actor(a);
+        renamed_a.name = "A here".into();
+        mutate_catalog_compound(
+            d.path(),
+            Some(&read_a),
+            compound(CatalogMutation::Update(renamed_a), Some(None)),
+        )
+        .unwrap();
+        let value = written(d.path());
+        assert_eq!(value["actors"][0]["name"], "A here");
+        assert_eq!(value["actors"][1]["name"], "B elsewhere");
+
+        // A changed since the window read it: no write.
+        let before = fs::read(catalog_path(d.path())).unwrap();
+        let mut stale_a = actor(a);
+        stale_a.name = "A stale".into();
+        assert!(matches!(
+            mutate_catalog_compound(
+                d.path(),
+                Some(&read_a),
+                compound(CatalogMutation::Update(stale_a), Some(None)),
+            ),
+            Err(CatalogError::Stale)
+        ));
+        assert_eq!(fs::read(catalog_path(d.path())).unwrap(), before);
+
+        // A mode changed on this device is a change of the Agent too.
+        let current_a = version(d.path(), a);
+        set_actor_mode(d.path(), &current_a, a, Some(&codex_mode("agent"))).unwrap();
+        let mut renamed_again = actor(a);
+        renamed_again.name = "A again".into();
+        assert!(matches!(
+            mutate_catalog_compound(
+                d.path(),
+                Some(&current_a),
+                compound(CatalogMutation::Update(renamed_again), Some(None)),
+            ),
+            Err(CatalogError::Stale)
+        ));
+    }
+
+    /// Two quick edits of different Agents of one catalog, each from the
+    /// versions read before both, give no false conflict.
+    #[test]
+    fn quick_edits_of_two_agents_of_one_catalog_both_apply() {
+        let d = tempdir().unwrap();
+        let a = "01arz3ndektsv4rrffq69g5fav";
+        let b = "01arz3ndektsv4rrffq69g5faw";
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(a))).unwrap();
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(b))).unwrap();
+        let read_a = version(d.path(), a);
+        let read_b = version(d.path(), b);
+        let mut renamed_a = actor(a);
+        renamed_a.name = "First".into();
+        let mut moded_b = actor(b);
+        moded_b.name = "Second".into();
+        mutate_catalog_compound(
+            d.path(),
+            Some(&read_a),
+            compound(CatalogMutation::Update(renamed_a), Some(None)),
+        )
+        .unwrap();
+        mutate_catalog_compound(
+            d.path(),
+            Some(&read_b),
+            compound(
+                CatalogMutation::Update(moded_b),
+                Some(Some(codex_mode("agent"))),
+            ),
+        )
+        .unwrap();
+        let value = written(d.path());
+        assert_eq!(value["actors"][0]["name"], "First");
+        assert_eq!(value["actors"][1]["name"], "Second");
+        assert_eq!(
+            read_actor_mode(d.path(), b).unwrap(),
+            Some(codex_mode("agent"))
+        );
+    }
+
+    /// The compound write saves the device mode first: when that fails, the
+    /// catalog is not published.
+    #[test]
+    fn a_failed_mode_write_does_not_publish_the_catalog() {
+        let d = tempdir().unwrap();
+        let id = "01arz3ndektsv4rrffq69g5fav";
+        mutate_catalog(d.path(), None, CatalogMutation::Create(actor(id))).unwrap();
+        let expected = version(d.path(), id);
+        translate_local_modes(d.path()).unwrap();
+        let before = fs::read(catalog_path(d.path())).unwrap();
+        // The device's local overlay awaits a recovery and takes no write.
+        fs::write(
+            d.path()
+                .join(".svode")
+                .join(svode_core::variables::files::PENDING_FILE),
+            "{}",
+        )
+        .unwrap();
+
+        let mut renamed = actor(id);
+        renamed.name = "Renamed".into();
+        let result = mutate_catalog_compound(
+            d.path(),
+            Some(&expected),
+            compound(
+                CatalogMutation::Update(renamed),
+                Some(Some(codex_mode("agent"))),
+            ),
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(catalog_path(d.path())).unwrap(), before);
     }
 }
