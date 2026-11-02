@@ -6,7 +6,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::page::PageError;
-use crate::page::store::{convert_page_to_leaf, page_detail_state, unnest_page};
+use crate::page::store::{convert_page_to_leaf, page_detail_state};
 
 const ORDER: &str = "{\".\": [\"Doc\", \"Other.md\"], \"Doc\": []}";
 
@@ -93,23 +93,6 @@ fn every_item_besides_the_page_blocks_the_leaf_conversion_without_changes() {
 }
 
 #[test]
-fn every_item_besides_the_page_blocks_unnest_without_changes() {
-    for (files, _, _) in BLOCKING {
-        let tmp = space_with_doc(files);
-        let before = snapshot(tmp.path());
-
-        let error = unnest_page(tmp.path(), "Doc/README.md", None).unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "Folder still has children, cannot unnest",
-            "{files:?}"
-        );
-        assert_eq!(snapshot(tmp.path()), before, "{files:?}");
-    }
-}
-
-#[test]
 fn the_root_of_a_child_space_is_not_turned_into_a_leaf() {
     let tmp = space_with_doc(&[
         ("Doc/.svode/config.json", b"{\"name\":\"Doc\"}"),
@@ -140,38 +123,17 @@ fn an_empty_gitkeep_goes_with_the_directory_of_a_new_leaf() {
 }
 
 #[test]
-fn an_empty_gitkeep_goes_with_the_directory_on_unnest() {
-    let tmp = space_with_doc(&[("Doc/.gitkeep", b"")]);
-
-    let (path, removed) = unnest_page(tmp.path(), "Doc/README.md", None).unwrap();
-
-    assert_eq!(path, "Doc.md");
-    assert_eq!(removed, vec!["Doc/.gitkeep".to_string()]);
-    assert!(!tmp.path().join("Doc").exists());
-}
-
-#[test]
 fn finder_view_settings_go_with_the_directory_with_an_empty_gitkeep() {
-    for unnest in [false, true] {
-        let tmp = space_with_doc(&[("Doc/.gitkeep", b""), ("Doc/.DS_Store", b"finder")]);
+    let tmp = space_with_doc(&[("Doc/.gitkeep", b""), ("Doc/.DS_Store", b"finder")]);
 
-        let mut removed = if unnest {
-            unnest_page(tmp.path(), "Doc/README.md", None).unwrap().1
-        } else {
-            convert_page_to_leaf(tmp.path(), "Doc/README.md", None)
-                .unwrap()
-                .1
-        };
+    let mut removed = convert_page_to_leaf(tmp.path(), "Doc/README.md", None)
+        .unwrap()
+        .1;
 
-        removed.sort();
-        assert_eq!(
-            removed,
-            vec!["Doc/.DS_Store", "Doc/.gitkeep"],
-            "unnest: {unnest}"
-        );
-        assert!(!tmp.path().join("Doc").exists(), "unnest: {unnest}");
-        assert!(tmp.path().join("Doc.md").is_file(), "unnest: {unnest}");
-    }
+    removed.sort();
+    assert_eq!(removed, vec!["Doc/.DS_Store", "Doc/.gitkeep"]);
+    assert!(!tmp.path().join("Doc").exists());
+    assert!(tmp.path().join("Doc.md").is_file());
 }
 
 #[test]
@@ -219,28 +181,6 @@ fn an_item_that_appears_before_the_directory_is_removed_fails_the_conversion() {
     assert!(not_empty(&error, &[], &[".late.txt"]), "{error}");
     let mut expected = before;
     expected.push(("Doc/.late.txt".to_string(), Some(b"late".to_vec())));
-    expected.sort();
-    assert_eq!(snapshot(tmp.path()), expected);
-}
-
-#[test]
-fn an_item_that_appears_before_the_directory_is_removed_fails_unnest() {
-    let tmp = space_with_doc(&[("Doc/.gitkeep", b"")]);
-    let before = snapshot(tmp.path());
-    let late = tmp.path().join("Doc/late.md");
-    crate::page::write::inject_effect(
-        "page_dir_remove",
-        Box::new(move || fs::write(late, "late").unwrap()),
-    );
-
-    let error = unnest_page(tmp.path(), "Doc/README.md", None).unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        "Folder still has children, cannot unnest"
-    );
-    let mut expected = before;
-    expected.push(("Doc/late.md".to_string(), Some(b"late".to_vec())));
     expected.sort();
     assert_eq!(snapshot(tmp.path()), expected);
 }

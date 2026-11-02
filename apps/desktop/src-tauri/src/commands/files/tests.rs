@@ -1291,7 +1291,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
 }
 
 #[tokio::test]
-async fn shared_move_nest_and_unnest_use_the_structural_owner() {
+async fn shared_move_nest_and_leaf_conversion_use_the_structural_owner() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path().to_str().unwrap();
     std::fs::create_dir(tmp.path().join("target")).unwrap();
@@ -1310,9 +1310,10 @@ async fn shared_move_nest_and_unnest_use_the_structural_owner() {
         .unwrap();
     assert_eq!(nested, "target/Page/README.md");
 
-    let leaf = crate::structure::unnest(space, &nested, None, &state, updates(), None)
+    let leaf = crate::structure::convert_to_leaf(space, &nested, None, &state, updates(), None)
         .await
-        .unwrap();
+        .unwrap()
+        .path;
     assert_eq!(leaf, "target/Page.md");
     assert!(tmp.path().join(&leaf).is_file());
 }

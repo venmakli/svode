@@ -305,25 +305,6 @@ pub async fn nest(
     .await?)
 }
 
-pub async fn unnest(
-    space: &str,
-    path: &str,
-    project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
-    let cli = crate::git::dates::detected_cli();
-    let sink = sink(autocommit);
-    Ok(svode_core::structure::unnest(
-        space,
-        path,
-        project_path,
-        runtime(state, updates, cli.as_ref(), sink.as_ref()),
-    )
-    .await?)
-}
-
 pub async fn duplicate(
     space: &str,
     file_path: &str,

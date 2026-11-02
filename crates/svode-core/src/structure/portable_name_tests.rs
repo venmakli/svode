@@ -206,34 +206,25 @@ async fn plan_import(root: &Path, leaf: &str, state: &IndexRuntimeState) -> Resu
 #[tokio::test]
 async fn turning_a_folder_page_into_a_leaf_refuses_a_portably_equal_sibling() {
     for (name, sibling) in NAMES {
-        for unnest in [false, true] {
-            let tmp = space(
-                &[
-                    (
-                        format!("{name}/README.md"),
-                        "---\ntitle: Doc\n---\nDoc body\n",
-                    ),
-                    (format!("{sibling}.md"), "---\ntitle: Other\n---\n"),
-                ],
-                &format!("{{\".\": [\"{name}\", \"{sibling}.md\"], \"{name}\": []}}"),
-            );
-            let root = tmp.path();
-            let space = root.to_str().unwrap();
-            let readme = format!("{name}/README.md");
-            let before = tree(root);
-            let state = IndexRuntimeState::default();
-            let result = if unnest {
-                super::unnest(space, &readme, None, runtime(&state))
-                    .await
-                    .map(drop)
-            } else {
-                super::convert_to_leaf(space, &readme, None, runtime(&state))
-                    .await
-                    .map(drop)
-            };
-            let operation = if unnest { "unnest" } else { "convert_to_leaf" };
-            assert_refused(result, root, &before, &format!("{operation} {name:?}"));
-        }
+        let tmp = space(
+            &[
+                (
+                    format!("{name}/README.md"),
+                    "---\ntitle: Doc\n---\nDoc body\n",
+                ),
+                (format!("{sibling}.md"), "---\ntitle: Other\n---\n"),
+            ],
+            &format!("{{\".\": [\"{name}\", \"{sibling}.md\"], \"{name}\": []}}"),
+        );
+        let root = tmp.path();
+        let space = root.to_str().unwrap();
+        let readme = format!("{name}/README.md");
+        let before = tree(root);
+        let state = IndexRuntimeState::default();
+        let result = super::convert_to_leaf(space, &readme, None, runtime(&state))
+            .await
+            .map(drop);
+        assert_refused(result, root, &before, &format!("convert_to_leaf {name:?}"));
     }
 }
 

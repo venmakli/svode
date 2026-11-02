@@ -1,5 +1,5 @@
 //! Structural workflows over the content tree: create, delete, move, rename,
-//! nest/unnest, duplicate and the shape conversions.
+//! nest, duplicate and the shape conversions.
 //!
 //! Each operation authorizes its touched-set, changes the source, rewrites the
 //! links and relations it invalidates, republishes the derived projection and
@@ -1802,25 +1802,6 @@ pub async fn nest<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<String, PageError> {
-    reshape(space, path, true, project_path, runtime).await
-}
-
-pub async fn unnest<E: GitDateExecutor>(
-    space: &str,
-    path: &str,
-    project_path: Option<&str>,
-    runtime: StructureRuntime<'_, E>,
-) -> Result<String, PageError> {
-    reshape(space, path, false, project_path, runtime).await
-}
-
-async fn reshape<E: GitDateExecutor>(
-    space: &str,
-    path: &str,
-    nesting: bool,
-    project_path: Option<&str>,
-    runtime: StructureRuntime<'_, E>,
-) -> Result<String, PageError> {
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
@@ -1829,14 +1810,7 @@ async fn reshape<E: GitDateExecutor>(
         .filter(|path| !path.is_empty())
         .is_none()
         .then_some(&*backlinks);
-    let (new_path, removed_files) = if nesting {
-        (
-            store::nest_page(Path::new(space), path, local_backlinks)?,
-            Vec::new(),
-        )
-    } else {
-        store::unnest_page(Path::new(space), path, local_backlinks)?
-    };
+    let new_path = store::nest_page(Path::new(space), path, local_backlinks)?;
     let change = StructuralChange::new(StructuralOp::Move(page_commit_name(space, &new_path)))
         .relocating(page_relocation(space, path, &new_path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
@@ -1854,7 +1828,7 @@ async fn reshape<E: GitDateExecutor>(
             )
             .await
             .unwrap_or_else(|error| {
-                tracing::warn!("cross-space reshape backlink rewrite failed: {error}");
+                tracing::warn!("cross-space nest backlink rewrite failed: {error}");
                 Vec::new()
             });
         modified.extend(
@@ -1865,7 +1839,7 @@ async fn reshape<E: GitDateExecutor>(
                 space_id.as_deref(),
                 path,
                 &new_path,
-                if nesting { "nest_page" } else { "unnest_page" },
+                "nest_page",
                 true,
             )
             .await,
@@ -1888,9 +1862,7 @@ async fn reshape<E: GitDateExecutor>(
         change,
         page_paths_with_order(
             space,
-            [abs_page_path(space, path), abs_page_path(space, &new_path)]
-                .into_iter()
-                .chain(removed_files.iter().map(|file| abs_page_path(space, file))),
+            [abs_page_path(space, path), abs_page_path(space, &new_path)],
         ),
     );
     Ok(new_path)

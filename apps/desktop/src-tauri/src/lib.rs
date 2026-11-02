@@ -333,7 +333,6 @@ pub fn run() {
             commands::files::rebuild_backlinks,
             commands::files::validate_links,
             commands::files::nest_page,
-            commands::files::unnest_page,
             commands::files::convert_page_to_folder,
             commands::files::convert_page_to_leaf,
             commands::files::convert_to_collection,

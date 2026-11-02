@@ -58,7 +58,7 @@ export function useFileWatcher({
       unlisteners.push(unlisten);
     };
 
-    // Own-write echoes and structural operations (nest/move/unnest) are not
+    // Own-write echoes and structural operations (nest/move/convert) are not
     // changes of the source by another writer.
     const isOwnChange = (event: EditorFileEvent) => {
       const nonce = event.writeNonce;
