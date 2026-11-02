@@ -118,6 +118,7 @@ pub(crate) struct HtmlDocumentServing {
 #[tauri::command]
 pub(crate) async fn html_document_serve(
     app: AppHandle,
+    webview: tauri::Webview,
     state: State<'_, AppSourceState>,
     source: HtmlDocumentInput,
     theme: HtmlTheme,
@@ -127,6 +128,7 @@ pub(crate) async fn html_document_serve(
         .issue_document(
             document.root.clone(),
             DocumentProfile::new(document.entry.clone(), document.single_file, theme),
+            webview.label(),
         )
         .await
         .map_err(|_| DocumentSourceError::SourceInaccessible)?;

@@ -41,6 +41,9 @@ enum SourceKind {
         /// The observation of a root outside the project; a root inside a
         /// Space reports through the Space watcher.
         observer: Option<notify::RecommendedWatcher>,
+        /// The webview whose view shows it: its reload or close ends the view
+        /// without a revocation.
+        webview: String,
     },
 }
 
@@ -102,17 +105,19 @@ impl AppSourceState {
         .await
     }
 
-    /// Serves an HTML Document from its canonical `root`; the entry file is
-    /// a direct child of it.
+    /// Serves an HTML Document from its canonical `root` for the view in
+    /// `webview`; the entry file is a direct child of it.
     pub(crate) async fn issue_document(
         &self,
         root: PathBuf,
         profile: DocumentProfile,
+        webview: &str,
     ) -> std::io::Result<(String, String)> {
+        // `%` is the one character of a name the URL path keeps unescaped.
         let entry_name = profile
             .entry
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
+            .map(|name| name.to_string_lossy().replace('%', "%25"))
             .ok_or_else(|| std::io::Error::other("the entry file has no name"))?;
         let profile = Arc::new(profile);
         self.serve(
@@ -120,6 +125,7 @@ impl AppSourceState {
             SourceKind::Document {
                 profile: Arc::clone(&profile),
                 observer: None,
+                webview: webview.to_string(),
             },
             ServeProfile::Document(profile),
             &entry_name,
@@ -209,6 +215,34 @@ impl AppSourceState {
         }
     }
 
+    /// Revokes the HTML Documents of `webview`, whose page reloaded or
+    /// whose window closed.
+    pub(crate) fn release_webview(&self, webview: &str) {
+        let released: Vec<ServedSource> = {
+            let mut servers = self
+                .servers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let tokens: Vec<String> = servers
+                .iter()
+                .filter(|(_, server)| {
+                    matches!(&server.kind, SourceKind::Document { webview: owner, .. } if owner == webview)
+                })
+                .map(|(token, _)| token.clone())
+                .collect();
+            tokens
+                .iter()
+                .filter_map(|token| servers.remove(token))
+                .collect()
+        };
+        // Observers stop outside the lock.
+        for mut server in released {
+            if let Some(shutdown) = server.shutdown.take() {
+                let _ = shutdown.send(());
+            }
+        }
+    }
+
     pub(crate) fn is_serving(&self) -> bool {
         !self
             .servers
@@ -251,6 +285,7 @@ impl AppSourceState {
                 SourceKind::Document {
                     profile,
                     observer: None,
+                    ..
                 } => is_document_change(
                     &server.root,
                     &profile.entry,
@@ -549,8 +584,13 @@ fn resolve_document_resource(
         return Err(HttpFailure::NotFound);
     }
     let canonical = fs::canonicalize(requested).map_err(|_| HttpFailure::NotFound)?;
-    if !canonical.starts_with(root) {
+    let Ok(served) = canonical.strip_prefix(root) else {
         return Err(HttpFailure::BadRequest);
+    };
+    // A name that resolves to another one, such as the Windows short name
+    // `GIT~1` of `.git`, is checked by what it resolves to.
+    if canonical != profile.entry && (profile.single_file || has_hidden_component(served)) {
+        return Err(HttpFailure::NotFound);
     }
     Ok(canonical)
 }
@@ -799,6 +839,7 @@ mod tests {
                 .issue_document(
                     root.clone(),
                     DocumentProfile::new(root.join("index.html"), false, HtmlTheme::Light),
+                    "main",
                 )
                 .await
                 .unwrap();
@@ -874,6 +915,75 @@ mod tests {
         });
     }
 
+    async fn port_closes(port: u16) -> bool {
+        for _ in 0..50 {
+            if TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                .await
+                .is_err()
+            {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[test]
+    fn documents_end_with_the_page_of_their_webview() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::write(root.join("growth 50%.html"), "<p>").unwrap();
+        let state = AppSourceState::new();
+
+        tauri::async_runtime::block_on(async {
+            let issue = |webview: &'static str| {
+                let state = &state;
+                let root = root.clone();
+                async move {
+                    let (token, url) = state
+                        .issue_document(
+                            root.clone(),
+                            DocumentProfile::new(
+                                root.join("growth 50%.html"),
+                                false,
+                                HtmlTheme::Light,
+                            ),
+                            webview,
+                        )
+                        .await
+                        .unwrap();
+                    let url = tauri::Url::parse(&url).unwrap();
+                    (token, url.port().unwrap(), url.path().to_string())
+                }
+            };
+            let (main_token, main_port, path) = issue("main").await;
+            let (other_token, other_port, _) = issue("project-a").await;
+            // The viewport URL of a name with `%` loads the entry.
+            assert_eq!(path, "/growth%2050%25.html");
+            let own = format!("127.0.0.1:{main_port}");
+            let entry = exchange(main_port, &request(&path, Some(&own))).await;
+            assert!(body(&entry).starts_with("<!doctype html>"), "{entry}");
+
+            state.release_webview("main");
+            assert!(!state.contains(&main_token));
+            assert!(state.contains(&other_token));
+            assert!(port_closes(main_port).await, "the released port answers");
+            let own = format!("127.0.0.1:{other_port}");
+            let other = exchange(other_port, &request(&path, Some(&own))).await;
+            assert_eq!(status(&other), "HTTP/1.1 200 OK");
+
+            // App sources are not bound to a webview.
+            let (app_token, _) = state
+                .issue(root.clone(), root.join("app.yaml"), "growth 50%.html")
+                .await
+                .unwrap();
+            state.release_webview("project-a");
+            assert!(!state.contains(&other_token));
+            assert!(state.contains(&app_token));
+            state.revoke(&app_token);
+        });
+    }
+
     #[test]
     fn a_wide_document_root_serves_only_its_file() {
         let temp = tempfile::tempdir().unwrap();
@@ -888,6 +998,7 @@ mod tests {
                 .issue_document(
                     root.clone(),
                     DocumentProfile::new(root.join("page.html"), true, HtmlTheme::Dark),
+                    "main",
                 )
                 .await
                 .unwrap();
@@ -910,6 +1021,7 @@ mod tests {
                 .issue_document(
                     root.clone(),
                     DocumentProfile::new(root.join(".hidden.html"), false, HtmlTheme::Dark),
+                    "main",
                 )
                 .await
                 .unwrap();
@@ -951,6 +1063,7 @@ mod tests {
                 kind: SourceKind::Document {
                     profile: profile("index.html"),
                     observer: None,
+                    webview: "main".to_string(),
                 },
             },
         );

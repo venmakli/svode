@@ -117,6 +117,9 @@ pub fn run() {
                     connections.release_webview(webview.label());
                 }
                 speech::commands::reload_webview(webview.app_handle(), webview.label());
+                webview
+                    .state::<apps::AppSourceState>()
+                    .release_webview(webview.label());
             }
         })
         .on_window_event(|window, event| {
