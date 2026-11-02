@@ -90,3 +90,76 @@ export function listenDocumentSourceInvalidated(
     (event) => handler(event.payload),
   );
 }
+
+export type HtmlThemeDto = "light" | "dark";
+
+/** A file inside a Space of the project, or a local file outside it. */
+export type HtmlDocumentSourceDto =
+  | {
+      kind: "space";
+      projectPath: string;
+      spaceId: string | null;
+      targetPath: string;
+    }
+  | { kind: "local"; path: string };
+
+export interface HtmlDocumentServingDto {
+  capabilityToken: string;
+  /** The entry file on the loopback origin of this serving. */
+  viewportUrl: string;
+  sizeBytes: number;
+  /** RFC 3339 UTC modification time of the file. */
+  modifiedAt: string;
+}
+
+/** Why an HTML Document is not served. */
+export type HtmlDocumentFailureKindDto =
+  | "source_missing"
+  | "symlink"
+  | "unsupported_format"
+  | "path_unresolved"
+  | "source_inaccessible"
+  | "resource_limit";
+
+export interface HtmlDocumentFailureDto {
+  kind: HtmlDocumentFailureKindDto;
+  message: string;
+  limitBytes?: number;
+  actualBytes?: number;
+}
+
+/** Serves the file on its own loopback origin until it is revoked. */
+export function serveHtmlDocument(
+  source: HtmlDocumentSourceDto,
+  theme: HtmlThemeDto,
+): Promise<HtmlDocumentServingDto> {
+  return invokeCommand<HtmlDocumentServingDto>("html_document_serve", {
+    source,
+    theme,
+  });
+}
+
+/** The theme the next load of the entry file gets. */
+export function setHtmlDocumentTheme(
+  capabilityToken: string,
+  theme: HtmlThemeDto,
+): Promise<void> {
+  return invokeCommand("html_document_set_theme", { capabilityToken, theme });
+}
+
+export function revokeHtmlDocument(capabilityToken: string): Promise<void> {
+  return invokeCommand("html_document_revoke", { capabilityToken });
+}
+
+/** A file of the served root behind `capabilityToken` changed. */
+export function listenHtmlDocumentChanges(
+  capabilityToken: string,
+  onChange: () => void,
+): Promise<UnlistenFn> {
+  return listen<{ capabilityToken: string }>(
+    "document:html-source-changed",
+    (event) => {
+      if (event.payload.capabilityToken === capabilityToken) onChange();
+    },
+  );
+}

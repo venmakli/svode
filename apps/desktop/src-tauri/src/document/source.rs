@@ -92,6 +92,10 @@ pub(crate) enum DocumentSourceError {
     SourceMissing,
     #[error("Document source is not accessible")]
     SourceInaccessible,
+    #[error("Document source is a symbolic link")]
+    Symlink,
+    #[error("Document path cannot be resolved")]
+    PathUnresolved,
     #[error("This file is not a supported Document source")]
     UnsupportedFormat,
     #[error("Document source exceeds the {limit_bytes} byte preview limit")]
@@ -121,6 +125,8 @@ impl Serialize for DocumentSourceError {
         let (kind, limit_bytes, actual_bytes) = match self {
             Self::SourceMissing => ("source_missing", None, None),
             Self::SourceInaccessible => ("source_inaccessible", None, None),
+            Self::Symlink => ("symlink", None, None),
+            Self::PathUnresolved => ("path_unresolved", None, None),
             Self::UnsupportedFormat => ("unsupported_format", None, None),
             Self::ResourceLimit {
                 limit_bytes,
@@ -323,7 +329,7 @@ fn descriptor_from_metadata(
     })
 }
 
-fn reject_registered_space_boundary(
+pub(super) fn reject_registered_space_boundary(
     space_path: &Path,
     normalized: &str,
 ) -> Result<(), DocumentSourceError> {
@@ -360,7 +366,7 @@ fn map_source_error(error: AppError) -> DocumentSourceError {
     }
 }
 
-fn map_io_error(error: std::io::Error) -> DocumentSourceError {
+pub(super) fn map_io_error(error: std::io::Error) -> DocumentSourceError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DocumentSourceError::SourceMissing
     } else {

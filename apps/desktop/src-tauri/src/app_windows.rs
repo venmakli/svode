@@ -9,6 +9,8 @@ use tauri::{
     Window, WindowEvent,
 };
 
+use tauri_plugin_opener::OpenerExt;
+
 use crate::error::AppError;
 use crate::navigation::NavigationItem;
 use crate::space::{
@@ -693,8 +695,46 @@ fn open_or_focus_project_window(
     build_window(app, &label, &format!("{} - Svode", cfg.name))
 }
 
+/// The first window, declared in `tauri.conf.json` without being created so
+/// that it gets the handler of new windows like every other one.
+pub fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(config) = app.config().app.windows.first() {
+        WebviewWindowBuilder::from_config(app, config)?
+            .on_new_window(new_window_handler(app))
+            .build()?;
+    }
+    Ok(())
+}
+
+/// A request of a page to open a new window, from Svode itself or from any
+/// frame inside it (Stage 11 `06` A3): an `http(s)` address opens in the
+/// system browser; no WebView window is ever created.
+fn new_window_handler(
+    app: &AppHandle,
+) -> impl Fn(
+    tauri::Url,
+    tauri::webview::NewWindowFeatures,
+) -> tauri::webview::NewWindowResponse<tauri::Wry>
++ Send
++ 'static {
+    let app = app.clone();
+    move |url, _features| {
+        if opens_in_browser(&url) {
+            if let Err(error) = app.opener().open_url(url.as_str(), None::<&str>) {
+                tracing::warn!(%error, "a new window address did not open in the browser");
+            }
+        }
+        tauri::webview::NewWindowResponse::Deny
+    }
+}
+
+fn opens_in_browser(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
 fn build_window(app: &AppHandle, label: &str, title: &str) -> Result<WebviewWindow, AppError> {
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
+        .on_new_window(new_window_handler(app))
         .title(title)
         .inner_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
         .min_inner_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
@@ -849,6 +889,29 @@ fn project_window_label(project_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_http_addresses_of_a_new_window_open_in_the_browser() {
+        for address in ["https://example.com/a?b", "http://127.0.0.1:4000/"] {
+            assert!(
+                opens_in_browser(&tauri::Url::parse(address).unwrap()),
+                "{address}"
+            );
+        }
+        for address in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "tauri://localhost/index.html",
+            "data:text/html,<p>",
+            "about:blank",
+            "blob:http://127.0.0.1:4000/x",
+        ] {
+            assert!(
+                !opens_in_browser(&tauri::Url::parse(address).unwrap()),
+                "{address}"
+            );
+        }
+    }
 
     fn is_home(state: &AppWindowState, label: &str) -> bool {
         matches!(state.intent_for_window(label), Some(WindowOpenIntent::Home))

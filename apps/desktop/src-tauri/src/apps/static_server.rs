@@ -11,23 +11,69 @@ use tokio::sync::{Semaphore, oneshot};
 use tokio::time::timeout;
 use ulid::Ulid;
 
+use crate::document::html::{
+    HTML_DOCUMENT_LIMIT, HtmlTheme, has_hidden_component, is_document_change, render_entry,
+};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 
 /// A file of a served static source changed; the payload names its token.
 pub(crate) const APP_SOURCE_CHANGED_EVENT: &str = "app:source-changed";
+/// A file of a served HTML Document root changed; the payload names its token.
+pub(crate) const DOCUMENT_SOURCE_CHANGED_EVENT: &str = "document:html-source-changed";
 
 const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 
-struct StaticAppServer {
+struct ServedSource {
     shutdown: Option<oneshot::Sender<()>>,
-    public_root: PathBuf,
-    manifest: PathBuf,
+    /// Canonical.
+    root: PathBuf,
+    kind: SourceKind,
+}
+
+enum SourceKind {
+    App {
+        manifest: PathBuf,
+    },
+    Document {
+        profile: Arc<DocumentProfile>,
+        /// The observation of a root outside the project; a root inside a
+        /// Space reports through the Space watcher.
+        observer: Option<notify::RecommendedWatcher>,
+    },
+}
+
+/// How an HTML Document root is answered (Stage 11 `06` A2).
+pub(crate) struct DocumentProfile {
+    /// The canonical entry file.
+    pub entry: PathBuf,
+    /// The root is wide: only the entry file is served.
+    pub single_file: bool,
+    theme: Mutex<HtmlTheme>,
+}
+
+impl DocumentProfile {
+    pub(crate) fn new(entry: PathBuf, single_file: bool, theme: HtmlTheme) -> Self {
+        Self {
+            entry,
+            single_file,
+            theme: Mutex::new(theme),
+        }
+    }
+
+    fn theme(&self) -> HtmlTheme {
+        *self.theme.lock().unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+enum ServeProfile {
+    App { entry: String },
+    Document(Arc<DocumentProfile>),
 }
 
 pub(crate) struct AppSourceState {
-    servers: Mutex<HashMap<String, StaticAppServer>>,
+    servers: Mutex<HashMap<String, ServedSource>>,
 }
 
 impl AppSourceState {
@@ -45,6 +91,49 @@ impl AppSourceState {
         manifest: PathBuf,
         entry: &str,
     ) -> std::io::Result<(String, String)> {
+        self.serve(
+            public_root,
+            SourceKind::App { manifest },
+            ServeProfile::App {
+                entry: entry.to_string(),
+            },
+            entry,
+        )
+        .await
+    }
+
+    /// Serves an HTML Document from its canonical `root`; the entry file is
+    /// a direct child of it.
+    pub(crate) async fn issue_document(
+        &self,
+        root: PathBuf,
+        profile: DocumentProfile,
+    ) -> std::io::Result<(String, String)> {
+        let entry_name = profile
+            .entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| std::io::Error::other("the entry file has no name"))?;
+        let profile = Arc::new(profile);
+        self.serve(
+            root,
+            SourceKind::Document {
+                profile: Arc::clone(&profile),
+                observer: None,
+            },
+            ServeProfile::Document(profile),
+            &entry_name,
+        )
+        .await
+    }
+
+    async fn serve(
+        &self,
+        root: PathBuf,
+        kind: SourceKind,
+        profile: ServeProfile,
+        entry: &str,
+    ) -> std::io::Result<(String, String)> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let token = format!("{}{}", Ulid::new(), Ulid::new()).to_ascii_lowercase();
@@ -54,23 +143,57 @@ impl AppSourceState {
             .unwrap_or_else(|error| error.into_inner())
             .insert(
                 token.clone(),
-                StaticAppServer {
+                ServedSource {
                     shutdown: Some(shutdown),
-                    public_root: public_root.clone(),
-                    manifest,
+                    root: root.clone(),
+                    kind,
                 },
             );
 
-        let entry = entry.to_string();
         let mut url = tauri::Url::parse(&format!("http://{address}/"))
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        url.set_path(&entry);
+        url.set_path(entry);
         let viewport_url = url.to_string();
         tauri::async_runtime::spawn(async move {
-            run_server(listener, public_root, entry, shutdown_rx).await;
+            run_server(listener, root, profile, shutdown_rx).await;
         });
 
         Ok((token, viewport_url))
+    }
+
+    /// Keeps `observer` for as long as the Document `token` is served; its
+    /// changes no longer come from a Space watcher.
+    pub(crate) fn observe_document(&self, token: &str, observer: notify::RecommendedWatcher) {
+        if let Some(ServedSource {
+            kind: SourceKind::Document { observer: slot, .. },
+            ..
+        }) = self
+            .servers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get_mut(token)
+        {
+            *slot = Some(observer);
+        }
+    }
+
+    /// The theme the entry of the Document `token` is answered with.
+    pub(crate) fn set_document_theme(&self, token: &str, theme: HtmlTheme) {
+        let servers = self
+            .servers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(ServedSource {
+            kind: SourceKind::Document { profile, .. },
+            ..
+        }) = servers.get(token)
+        else {
+            return;
+        };
+        *profile
+            .theme
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = theme;
     }
 
     pub(crate) fn revoke(&self, token: &str) {
@@ -105,13 +228,37 @@ impl AppSourceState {
             .unwrap_or_else(|error| error.into_inner());
         servers
             .iter()
-            .filter(|(_, server)| {
-                is_source_change(
-                    &server.public_root,
-                    &server.manifest,
+            .filter(|(_, server)| match &server.kind {
+                SourceKind::App { manifest } => {
+                    is_source_change(&server.root, manifest, path, removed_directory)
+                }
+                SourceKind::Document { .. } => false,
+            })
+            .map(|(token, _)| token.clone())
+            .collect()
+    }
+
+    /// Tokens of the HTML Documents inside a Space whose root a change of
+    /// `path` alters.
+    pub(crate) fn documents_changed_by(&self, path: &Path, removed_directory: bool) -> Vec<String> {
+        let servers = self
+            .servers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        servers
+            .iter()
+            .filter(|(_, server)| match &server.kind {
+                SourceKind::Document {
+                    profile,
+                    observer: None,
+                } => is_document_change(
+                    &server.root,
+                    &profile.entry,
+                    profile.single_file,
                     path,
                     removed_directory,
-                )
+                ),
+                _ => false,
             })
             .map(|(token, _)| token.clone())
             .collect()
@@ -163,8 +310,8 @@ fn is_source_change(
 
 async fn run_server(
     listener: TcpListener,
-    public_root: PathBuf,
-    entry: String,
+    root: PathBuf,
+    profile: ServeProfile,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     // DNS rebinding guard: only the authority this source is served at.
@@ -172,8 +319,8 @@ async fn run_server(
         return;
     };
     let authority = Arc::new(authority);
-    let public_root = Arc::new(public_root);
-    let entry = Arc::new(entry);
+    let root = Arc::new(root);
+    let profile = Arc::new(profile);
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
 
     loop {
@@ -185,12 +332,12 @@ async fn run_server(
                     drop(stream);
                     continue;
                 };
-                let public_root = Arc::clone(&public_root);
-                let entry = Arc::clone(&entry);
+                let root = Arc::clone(&root);
+                let profile = Arc::clone(&profile);
                 let authority = Arc::clone(&authority);
                 tauri::async_runtime::spawn(async move {
                     let _permit = permit;
-                    let _ = serve_connection(stream, &authority, &public_root, &entry).await;
+                    let _ = serve_connection(stream, &authority, &root, &profile).await;
                 });
             }
         }
@@ -200,8 +347,8 @@ async fn run_server(
 async fn serve_connection(
     mut stream: TcpStream,
     authority: &str,
-    public_root: &Path,
-    entry: &str,
+    root: &Path,
+    profile: &ServeProfile,
 ) -> std::io::Result<()> {
     let request = match timeout(REQUEST_HEAD_TIMEOUT, read_request(&mut stream)).await {
         Ok(Ok(request)) => request,
@@ -213,10 +360,33 @@ async fn serve_connection(
         Some(_) => return write_failure(&mut stream, HttpFailure::MisdirectedRequest).await,
         None => return write_failure(&mut stream, HttpFailure::BadRequest).await,
     }
-    let source = match resolve_source(public_root, entry, &request.target) {
+    let resolved = match profile {
+        ServeProfile::App { entry } => resolve_source(root, entry, &request.target),
+        ServeProfile::Document(profile) => {
+            resolve_document_resource(root, profile, &request.target)
+        }
+    };
+    let source = match resolved {
         Ok(source) => source,
         Err(failure) => return write_failure(&mut stream, failure).await,
     };
+    if let ServeProfile::Document(profile) = profile
+        && source == profile.entry
+    {
+        let Ok(bytes) = read_document_entry(&source).await else {
+            return write_failure(&mut stream, HttpFailure::NotFound).await;
+        };
+        let rendered = render_entry(&bytes, profile.theme());
+        let header = success_header(
+            rendered.body.len() as u64,
+            &format!("text/html; charset={}", rendered.charset),
+        );
+        stream.write_all(header.as_bytes()).await?;
+        if request.method == RequestMethod::Get {
+            stream.write_all(&rendered.body).await?;
+        }
+        return stream.shutdown().await;
+    }
     let metadata = match fs::metadata(&source) {
         Ok(metadata) if metadata.is_file() => metadata,
         _ => return write_failure(&mut stream, HttpFailure::NotFound).await,
@@ -228,6 +398,19 @@ async fn serve_connection(
         tokio::io::copy(&mut file, &mut stream).await?;
     }
     stream.shutdown().await
+}
+
+/// The entry file within the HTML Document limit.
+async fn read_document_entry(path: &Path) -> std::io::Result<Vec<u8>> {
+    let file = tokio::fs::File::open(path).await?;
+    let mut bytes = Vec::new();
+    file.take(HTML_DOCUMENT_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > HTML_DOCUMENT_LIMIT {
+        return Err(std::io::Error::other("the entry file exceeds the limit"));
+    }
+    Ok(bytes)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -302,13 +485,18 @@ async fn read_request(stream: &mut TcpStream) -> Result<StaticRequest, HttpFailu
     })
 }
 
-fn resolve_source(public_root: &Path, entry: &str, target: &str) -> Result<PathBuf, HttpFailure> {
+/// The decoded path of a request target without its leading slash.
+fn request_path(target: &str) -> Result<String, HttpFailure> {
     let encoded_path = target
         .split_once('?')
         .map_or(target, |(path, _)| path)
         .strip_prefix('/')
         .ok_or(HttpFailure::BadRequest)?;
-    let decoded = percent_decode(encoded_path).ok_or(HttpFailure::BadRequest)?;
+    percent_decode(encoded_path).ok_or(HttpFailure::BadRequest)
+}
+
+fn resolve_source(public_root: &Path, entry: &str, target: &str) -> Result<PathBuf, HttpFailure> {
+    let decoded = request_path(target)?;
     let requested_path = if decoded.is_empty() { entry } else { &decoded };
     let relative = normalize_repo_relative(requested_path, RootMode::Reject)
         .map_err(|_| HttpFailure::BadRequest)?;
@@ -319,6 +507,49 @@ fn resolve_source(public_root: &Path, entry: &str, target: &str) -> Result<PathB
     }
     let canonical = fs::canonicalize(requested).map_err(|_| HttpFailure::NotFound)?;
     if !canonical.starts_with(public_root) {
+        return Err(HttpFailure::BadRequest);
+    }
+    Ok(canonical)
+}
+
+/// As `resolve_source`, and besides: no hidden components, no symbolic
+/// link on the way, and for a wide root only the entry file.
+fn resolve_document_resource(
+    root: &Path,
+    profile: &DocumentProfile,
+    target: &str,
+) -> Result<PathBuf, HttpFailure> {
+    let decoded = request_path(target)?;
+    let relative = if decoded.is_empty() {
+        profile
+            .entry
+            .strip_prefix(root)
+            .map_err(|_| HttpFailure::NotFound)?
+            .to_path_buf()
+    } else {
+        PathBuf::from(
+            normalize_repo_relative(&decoded, RootMode::Reject)
+                .map_err(|_| HttpFailure::BadRequest)?,
+        )
+    };
+    let requested = root.join(&relative);
+    // The entry file is served even when its own name is hidden.
+    if requested != profile.entry && (profile.single_file || has_hidden_component(&relative)) {
+        return Err(HttpFailure::NotFound);
+    }
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&current).map_err(|_| HttpFailure::NotFound)?;
+        if metadata.file_type().is_symlink() {
+            return Err(HttpFailure::NotFound);
+        }
+    }
+    if !fs::symlink_metadata(&requested).is_ok_and(|metadata| metadata.is_file()) {
+        return Err(HttpFailure::NotFound);
+    }
+    let canonical = fs::canonicalize(requested).map_err(|_| HttpFailure::NotFound)?;
+    if !canonical.starts_with(root) {
         return Err(HttpFailure::BadRequest);
     }
     Ok(canonical)
@@ -537,6 +768,234 @@ mod tests {
         });
     }
 
+    fn body(response: &str) -> &str {
+        response.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+    }
+
+    #[test]
+    fn a_document_root_serves_its_directory_without_hidden_files_or_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        let root = base.join("report");
+        fs::create_dir_all(root.join("data/nested")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("sub/.hidden")).unwrap();
+        fs::write(root.join("index.html"), "<p>fragment").unwrap();
+        fs::write(root.join("data/nested/a.csv"), "csv").unwrap();
+        fs::write(root.join("other.html"), "<p>other").unwrap();
+        fs::write(root.join(".git/config"), "git").unwrap();
+        fs::write(root.join(".env"), "KEY=1").unwrap();
+        fs::write(root.join("sub/.hidden/x"), "hidden").unwrap();
+        fs::write(base.join("secret.txt"), "secret").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(base.join("secret.txt"), root.join("linked.txt")).unwrap();
+            std::os::unix::fs::symlink(root.join("data"), root.join("alias")).unwrap();
+        }
+        let state = AppSourceState::new();
+
+        tauri::async_runtime::block_on(async {
+            let (token, url) = state
+                .issue_document(
+                    root.clone(),
+                    DocumentProfile::new(root.join("index.html"), false, HtmlTheme::Light),
+                )
+                .await
+                .unwrap();
+            let url = tauri::Url::parse(&url).unwrap();
+            assert_eq!(url.path(), "/index.html");
+            let port = url.port().unwrap();
+            let own = format!("127.0.0.1:{port}");
+            let get = |path: &str| {
+                let request = request(path, Some(&own));
+                async move { exchange(port, &request).await }
+            };
+
+            let entry = get("/index.html").await;
+            assert_eq!(status(&entry), "HTTP/1.1 200 OK");
+            assert!(entry.contains("Content-Type: text/html; charset=utf-8\r\n"));
+            assert!(entry.contains("Content-Security-Policy: default-src"));
+            assert!(body(&entry).starts_with("<!doctype html>\n<html data-theme=\"light\">"));
+            assert!(body(&entry).ends_with("<p>fragment"));
+            assert_eq!(body(&get("/").await), body(&entry));
+            // Other files of the root are served as they are.
+            assert_eq!(body(&get("/other.html").await), "<p>other");
+            assert_eq!(body(&get("/data/nested/a.csv?v=2").await), "csv");
+
+            for path in [
+                "/.git/config",
+                "/.env",
+                "/sub/.hidden/x",
+                "/%2egit/config",
+                "/linked.txt",
+                "/alias/nested/a.csv",
+                "/missing.html",
+            ] {
+                assert_eq!(status(&get(path).await), "HTTP/1.1 404 Not Found", "{path}");
+            }
+            for path in [
+                "/../secret.txt",
+                "/%2e%2e/secret.txt",
+                "/./index.html",
+                "/data//nested/a.csv",
+            ] {
+                assert_eq!(
+                    status(&get(path).await),
+                    "HTTP/1.1 400 Bad Request",
+                    "{path}"
+                );
+            }
+            let foreign = exchange(
+                port,
+                &request("/index.html", Some(&format!("localhost:{port}"))),
+            )
+            .await;
+            assert_eq!(status(&foreign), "HTTP/1.1 421 Misdirected Request");
+
+            // The theme of the next load.
+            state.set_document_theme(&token, HtmlTheme::Dark);
+            assert!(
+                body(&get("/").await).starts_with("<!doctype html>\n<html data-theme=\"dark\">")
+            );
+
+            state.revoke(&token);
+            let mut closed = false;
+            for _ in 0..50 {
+                if TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                    .await
+                    .is_err()
+                {
+                    closed = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(closed, "the port still answers after revocation");
+        });
+    }
+
+    #[test]
+    fn a_wide_document_root_serves_only_its_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::write(root.join("page.html"), "<html><p>").unwrap();
+        fs::write(root.join("notes.md"), "notes").unwrap();
+        fs::write(root.join(".hidden.html"), "<p>").unwrap();
+        let state = AppSourceState::new();
+
+        tauri::async_runtime::block_on(async {
+            let (token, url) = state
+                .issue_document(
+                    root.clone(),
+                    DocumentProfile::new(root.join("page.html"), true, HtmlTheme::Dark),
+                )
+                .await
+                .unwrap();
+            let port = tauri::Url::parse(&url).unwrap().port().unwrap();
+            let own = format!("127.0.0.1:{port}");
+            let page = exchange(port, &request("/page.html", Some(&own))).await;
+            assert_eq!(body(&page), "<html data-theme=\"dark\"><p>");
+            assert_eq!(
+                body(&exchange(port, &request("/", Some(&own))).await),
+                body(&page)
+            );
+            for path in ["/notes.md", "/.hidden.html"] {
+                let sibling = exchange(port, &request(path, Some(&own))).await;
+                assert_eq!(status(&sibling), "HTTP/1.1 404 Not Found", "{path}");
+            }
+            state.revoke(&token);
+
+            // A hidden name of the entry itself does not hide it.
+            let (token, url) = state
+                .issue_document(
+                    root.clone(),
+                    DocumentProfile::new(root.join(".hidden.html"), false, HtmlTheme::Dark),
+                )
+                .await
+                .unwrap();
+            let port = tauri::Url::parse(&url).unwrap().port().unwrap();
+            let own = format!("127.0.0.1:{port}");
+            assert_eq!(
+                status(&exchange(port, &request("/", Some(&own))).await),
+                "HTTP/1.1 200 OK"
+            );
+            state.revoke(&token);
+        });
+    }
+
+    #[test]
+    fn documents_inside_a_space_change_through_its_watcher() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap().join("report");
+        fs::create_dir_all(root.join("data")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("index.html"), "<p>").unwrap();
+        fs::write(root.join("data/a.csv"), "1").unwrap();
+        fs::write(root.join(".git/HEAD"), "ref").unwrap();
+        let sibling = temp.path().join("report-old");
+        fs::create_dir_all(&sibling).unwrap();
+        fs::write(sibling.join("index.html"), "<p>").unwrap();
+        let state = AppSourceState::new();
+        let profile = |entry: &str| {
+            Arc::new(DocumentProfile::new(
+                root.join(entry),
+                false,
+                HtmlTheme::Light,
+            ))
+        };
+        state.servers.lock().unwrap().insert(
+            "space".to_string(),
+            ServedSource {
+                shutdown: None,
+                root: root.clone(),
+                kind: SourceKind::Document {
+                    profile: profile("index.html"),
+                    observer: None,
+                },
+            },
+        );
+
+        assert_eq!(
+            state.documents_changed_by(&root.join("data/a.csv"), false),
+            ["space"]
+        );
+        assert_eq!(
+            state.documents_changed_by(&root.join("index.html"), false),
+            ["space"]
+        );
+        assert!(
+            state
+                .documents_changed_by(&root.join(".git/HEAD"), false)
+                .is_empty()
+        );
+        assert!(
+            state
+                .documents_changed_by(&sibling.join("index.html"), false)
+                .is_empty()
+        );
+        // Documents are not App sources.
+        assert!(
+            state
+                .sources_changed_by(&root.join("data/a.csv"), false)
+                .is_empty()
+        );
+
+        // A Document with its own observation does not report twice.
+        let observer = crate::document::html::observe_outside(
+            root.clone(),
+            root.join("index.html"),
+            false,
+            || {},
+        )
+        .unwrap();
+        state.observe_document("space", observer);
+        assert!(
+            state
+                .documents_changed_by(&root.join("data/a.csv"), false)
+                .is_empty()
+        );
+    }
+
     #[test]
     fn percent_decoder_rejects_malformed_and_non_utf8_paths() {
         assert_eq!(
@@ -550,10 +1009,12 @@ mod tests {
     fn observe(state: &AppSourceState, token: &str, public_root: &Path, manifest: &Path) {
         state.servers.lock().unwrap().insert(
             token.to_string(),
-            StaticAppServer {
+            ServedSource {
                 shutdown: None,
-                public_root: public_root.to_path_buf(),
-                manifest: manifest.to_path_buf(),
+                root: public_root.to_path_buf(),
+                kind: SourceKind::App {
+                    manifest: manifest.to_path_buf(),
+                },
             },
         );
     }
@@ -676,10 +1137,12 @@ mod tests {
         let (shutdown, mut shutdown_rx) = oneshot::channel();
         state.servers.lock().unwrap().insert(
             token.clone(),
-            StaticAppServer {
+            ServedSource {
                 shutdown: Some(shutdown),
-                public_root: PathBuf::from("/public"),
-                manifest: PathBuf::from("/app.yaml"),
+                root: PathBuf::from("/public"),
+                kind: SourceKind::App {
+                    manifest: PathBuf::from("/app.yaml"),
+                },
             },
         );
         assert!(state.contains(&token));

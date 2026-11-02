@@ -124,6 +124,7 @@ pub fn run() {
             app_windows::handle_window_event(app, window, event);
         })
         .setup(|app| {
+            app_windows::build_main_window(app.handle())?;
             let routine_stores = Arc::new(routines::RoutineStoreState::new());
             app.manage(routine_stores.clone());
             app.manage(index::IndexState::new());
@@ -218,6 +219,9 @@ pub fn run() {
             document::commands::document_list_external_apps,
             document::commands::document_open_external,
             document::commands::document_reveal_external,
+            document::commands::html_document_serve,
+            document::commands::html_document_set_theme,
+            document::commands::html_document_revoke,
             media::commands::media_create_source,
             media::commands::media_create_local_source,
             media::commands::media_validate_source,
