@@ -1,11 +1,18 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import { treeLoadTargetFailure } from "../src/platform/space/content-tree-api";
-import type { SpaceInfo, TreeNode } from "../src/features/space/model/types";
+import type {
+  MoveContentResult,
+  SpaceInfo,
+  TreeNode,
+} from "../src/features/space/model/types";
 let persisted: Record<string, string[]>;
 let save: (scope: string, paths: string[]) => Promise<void>;
 let read: (scope: string) => Promise<string[]>;
 let list: (scope: string, parent: string | null) => Promise<TreeNode[]>;
-let move: (input: { from: string; toParent: string }) => Promise<string>;
+let move: (input: {
+  from: string;
+  toParent: string;
+}) => Promise<MoveContentResult>;
 mock.module("../src/features/space/api/space-store-actions", () => ({
   treeLoadTargetFailure,
   getSpaceExpandedPaths: (scope: string) => read(scope),
@@ -71,7 +78,10 @@ beforeEach(() => {
   };
   read = async (scope) => persisted[scope] ?? [];
   list = async () => [];
-  move = async ({ from, toParent }) => `${toParent}/${from.split("/").pop()}`;
+  move = async ({ from, toParent }) => ({
+    newPath: `${toParent}/${from.split("/").pop()}`,
+    convertedParents: [],
+  });
 });
 test("handoff remaps unloaded descendants, READMEs and cache; duplicate/no-op safe", async () => {
   const { get, set } = fixture([
