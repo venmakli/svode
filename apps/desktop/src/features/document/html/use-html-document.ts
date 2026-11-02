@@ -78,6 +78,8 @@ export function useHtmlDocument(stableTarget: DocumentTarget) {
         tokenRef.current = serving.capabilityToken;
         if (themeRef.current !== servedTheme) {
           await setDocumentPageTheme(serving.capabilityToken, themeRef.current);
+          // The cleanup revoked this serving meanwhile.
+          if (cancelled) return;
         }
         setState({
           phase: "ready",
@@ -125,14 +127,19 @@ export function useHtmlDocument(stableTarget: DocumentTarget) {
     themeRef.current = theme;
     const token = tokenRef.current;
     if (!token) return;
-    void setDocumentPageTheme(token, theme).then(() => {
-      if (tokenRef.current !== token) return;
-      setState((current) =>
-        current.phase === "ready"
-          ? { ...current, revision: current.revision + 1 }
-          : current,
-      );
-    });
+    void setDocumentPageTheme(token, theme).then(
+      () => {
+        if (tokenRef.current !== token) return;
+        setState((current) =>
+          current.phase === "ready"
+            ? { ...current, revision: current.revision + 1 }
+            : current,
+        );
+      },
+      (error: unknown) => {
+        console.error("Failed to set the theme of an HTML Document:", error);
+      },
+    );
   }, [theme]);
 
   const reload = useCallback(() => {

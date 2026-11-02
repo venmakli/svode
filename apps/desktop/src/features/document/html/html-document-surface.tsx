@@ -140,6 +140,16 @@ export function HtmlDocumentSurface({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {topBar}
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        {state.phase !== "failed" ? (
+          // The page stays loaded under the source: only «Перезагрузить»
+          // and a change of its root reset it.
+          <HtmlPreview
+            title={title}
+            viewportUrl={state.phase === "ready" ? state.viewportUrl : null}
+            revision={state.phase === "ready" ? state.revision : 0}
+            hidden={shownView === "source"}
+          />
+        ) : null}
         {shownView === "source" ? (
           <HtmlSourceBody
             target={target}
@@ -155,13 +165,7 @@ export function HtmlDocumentSurface({
               externalOpen={page.externalOpen}
             />
           )
-        ) : (
-          <HtmlPreview
-            title={title}
-            viewportUrl={state.phase === "ready" ? state.viewportUrl : null}
-            revision={state.phase === "ready" ? state.revision : 0}
-          />
-        )}
+        ) : null}
       </div>
       {page.externalOpenError ? (
         <p
@@ -180,15 +184,18 @@ function HtmlPreview({
   title,
   viewportUrl,
   revision,
+  hidden,
 }: {
   title: string;
   viewportUrl: string | null;
   revision: number;
+  /** The source covers the body: the page stays loaded, out of sight. */
+  hidden: boolean;
 }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const loaded = viewportUrl !== null && loadedUrl === viewportUrl;
   return (
-    <>
+    <div className="absolute inset-0" hidden={hidden}>
       {viewportUrl ? (
         <iframe
           key={`${viewportUrl}:${revision}`}
@@ -212,7 +219,7 @@ function HtmlPreview({
           <Skeleton className="min-h-0 flex-1" />
         </div>
       )}
-    </>
+    </div>
   );
 }
 
