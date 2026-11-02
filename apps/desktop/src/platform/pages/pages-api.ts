@@ -143,14 +143,6 @@ export function nestPage(input: {
   return invokeCommand<string>("nest_page", { ...input });
 }
 
-export function unnestPage(input: {
-  space: string;
-  path: string;
-  projectPath: string | null;
-}): Promise<string> {
-  return invokeCommand<string>("unnest_page", { ...input });
-}
-
 export function convertPageToFolder(input: {
   space: string;
   filePath: string;

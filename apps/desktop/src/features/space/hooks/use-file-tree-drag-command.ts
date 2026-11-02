@@ -2,20 +2,15 @@ import { useCallback } from "react";
 import { retargetActiveContent } from "@/features/artifact";
 import { followContentRelocation } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
-import { nestTreePage, unnestTreePage } from "../api/content-tree-actions";
 import {
   buildCrossParentMovePlan,
   buildCrossParentMoveOrder,
-  buildNestConversionOrder,
   buildSameParentReorderOrder,
-  getChildNestConversionPlan,
   movedPagePath,
   prepareTreeDrag,
-  readmeFolderPath,
-  type CrossParentMovePlan,
 } from "../lib/tree-dnd-commit-plan";
 import type { Projection } from "../lib/tree-dnd-utilities";
-import { buildOrderMap, findTreeNode } from "../lib/tree-node-queries";
+import { buildOrderMap } from "../lib/tree-node-queries";
 import { createFileTreeEditorSync } from "../effects/file-tree-editor-sync";
 import { useSpaceStore, type SpaceState } from "../model/space-store";
 import type { SpaceInfo } from "../model/types";
@@ -38,77 +33,6 @@ function findSpace(state: SpaceState, spaceId: string): SpaceInfo | null {
   );
 }
 
-async function convertProjectedChildTarget(input: {
-  space: SpaceInfo;
-  spaceId: string;
-  tree: TreeNode[];
-  fromPath: string;
-  projection: Projection;
-  editorSync: ReturnType<typeof createFileTreeEditorSync>;
-}) {
-  const nestPlan = getChildNestConversionPlan(input.tree, input.projection);
-  if (!nestPlan) return;
-
-  input.editorSync.suppressPaths([nestPlan.targetPath, input.fromPath]);
-  const newNestPath = await nestTreePage({
-    spacePath: input.space.path,
-    path: nestPlan.targetPath,
-    projectPath: useSpaceStore.getState().activeRootPath,
-  });
-  input.editorSync.suppressPaths([newNestPath]);
-  input.editorSync.reopenInitialPage(nestPlan.targetPath, newNestPath);
-
-  const order = buildNestConversionOrder(input.tree, nestPlan);
-  if (order) {
-    await useSpaceStore.getState().saveOrder(input.spaceId, order);
-  }
-  await useSpaceStore
-    .getState()
-    .reloadTreePathParent(input.spaceId, nestPlan.targetPath);
-  await useSpaceStore
-    .getState()
-    .reloadTreeParent(input.spaceId, readmeFolderPath(newNestPath));
-}
-
-async function maybeUnnestEmptyOldParent(input: {
-  space: SpaceInfo;
-  spaceId: string;
-  currentTree: TreeNode[];
-  movePlan: CrossParentMovePlan;
-  editorSync: ReturnType<typeof createFileTreeEditorSync>;
-}) {
-  if (!input.movePlan.oldParentReadme) return;
-
-  const freshTree =
-    useSpaceStore.getState().fileTrees[input.spaceId] ?? input.currentTree;
-  const oldParentNode = findTreeNode(freshTree, input.movePlan.oldParentReadme);
-  if (!oldParentNode || oldParentNode.children.length > 1) return;
-
-  try {
-    const currentActive = input.editorSync.activeContentPath();
-    input.editorSync.suppressPaths([input.movePlan.oldParentReadme]);
-    const unnestPath = await unnestTreePage({
-      spacePath: input.space.path,
-      path: input.movePlan.oldParentReadme,
-      projectPath: useSpaceStore.getState().activeRootPath,
-    });
-    input.editorSync.suppressPaths([unnestPath]);
-    input.editorSync.reopenPageSnapshot(
-      currentActive,
-      input.movePlan.oldParentReadme,
-      unnestPath,
-    );
-    await useSpaceStore
-      .getState()
-      .reloadTreePathParent(input.spaceId, input.movePlan.oldParentReadme);
-    await useSpaceStore
-      .getState()
-      .reloadTreePathParent(input.spaceId, unnestPath);
-  } catch {
-    // Folder still has non-tree children on disk; leave it nested.
-  }
-}
-
 export function useFileTreeDragCommand({
   spaceId,
   tree,
@@ -123,16 +47,6 @@ export function useFileTreeDragCommand({
       if (!drag) return;
 
       const editorSync = createFileTreeEditorSync(spaceId, space.path);
-
-      await convertProjectedChildTarget({
-        space,
-        spaceId,
-        tree,
-        fromPath: input.fromPath,
-        projection: input.projection,
-        editorSync,
-      });
-
       const currentTree = useSpaceStore.getState().fileTrees[spaceId] ?? tree;
 
       if (drag.fromParent === drag.toParent) {
@@ -161,9 +75,12 @@ export function useFileTreeDragCommand({
         .beginTreePathMutation(space.path);
       let newPath: string;
       try {
-        newPath = await useSpaceStore
+        // One operation converts a leaf Page target into a folder Page and
+        // an emptied folder Page parent back into a leaf.
+        const moved = await useSpaceStore
           .getState()
           .moveContentItem(spaceId, movePlan.movePath, movePlan.toParent);
+        newPath = moved.newPath;
         if (newPath) {
           editorSync.suppressPaths([newPath]);
           // A Page open inside a moved folder goes with it.
@@ -185,17 +102,14 @@ export function useFileTreeDragCommand({
             movedPagePath(movePlan, newPath),
           );
         }
+        // An open converted parent Page goes on at its new path.
+        for (const converted of moved.convertedParents) {
+          editorSync.suppressPaths([converted.oldPath, converted.newPath]);
+          editorSync.reopenInitialPage(converted.oldPath, converted.newPath);
+        }
       } finally {
         finishMove();
       }
-
-      await maybeUnnestEmptyOldParent({
-        space,
-        spaceId,
-        currentTree,
-        movePlan,
-        editorSync,
-      });
 
       const updatedTree = useSpaceStore.getState().fileTrees[spaceId];
       if (updatedTree) {

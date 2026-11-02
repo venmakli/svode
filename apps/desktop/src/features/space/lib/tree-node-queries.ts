@@ -25,15 +25,3 @@ export function findTreeNode(nodes: TreeNode[], path: string): TreeNode | null {
   }
   return null;
 }
-
-export function findParentTreeNode(
-  nodes: TreeNode[],
-  childPath: string,
-): TreeNode | null {
-  for (const node of nodes) {
-    if (node.children.some((child) => child.path === childPath)) return node;
-    const found = findParentTreeNode(node.children, childPath);
-    if (found) return found;
-  }
-  return null;
-}

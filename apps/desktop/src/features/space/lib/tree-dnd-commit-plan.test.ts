@@ -5,7 +5,6 @@ import {
   buildCrossParentMovePlan,
   buildCrossParentMoveOrder,
   buildSameParentReorderOrder,
-  getChildNestConversionPlan,
   movedPagePath,
   prepareTreeDrag,
 } from "./tree-dnd-commit-plan";
@@ -118,32 +117,6 @@ test("same-parent reorder supports the first child projection after parent row",
   });
 
   expect(order?.archive).toEqual(["note.md", "a.md", "b.md"]);
-});
-
-test("child nest conversion skips folder-like collection targets", () => {
-  const tree = sampleTree();
-
-  expect(
-    getChildNestConversionPlan(tree, {
-      depth: 1,
-      parentPath: "tasks",
-      type: "child",
-      overPath: "tasks/README.md",
-    }),
-  ).toBeNull();
-
-  expect(
-    getChildNestConversionPlan(tree, {
-      depth: 1,
-      parentPath: "note",
-      type: "child",
-      overPath: "note.md",
-    }),
-  ).toEqual({
-    targetPath: "note.md",
-    oldName: "note.md",
-    newName: "note",
-  });
 });
 
 function afterIntoArchive(): Projection {

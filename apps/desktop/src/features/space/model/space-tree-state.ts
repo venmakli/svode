@@ -3,7 +3,7 @@ import {
   projectExpansionPaths,
   remapTreePath,
 } from "./tree-expansion-state";
-import type { TreeNode } from "./types";
+import type { MoveContentResult, TreeNode } from "./types";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import * as spaceActions from "../api/space-store-actions";
 import type { SpacePageDto } from "../api/space-store-actions";
@@ -133,7 +133,7 @@ export interface SpaceTreeState extends SpaceTreeDataState {
     spaceId: string,
     from: string,
     toParent: string,
-  ) => Promise<string>;
+  ) => Promise<MoveContentResult>;
   saveOrder: (
     spaceId: string,
     order: Record<string, string[]>,
@@ -1348,25 +1348,37 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       const finish = get().beginTreePathMutation(spacePath);
       const isCurrent = lifetime(spaceId);
       const oldParent = treeRowParentPath(from);
-      let newPath: string;
+      let moved: MoveContentResult;
       let current: boolean;
       try {
-        newPath = await spaceActions.moveSpaceTreeItem({
+        moved = await spaceActions.moveSpaceTreeItem({
           spacePath,
           from,
           toParent,
           projectPath: get().activeRootPath,
         });
         current = isCurrent();
-        get().handoffTreePath(spacePath, from, newPath);
+        get().handoffTreePath(spacePath, from, moved.newPath);
       } finally {
         finish();
       }
-      if (!current) return newPath;
-      const newParent = treeRowParentPath(newPath);
+      if (!current) return moved;
+      const newParent = treeRowParentPath(moved.newPath);
+      // A converted parent Page changes its row in its own parent.
+      const convertedRowParents = moved.convertedParents.flatMap(
+        (converted) => [
+          treeRowParentPath(converted.oldPath),
+          treeRowParentPath(converted.newPath),
+        ],
+      );
       get().removeTreePath(spaceId, from);
-      await get().reloadTreeParents(spaceId, [oldParent, newParent, toParent]);
-      return newPath;
+      await get().reloadTreeParents(spaceId, [
+        oldParent,
+        newParent,
+        toParent,
+        ...convertedRowParents,
+      ]);
+      return moved;
     },
 
     saveOrder: async (spaceId: string, order: Record<string, string[]>) => {

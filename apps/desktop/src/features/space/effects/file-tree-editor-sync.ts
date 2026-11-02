@@ -9,16 +9,9 @@ import {
 } from "@/features/editor/file-tree-sync";
 
 export interface FileTreeEditorSync {
-  readonly initialActiveContentPath: string | null;
   suppressPaths: (paths: string[]) => void;
   clearInitialUnsaved: (path: string) => void;
   reopenInitialPage: (fromPath: string, toPath: string) => void;
-  activeContentPath: () => string | null;
-  reopenPageSnapshot: (
-    activeContentPath: string | null,
-    fromPath: string,
-    toPath: string,
-  ) => void;
 }
 
 export function createFileTreeEditorSync(
@@ -32,7 +25,6 @@ export function createFileTreeEditorSync(
     initialActiveContentPathSpaceId === spaceId && initialActiveContentPath === path;
 
   return {
-    initialActiveContentPath,
     suppressPaths: (paths) => {
       suppressEditorFileEvents(spacePath, paths);
     },
@@ -43,13 +35,6 @@ export function createFileTreeEditorSync(
     },
     reopenInitialPage: (fromPath, toPath) => {
       if (!isInitialPage(fromPath)) return;
-      clearEditorFileUnsaved(spacePath, fromPath);
-      openPage(toPath, spaceId);
-    },
-    activeContentPath: getActiveContentPath,
-    reopenPageSnapshot: (activeContentPath, fromPath, toPath) => {
-      if (activeContentPath !== fromPath) return;
-      if (getActiveContentSpaceId() !== spaceId) return;
       clearEditorFileUnsaved(spacePath, fromPath);
       openPage(toPath, spaceId);
     },

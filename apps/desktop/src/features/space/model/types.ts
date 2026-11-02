@@ -1,4 +1,5 @@
 import type {
+  MoveContentResultDto,
   ProjectWindowRequestDto,
   SpaceConfigUnreadableDto,
 } from "@/platform/space/space-types";
@@ -21,6 +22,9 @@ export type ProjectWindowRequest = ProjectWindowRequestDto;
 
 /** Why the config of a project or space exists but cannot be read. */
 export type SpaceConfigUnreadable = SpaceConfigUnreadableDto;
+
+/** Where a moved item landed and the parent Pages the move converted. */
+export type MoveContentResult = MoveContentResultDto;
 
 export interface SpaceInfo {
   id: string;

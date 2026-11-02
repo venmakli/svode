@@ -84,10 +84,8 @@ export function moveContentTreeItem(input: {
   from: string;
   toParent: string;
   projectPath: string | null;
-}): Promise<string> {
-  return invokeCommand<MoveContentResultDto>("move_content", { ...input }).then(
-    (result) => result.newPath,
-  );
+}): Promise<MoveContentResultDto> {
+  return invokeCommand<MoveContentResultDto>("move_content", { ...input });
 }
 
 export function renameContentTreeItem(input: {

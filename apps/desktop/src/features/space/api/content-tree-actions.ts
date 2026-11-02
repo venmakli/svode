@@ -2,7 +2,6 @@ import {
   createPage,
   getPageBacklinks,
   nestPage,
-  unnestPage,
   updatePageField,
   type PageBacklinkDto,
   type PageDto,
@@ -112,18 +111,6 @@ export function nestTreePage(input: {
   projectPath: ProjectPath;
 }): Promise<string> {
   return nestPage({
-    space: input.spacePath,
-    path: input.path,
-    projectPath: input.projectPath,
-  });
-}
-
-export function unnestTreePage(input: {
-  spacePath: string;
-  path: string;
-  projectPath: ProjectPath;
-}): Promise<string> {
-  return unnestPage({
     space: input.spacePath,
     path: input.path,
     projectPath: input.projectPath,
