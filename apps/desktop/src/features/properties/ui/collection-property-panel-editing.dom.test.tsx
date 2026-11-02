@@ -44,6 +44,8 @@ if (process.env.SVODE_PROPERTY_PANEL_EDITING_DOM !== "1") {
     await import("./collection-property-panel");
   const { keepsCollectionPropertyEditorOnEscape } =
     await import("./collection-property-editor");
+  const { subscribeUserEdits, UserEditScope } =
+    await import("@/features/navigation");
   const document = dom.window.document;
 
   interface Task {
@@ -173,7 +175,11 @@ if (process.env.SVODE_PROPERTY_PANEL_EDITING_DOM !== "1") {
     item(): Task;
   }
 
-  async function mount(update: Update, initial: Task = saved) {
+  async function mount(
+    update: Update,
+    initial: Task = saved,
+    mainArea = false,
+  ) {
     const container = document.getElementById("app")!;
     const controls: Partial<Mounted> = {};
     function Harness() {
@@ -184,7 +190,12 @@ if (process.env.SVODE_PROPERTY_PANEL_EDITING_DOM !== "1") {
         Object.assign(controls, { item: () => itemRef.current, setItem });
       }, [item]);
       return (
-        <CollectionPropertyPanel item={item} properties={properties(update)} />
+        <UserEditScope mainArea={mainArea}>
+          <CollectionPropertyPanel
+            item={item}
+            properties={properties(update)}
+          />
+        </UserEditScope>
       );
     }
     const root = createRoot(container);
@@ -326,6 +337,32 @@ if (process.env.SVODE_PROPERTY_PANEL_EDITING_DOM !== "1") {
       expect(writes).toEqual([]);
     } finally {
       await unmount(mounted);
+    }
+  });
+
+  test("a saved edit keeps the object of the main area in Now; an edit in a peek or a refused one does not", async () => {
+    const edits: string[] = [];
+    const unsubscribe = subscribeUserEdits((edit) => edits.push(edit.kind));
+    let refuse = false;
+    const update = async () => {
+      if (refuse) throw new Error("refused");
+    };
+    try {
+      const inPeek = await mount(update);
+      await click(row("done").querySelector('[role="switch"]')!);
+      expect(edits).toEqual([]);
+      await unmount(inPeek);
+
+      const inMain = await mount(update, saved, true);
+      await click(row("done").querySelector('[role="switch"]')!);
+      expect(edits).toEqual(["edit"]);
+      refuse = true;
+      await type(input("summary"), "Ship it");
+      await key(input("summary"), "Enter");
+      expect(edits).toEqual(["edit"]);
+      await unmount(inMain);
+    } finally {
+      unsubscribe();
     }
   });
 

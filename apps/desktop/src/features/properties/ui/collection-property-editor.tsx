@@ -7,6 +7,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useSignalUserEdit } from "@/features/navigation";
 import * as m from "@/paraglide/messages.js";
 
 import { isEmptyValue } from "../lib/utils";
@@ -77,6 +78,8 @@ export function CollectionPropertyEditor<Item>({
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const [notice, setNotice] = useState<EditorNotice>(null);
+  // A saved edit of the object the main area shows keeps it in Now.
+  const signalUserEdit = useSignalUserEdit();
 
   const saved = property.getValue(item);
   const ownerState = readCollectionPropertyEditState(edit, item);
@@ -101,6 +104,7 @@ export function CollectionPropertyEditor<Item>({
     setNotice(null);
     try {
       await edit.update(item, next);
+      signalUserEdit();
     } catch (error) {
       setNotice({ kind: "error", text: errorMessage(error) });
       setRevision((current) => current + 1);
