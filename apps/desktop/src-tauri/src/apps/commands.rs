@@ -95,6 +95,7 @@ pub(crate) enum AppProcessControlAction {
 #[tauri::command]
 pub(crate) async fn app_manifest_inspect(
     app: AppHandle,
+    webview: tauri::Webview,
     settings_state: State<'_, AppSettingsState>,
     source_state: State<'_, AppSourceState>,
     process_state: State<'_, AppProcessState>,
@@ -214,6 +215,7 @@ pub(crate) async fn app_manifest_inspect(
                     canonical_root,
                     owner.owner_path.join(APP_MANIFEST_NAME),
                     &entry,
+                    webview.label(),
                 )
                 .await?;
             Ok(AppManifestInspection::Ready {

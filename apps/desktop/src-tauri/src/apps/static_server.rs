@@ -30,6 +30,9 @@ struct ServedSource {
     /// Canonical.
     root: PathBuf,
     kind: SourceKind,
+    /// The webview whose view shows it: its reload or close ends the view
+    /// without a revocation.
+    webview: String,
 }
 
 enum SourceKind {
@@ -41,9 +44,6 @@ enum SourceKind {
         /// The observation of a root outside the project; a root inside a
         /// Space reports through the Space watcher.
         observer: Option<notify::RecommendedWatcher>,
-        /// The webview whose view shows it: its reload or close ends the view
-        /// without a revocation.
-        webview: String,
     },
 }
 
@@ -87,12 +87,14 @@ impl AppSourceState {
     }
 
     /// `public_root` is canonical; `manifest` is the owner's `app.yaml`,
-    /// which its own inspection handles even inside `public_root`.
+    /// which its own inspection handles even inside `public_root`. The
+    /// source is served for the view in `webview`.
     pub(crate) async fn issue(
         &self,
         public_root: PathBuf,
         manifest: PathBuf,
         entry: &str,
+        webview: &str,
     ) -> std::io::Result<(String, String)> {
         self.serve(
             public_root,
@@ -101,6 +103,7 @@ impl AppSourceState {
                 entry: entry.to_string(),
             },
             entry,
+            webview,
         )
         .await
     }
@@ -125,10 +128,10 @@ impl AppSourceState {
             SourceKind::Document {
                 profile: Arc::clone(&profile),
                 observer: None,
-                webview: webview.to_string(),
             },
             ServeProfile::Document(profile),
             &entry_name,
+            webview,
         )
         .await
     }
@@ -139,6 +142,7 @@ impl AppSourceState {
         kind: SourceKind,
         profile: ServeProfile,
         entry: &str,
+        webview: &str,
     ) -> std::io::Result<(String, String)> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
@@ -153,6 +157,7 @@ impl AppSourceState {
                     shutdown: Some(shutdown),
                     root: root.clone(),
                     kind,
+                    webview: webview.to_string(),
                 },
             );
 
@@ -215,8 +220,8 @@ impl AppSourceState {
         }
     }
 
-    /// Revokes the HTML Documents of `webview`, whose page reloaded or
-    /// whose window closed.
+    /// Revokes the static App sources and HTML Documents of `webview`, whose
+    /// page reloaded or whose window closed.
     pub(crate) fn release_webview(&self, webview: &str) {
         let released: Vec<ServedSource> = {
             let mut servers = self
@@ -225,9 +230,7 @@ impl AppSourceState {
                 .unwrap_or_else(|error| error.into_inner());
             let tokens: Vec<String> = servers
                 .iter()
-                .filter(|(_, server)| {
-                    matches!(&server.kind, SourceKind::Document { webview: owner, .. } if owner == webview)
-                })
+                .filter(|(_, server)| server.webview == webview)
                 .map(|(token, _)| token.clone())
                 .collect();
             tokens
@@ -755,7 +758,12 @@ mod tests {
 
         tauri::async_runtime::block_on(async {
             let (token, url) = state
-                .issue(root.clone(), temp.path().join("app.yaml"), "index.html")
+                .issue(
+                    root.clone(),
+                    temp.path().join("app.yaml"),
+                    "index.html",
+                    "main",
+                )
                 .await
                 .unwrap();
             let port = tauri::Url::parse(&url).unwrap().port().unwrap();
@@ -972,15 +980,100 @@ mod tests {
             let other = exchange(other_port, &request(&path, Some(&own))).await;
             assert_eq!(status(&other), "HTTP/1.1 200 OK");
 
-            // App sources are not bound to a webview.
-            let (app_token, _) = state
-                .issue(root.clone(), root.join("app.yaml"), "growth 50%.html")
-                .await
-                .unwrap();
             state.release_webview("project-a");
             assert!(!state.contains(&other_token));
-            assert!(state.contains(&app_token));
-            state.revoke(&app_token);
+        });
+    }
+
+    #[test]
+    fn app_sources_end_with_the_page_of_their_webview() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::write(root.join("index.html"), "index").unwrap();
+        let state = AppSourceState::new();
+
+        tauri::async_runtime::block_on(async {
+            let issue = |webview: &'static str| {
+                let state = &state;
+                let root = root.clone();
+                async move {
+                    let (token, url) = state
+                        .issue(root.clone(), root.join("app.yaml"), "index.html", webview)
+                        .await
+                        .unwrap();
+                    (token, tauri::Url::parse(&url).unwrap().port().unwrap())
+                }
+            };
+            // The same App in two windows has a source per view.
+            let (main_token, main_port) = issue("main").await;
+            let (other_token, other_port) = issue("project-a").await;
+            let (document_token, _) = state
+                .issue_document(
+                    root.clone(),
+                    DocumentProfile::new(root.join("index.html"), false, HtmlTheme::Light),
+                    "project-a",
+                )
+                .await
+                .unwrap();
+
+            state.release_webview("main");
+            assert!(!state.contains(&main_token));
+            assert!(port_closes(main_port).await, "the released port answers");
+            assert!(state.contains(&other_token) && state.contains(&document_token));
+            let own = format!("127.0.0.1:{other_port}");
+            let other = exchange(other_port, &request("/", Some(&own))).await;
+            assert_eq!(body(&other), "index");
+
+            state.release_webview("project-a");
+            assert!(!state.is_serving());
+            assert!(port_closes(other_port).await, "the released port answers");
+        });
+    }
+
+    #[test]
+    fn a_document_in_a_hidden_directory_serves_its_directory() {
+        use crate::document::html::{HtmlDocumentInput, resolve_html_document};
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap().join(".drafts");
+        fs::create_dir_all(root.join(".secret")).unwrap();
+        fs::write(root.join("x.html"), "<p>").unwrap();
+        fs::write(root.join("style.css"), "p{}").unwrap();
+        fs::write(root.join(".secret/y"), "secret").unwrap();
+        fs::write(root.join(".env"), "KEY=1").unwrap();
+        let state = AppSourceState::new();
+
+        // Accepted risk (Stage 11 `06`): the root is the directory of the
+        // file, hidden or not; only hidden components below it are refused.
+        let document = resolve_html_document(
+            &HtmlDocumentInput::Local {
+                path: root.join("x.html").to_string_lossy().into_owned(),
+            },
+            &[],
+        )
+        .unwrap();
+        assert_eq!(document.root, root);
+        assert!(!document.single_file);
+        tauri::async_runtime::block_on(async {
+            let (token, url) = state
+                .issue_document(
+                    document.root,
+                    DocumentProfile::new(document.entry, false, HtmlTheme::Light),
+                    "main",
+                )
+                .await
+                .unwrap();
+            let port = tauri::Url::parse(&url).unwrap().port().unwrap();
+            let own = format!("127.0.0.1:{port}");
+            let get = |path: &str| {
+                let request = request(path, Some(&own));
+                async move { exchange(port, &request).await }
+            };
+            assert_eq!(status(&get("/x.html").await), "HTTP/1.1 200 OK");
+            assert_eq!(body(&get("/style.css").await), "p{}");
+            for path in ["/.secret/y", "/.env"] {
+                assert_eq!(status(&get(path).await), "HTTP/1.1 404 Not Found", "{path}");
+            }
+            state.revoke(&token);
         });
     }
 
@@ -1063,8 +1156,8 @@ mod tests {
                 kind: SourceKind::Document {
                     profile: profile("index.html"),
                     observer: None,
-                    webview: "main".to_string(),
                 },
+                webview: "main".to_string(),
             },
         );
 
@@ -1128,6 +1221,7 @@ mod tests {
                 kind: SourceKind::App {
                     manifest: manifest.to_path_buf(),
                 },
+                webview: "main".to_string(),
             },
         );
     }
@@ -1256,6 +1350,7 @@ mod tests {
                 kind: SourceKind::App {
                     manifest: PathBuf::from("/app.yaml"),
                 },
+                webview: "main".to_string(),
             },
         );
         assert!(state.contains(&token));
