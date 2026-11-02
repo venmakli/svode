@@ -631,6 +631,10 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     const selection = getActiveContentSelection().selection;
     return selection?.kind === "scope-owner" ? selection.request.owner : null;
   };
+  const selectedIntent = () => {
+    const selection = getActiveContentSelection().selection;
+    return selection?.kind === "scope-owner" ? selection.request.intent : null;
+  };
 
   test("a neutral opening of an HTML file of an App opens the App; other HTML files open as Documents", async () => {
     let answer!: () => void;
@@ -711,6 +715,8 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       await f.render();
       await f.settle();
       expect(selectedOwner()).toEqual({ kind: "space", spaceId: "root" });
+      // On its App, not on its README.
+      expect(selectedIntent()).toEqual({ kind: "target", surfaceId: "app" });
     } finally {
       htmlApps = {};
       htmlAnswered = Promise.resolve();

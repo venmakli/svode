@@ -8,8 +8,9 @@ import { htmlDocumentApp, isHtmlDocumentPath } from "@/features/document";
 
 /**
  * A neutral opening of an HTML file of the project in the main area (Stage
- * 11 `06` H1, A3): a file of an App opens that App as the tree opens it, any
- * other HTML file the Document. True while the answer is pending, so the
+ * 11 `06` H1, A3): a file of an App opens that App as the tree opens it, a
+ * file of a Space that is itself an App the home of that Space on its App,
+ * any other HTML file the Document. True while the answer is pending, so the
  * Document is not shown, nor served, before it.
  */
 export function useHtmlAppOpening(input: {
@@ -45,8 +46,12 @@ export function useHtmlAppOpening(input: {
       .then((app) => {
         if (cancelled) return;
         if (app === null) setDocumentKey(requestKey);
+        // A Space that is itself an App opens its home on that App.
         else if (app.kind === "space")
-          openScopeOwner({ kind: "space", spaceId });
+          openScopeOwner(
+            { kind: "space", spaceId },
+            { scopeOpenIntent: { kind: "target", surfaceId: "app" } },
+          );
         else openScopeOwner({ kind: "app-directory", path: app.path, spaceId });
       });
     return () => {
