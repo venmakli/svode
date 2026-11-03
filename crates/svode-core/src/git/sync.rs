@@ -11,7 +11,9 @@ use super::conflict_kind::{self, PathConflict};
 use super::diagnostics::{GitStage, HookTrace};
 use super::merge_preflight::{self, Checked, Preflight};
 use super::path::{RootMode, normalize_repo_relative};
+use super::renumber::{self, Landing};
 use super::service_merge::{self, ServiceFile};
+use crate::collections::unique_id_renumber::RenumberedItem;
 
 /// Who started a sync. Background sync never starts a merge that can stop
 /// with a conflict (1.B); an explicit sync enters the ordinary merge state.
@@ -39,8 +41,12 @@ impl SyncMode {
 #[derive(Debug, Clone)]
 pub enum Integration {
     /// The branch contains the observed revision. `merged` names the Svode
-    /// service files the merge merged.
-    Integrated { merged: Vec<String> },
+    /// service files the merge merged, `renumbered` the items that got a new
+    /// `unique_id` number after it (DF-237 R3).
+    Integrated {
+        merged: Vec<String>,
+        renumbered: Vec<RenumberedItem>,
+    },
     /// The state that stops sync before push.
     Stopped(SyncResult),
 }
@@ -54,6 +60,9 @@ pub enum SyncResult {
         /// Svode service files this sync merged (1.C).
         #[serde(skip_serializing_if = "Vec::is_empty")]
         merged: Vec<String>,
+        /// Items this sync gave a new `unique_id` number (DF-237 R5).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        renumbered: Vec<RenumberedItem>,
     },
     Conflict {
         files: Vec<String>,
@@ -65,6 +74,10 @@ pub enum SyncResult {
         /// Conflicted service files and what the rule set says about them.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         service: Vec<ServiceFile>,
+        /// Items this sync gave a new `unique_id` number before the stop
+        /// (DF-237 R3, R5).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        renumbered: Vec<RenumberedItem>,
     },
     NoRemote,
     AuthRequired {
@@ -188,14 +201,15 @@ pub async fn sync_with(
             observed.upstream.remote, observed.upstream.remote_ref
         )));
     };
-    let merged = if mode != SyncMode::Explicit && head_contains(cli, space_dir, revision).await? {
-        Vec::new()
-    } else {
-        match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
-            Integration::Integrated { merged } => merged,
-            Integration::Stopped(stopped) => return Ok(stopped),
-        }
-    };
+    let (merged, renumbered) =
+        if mode != SyncMode::Explicit && head_contains(cli, space_dir, revision).await? {
+            (Vec::new(), Vec::new())
+        } else {
+            match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
+                Integration::Integrated { merged, renumbered } => (merged, renumbered),
+                Integration::Stopped(stopped) => return Ok(stopped),
+            }
+        };
     // A background sync publishes only outgoing commits, checked locally.
     if mode != SyncMode::Explicit && !has_outgoing(cli, space_dir, revision).await? {
         let head = self::revision(
@@ -208,6 +222,7 @@ pub async fn sync_with(
         return Ok(SyncResult::Success {
             published_head: head.unwrap_or_default(),
             merged,
+            renumbered,
         });
     }
 
@@ -230,6 +245,7 @@ pub async fn sync_with(
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
         merged,
+        renumbered,
     })
 }
 
@@ -287,10 +303,13 @@ async fn sync_without_upstream(
             .await;
         }
     };
-    let mut merged = Vec::new();
+    let (mut merged, mut renumbered) = (Vec::new(), Vec::new());
     if let Some(revision) = observed.revision.as_deref() {
         match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
-            Integration::Integrated { merged: files } => merged = files,
+            Integration::Integrated {
+                merged: files,
+                renumbered: items,
+            } => (merged, renumbered) = (files, items),
             Integration::Stopped(stopped) => return Ok(stopped),
         }
     }
@@ -309,6 +328,7 @@ async fn sync_without_upstream(
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
         merged,
+        renumbered,
     })
 }
 
@@ -328,8 +348,9 @@ pub async fn validate_transport(cli: &GitCli, repo: &Path, expected: &str) -> Re
 /// fast-forward, a clean merge or one with service conflicts only, else it
 /// stops with nothing changed and nothing to publish.
 ///
-/// The renumbering of repeated `unique_id` (DF-237D) belongs to this step,
-/// after the fast-forward or merge and under the same guard.
+/// After a fast-forward or merge, and before a merge stopped for the person
+/// is handed over, the step renumbers items that repeat a `unique_id`
+/// number published in `revision` (DF-237 R3) under the same guard.
 ///
 /// While an agent turn or a Routine run is in progress in the repository
 /// the step does not run in either mode: the fetch already happened, and
@@ -346,9 +367,12 @@ pub async fn integration_step(
         return Ok(Integration::Stopped(SyncResult::IntegrationAfterTurn));
     }
     let _guard =
-        super::write_guard::acquire(&std::collections::BTreeSet::from([repository]), &[]).await?;
+        super::write_guard::acquire(&std::collections::BTreeSet::from([repository.clone()]), &[])
+            .await?;
     if mode == SyncMode::Explicit {
-        return integrate(cli, space_dir, upstream, revision).await;
+        let before = head_commit(cli, space_dir).await?;
+        let integration = integrate(cli, space_dir, upstream, revision).await?;
+        return with_renumbering(cli, &repository, revision, before, integration).await;
     }
     // HEAD moved by a Git process outside Svode between the preflight and
     // the merge is checked again rather than merged unchecked.
@@ -360,12 +384,66 @@ pub async fn integration_step(
         if let Some(integration) =
             integrate_checked(cli, space_dir, upstream, revision, &checked).await?
         {
-            return Ok(integration);
+            return with_renumbering(cli, &repository, revision, checked.head, integration).await;
         }
     }
     Err(GitError::GitCommandFailed(
         "the branch kept changing during the integration step".to_owned(),
     ))
+}
+
+/// `integration` with the renumbering of repeated `unique_id` after it: in
+/// the working copy after a fast-forward, in the merge commit the step made
+/// or staged in the merge stopped for the person. `before` is HEAD before
+/// the step; a branch that already contained `revision` renumbers nothing.
+async fn with_renumbering(
+    cli: &GitCli,
+    repository: &Path,
+    revision: &str,
+    before: Option<String>,
+    integration: Integration,
+) -> Result<Integration, GitError> {
+    match integration {
+        Integration::Integrated { merged, .. } => {
+            let head = head_commit(cli, repository).await?;
+            if head == before {
+                return Ok(Integration::Integrated {
+                    merged,
+                    renumbered: Vec::new(),
+                });
+            }
+            let landing = if head.as_deref() == Some(revision) {
+                Landing::WorkingCopy
+            } else {
+                Landing::MergeCommit
+            };
+            let renumbered =
+                renumber::renumber_repeated(cli, repository, revision, landing).await?;
+            Ok(Integration::Integrated { merged, renumbered })
+        }
+        Integration::Stopped(SyncResult::Conflict {
+            files,
+            kinds,
+            merged,
+            service,
+            ..
+        }) => {
+            let renumbered =
+                renumber::renumber_repeated(cli, repository, revision, Landing::Merge).await?;
+            Ok(Integration::Stopped(SyncResult::Conflict {
+                files,
+                kinds,
+                merged,
+                service,
+                renumbered,
+            }))
+        }
+        stopped => Ok(stopped),
+    }
+}
+
+async fn head_commit(cli: &GitCli, repo: &Path) -> Result<Option<String>, GitError> {
+    revision(cli, repo, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]).await
 }
 
 /// The stop of a background sync for a preflight that does not integrate.
@@ -431,7 +509,10 @@ async fn integrate(
             // matching edits aside, may still leave files in conflict.
             return Ok(match preflight(cli, space_dir).await? {
                 Some(stopped) => Integration::Stopped(stopped),
-                None => Integration::Integrated { merged: Vec::new() },
+                None => Integration::Integrated {
+                    merged: Vec::new(),
+                    renumbered: Vec::new(),
+                },
             });
         }
         if blocked_by_local_files(&merge.stderr) {
@@ -492,6 +573,7 @@ async fn merge_failure(
         commit_service_merge(cli, space_dir).await?;
         return Ok(Integration::Integrated {
             merged: service.merged,
+            renumbered: Vec::new(),
         });
     }
 
@@ -560,6 +642,7 @@ pub(crate) async fn merge_conflict(
         kinds,
         merged,
         service,
+        renumbered: Vec::new(),
     })
 }
 
@@ -1144,6 +1227,7 @@ pub(crate) async fn continue_merge(
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
         merged,
+        renumbered: Vec::new(),
     })
 }
 

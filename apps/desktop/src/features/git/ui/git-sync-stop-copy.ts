@@ -3,6 +3,7 @@ import type {
   GitConflictKind,
   GitOperation,
   GitOperationStep,
+  GitRenumberedItem,
   GitSequenceCommits,
   GitServiceFile,
   GitSyncStop,
@@ -136,4 +137,23 @@ export function gitServiceFileLabel(file: GitServiceFile): string {
 /** The sync result names the Svode service files it merged. */
 export function gitServiceMergedMessage(files: string[]): string {
   return m.git_sync_service_merged({ files: files.join(", ") });
+}
+
+/**
+ * The sync result names the items it renumbered: title, Collection and the
+ * old and new number with the prefix (DF-237 R5).
+ */
+export function gitRenumberedMessage(items: GitRenumberedItem[]): string {
+  return m.git_sync_unique_id_renumbered({
+    items: items
+      .map((item) =>
+        m.git_sync_unique_id_renumbered_item({
+          title: item.title,
+          collection: item.collection,
+          from: item.from,
+          to: item.to,
+        }),
+      )
+      .join(", "),
+  });
 }

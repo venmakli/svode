@@ -1,9 +1,6 @@
 import { expect, test } from "bun:test";
 import { toSyncResult } from "./git-mappers";
-import {
-  serviceMergedFromResult,
-  syncStopFromResult,
-} from "../model/sync-stop";
+import { syncMergedFromResult, syncStopFromResult } from "../model/sync-stop";
 
 test("toSyncResult maps backend camelCase sync results", () => {
   expect(toSyncResult({ type: "success" })).toEqual({ type: "Success" });
@@ -116,6 +113,42 @@ test("toSyncResult keeps the Svode service files a sync merged or left", () => {
   });
 });
 
+test("toSyncResult keeps the items a sync renumbered", () => {
+  const item = {
+    path: "tasks/from-local.md",
+    title: "From local",
+    collection: "Tasks",
+    from: "T-3",
+    to: "T-4",
+  };
+  const success = toSyncResult({
+    type: "success",
+    publishedHead: "abc",
+    renumbered: [item],
+  });
+  expect(success).toEqual({
+    type: "Success",
+    publishedHead: "abc",
+    renumbered: [item],
+  });
+  expect(syncMergedFromResult(success)).toEqual({
+    files: [],
+    renumbered: [item],
+  });
+  const conflict = toSyncResult({
+    type: "conflict",
+    files: ["page.md"],
+    renumbered: [item],
+  });
+  expect(conflict).toEqual({
+    type: "Conflict",
+    files: ["page.md"],
+    kinds: [],
+    renumbered: [item],
+  });
+  expect(syncMergedFromResult(conflict)?.renumbered).toEqual([item]);
+});
+
 test("toSyncResult keeps the files and kinds of a background stop", () => {
   expect(
     toSyncResult({
@@ -190,5 +223,5 @@ test("a sync during an agent turn fetches and reports the integration after it, 
   const result = toSyncResult({ type: "integrationAfterTurn" });
   expect(result).toEqual({ type: "IntegrationAfterTurn" });
   expect(syncStopFromResult(result)).toBe(undefined);
-  expect(serviceMergedFromResult(result)).toBe(undefined);
+  expect(syncMergedFromResult(result)).toBe(undefined);
 });

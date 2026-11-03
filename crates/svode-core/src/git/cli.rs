@@ -1265,6 +1265,68 @@ pub async fn read_bounded(
     Ok(result)
 }
 
+/// The UTF-8 blobs at `paths` in `revision` (`""` for the index), by path
+/// relative to the repository; a path missing there, binary or over the
+/// limits is left out.
+pub async fn blobs_at(
+    cli: &GitCli,
+    repo: &Path,
+    revision: &str,
+    paths: &[String],
+    max_bytes: usize,
+    timeout: Duration,
+) -> std::collections::HashMap<String, String> {
+    let mut blobs = std::collections::HashMap::new();
+    if paths.is_empty() {
+        return blobs;
+    }
+    let input = paths
+        .iter()
+        .map(|path| format!("{revision}:{path}\n"))
+        .collect::<String>();
+    let Ok(Some(output)) = read_with_input(
+        cli,
+        repo,
+        &["cat-file", "--batch"],
+        input.as_bytes(),
+        max_bytes,
+        timeout,
+    )
+    .await
+    else {
+        return blobs;
+    };
+    let mut rest = output.as_slice();
+    for path in paths {
+        let Some(end) = rest.iter().position(|byte| *byte == b'\n') else {
+            break;
+        };
+        let header = String::from_utf8_lossy(&rest[..end]).into_owned();
+        rest = &rest[end + 1..];
+        if header.ends_with(" missing") || header.ends_with(" ambiguous") {
+            continue;
+        }
+        let mut fields = header.split(' ');
+        let (Some(_), Some(kind), Some(size)) = (fields.next(), fields.next(), fields.next())
+        else {
+            break;
+        };
+        let Ok(size) = size.parse::<usize>() else {
+            break;
+        };
+        if rest.len() < size + 1 {
+            break;
+        }
+        if kind == "blob"
+            && let Ok(text) = std::str::from_utf8(&rest[..size])
+        {
+            blobs.insert(path.clone(), text.to_string());
+        }
+        rest = &rest[size + 1..];
+    }
+    blobs
+}
+
 /// Run a Git read that takes `input` on stdin and
 /// return its raw output, or `None` when Git failed, the output exceeded
 /// `max_bytes` or the read did not finish within `timeout`.

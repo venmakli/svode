@@ -1406,7 +1406,7 @@ fn convert_value_collecting_options(
     }
 }
 
-fn unique_id_display_value(column: &Column, number: u64) -> String {
+pub(crate) fn unique_id_display_value(column: &Column, number: u64) -> String {
     if let Some(prefix) = column.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
         format!("{prefix}-{number}")
     } else {

@@ -69,6 +69,8 @@ export type SyncResult =
       publishedHead?: string;
       /** Svode service files this sync merged. */
       merged?: string[];
+      /** Items this sync gave a new `unique_id` number. */
+      renumbered?: GitRenumberedItem[];
       parent?: ParentPublication;
     }
   | {
@@ -79,6 +81,8 @@ export type SyncResult =
       /** Svode service files this sync merged; the rest stay in `files`. */
       merged?: string[];
       service?: GitServiceFile[];
+      /** Items this sync gave a new `unique_id` number before the stop. */
+      renumbered?: GitRenumberedItem[];
     }
   | { type: "Resolved" }
   | { type: "NoRemote" }
@@ -223,6 +227,29 @@ export interface GitPathConflict {
 export interface GitServiceFile {
   path: string;
   state: "mergeable" | "space_diverged" | "space_unavailable";
+}
+
+/**
+ * An item that repeated a `unique_id` number published upstream and got a
+ * new one after the sync integrated it (DF-237 R5): `from` and `to` carry
+ * the prefix of the column, `collection` is the title of its Collection and
+ * `path` is relative to the repository.
+ */
+export interface GitRenumberedItem {
+  path: string;
+  title: string;
+  collection: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * What the last sync of a repository did on its own: the Svode service files
+ * it merged and the items it renumbered.
+ */
+export interface GitSyncMerged {
+  files: string[];
+  renumbered: GitRenumberedItem[];
 }
 
 /** Unfinished Git operation other than a merge, which is a sync conflict. */

@@ -6,6 +6,7 @@ import type {
   GitPathConflict,
   GitSequenceCommits,
   GitServiceFile,
+  GitSyncMerged,
   SyncResult,
 } from "./types";
 
@@ -140,22 +141,25 @@ export function syncStopFromResult(
 }
 
 /**
- * The Svode service files a sync merged: named by its result, `undefined`
- * when the result says nothing about them.
+ * The Svode service files a sync merged and the items it renumbered: named
+ * by its result, `undefined` when the result says nothing about them.
  */
-export function serviceMergedFromResult(
+export function syncMergedFromResult(
   result: SyncResult,
-): string[] | undefined {
+): GitSyncMerged | undefined {
   switch (result.type) {
     case "Success":
     case "Conflict":
-      return result.merged ?? [];
+      return {
+        files: result.merged ?? [],
+        renumbered: result.renumbered ?? [],
+      };
     case "OperationInProgress":
     case "UnmergedFiles":
     case "IncomingConflict":
     case "ExplicitSyncRequired":
     case "Resolved":
-      return [];
+      return { files: [], renumbered: [] };
     case "AuthRequired":
     case "NoRemote":
     case "IntegrationAfterTurn":

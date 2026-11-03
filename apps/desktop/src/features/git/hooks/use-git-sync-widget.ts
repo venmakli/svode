@@ -22,6 +22,7 @@ import {
   type GitPublicationBlock,
   type GitRemoteAuthCredentials,
   type GitStatus,
+  type GitSyncMerged,
   type GitSyncOutcome,
   type GitSyncStop,
   type GitUnpushedCommit,
@@ -46,8 +47,11 @@ export interface GitSyncWidget {
   remoteError: string | null;
   branchError: string | null;
   stop: GitSyncStop | null;
-  /** Svode service files the last sync merged, relative to the repository. */
-  serviceMerged: string[];
+  /**
+   * Svode service files the last sync merged, relative to the repository,
+   * and the items it renumbered.
+   */
+  syncMerged: GitSyncMerged;
   /** Spaces that stopped the project publication; replaces the sync error. */
   publicationBlock: GitPublicationBlock | null;
   syncing: boolean;
@@ -148,8 +152,10 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   const publicationBlock = useGitStore((state) =>
     repository ? (state.publicationBlock[repository] ?? null) : null,
   );
-  const serviceMerged = useGitStore((state) =>
-    repository ? (state.serviceMerged[repository] ?? NO_FILES) : NO_FILES,
+  const syncMerged = useGitStore((state) =>
+    repository
+      ? (state.syncMerged[repository] ?? NOTHING_MERGED)
+      : NOTHING_MERGED,
   );
   const lastSynced = useGitStore((state) =>
     repository ? (state.lastSynced[repository] ?? null) : null,
@@ -405,7 +411,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     remoteError,
     branchError,
     stop,
-    serviceMerged,
+    syncMerged,
     publicationBlock,
     syncing,
     autoSync,
@@ -431,7 +437,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   };
 }
 
-const NO_FILES: string[] = [];
+const NOTHING_MERGED: GitSyncMerged = { files: [], renumbered: [] };
 
 function branchLabel(status: GitStatus | undefined): string {
   const branch = status?.branch?.trim();

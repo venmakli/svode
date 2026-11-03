@@ -215,6 +215,41 @@ pub fn assign_unique_id(space: &str, file_path: &str) -> Result<(), CollectionEr
     })
 }
 
+/// New numbers for the items at `paths` of the Collection at
+/// `collection_path`, one after another in that order, by the rule of
+/// allocation: each takes `max(next, largest number of the other items + 1)`
+/// and raises `next` past it. Either every item gets its number or none.
+pub fn reassign_unique_ids(
+    space: &str,
+    collection_path: &str,
+    paths: &[String],
+) -> Result<Vec<u64>, CollectionError> {
+    let mut mutation = paths
+        .iter()
+        .map(|path| Path::new(space).join(normalize_rel_path(path)))
+        .collect::<Vec<_>>();
+    mutation.push(collection_dir(space, collection_path).join(SCHEMA_FILE));
+    with_rollback(mutation, || {
+        paths
+            .iter()
+            .map(|path| {
+                assign_unique_id_to_file(space, path, true)?;
+                let raw = fs::read_to_string(Path::new(space).join(normalize_rel_path(path)))?;
+                let field = read_schema_or_default(space, collection_path)?
+                    .columns
+                    .into_iter()
+                    .find(|column| column.type_ == PropertyType::UniqueId)
+                    .map(|column| column.name);
+                frontmatter::try_parse(&raw)?
+                    .and_then(|(meta, _)| {
+                        meta.extra.get(field.as_deref()?).and_then(unique_id_value)
+                    })
+                    .ok_or_else(|| schema_error(format!("no unique_id was assigned to {path}")))
+            })
+            .collect()
+    })
+}
+
 pub fn normalize_unique_id_counter(
     space: &str,
     collection_path: &str,

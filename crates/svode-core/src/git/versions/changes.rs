@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::super::GitError;
-use super::super::cli::{GitCli, literal_pathspecs, read_with_input};
+use super::super::cli::{GitCli, blobs_at, literal_pathspecs};
 use super::super::diagnostics::GitStage;
 use super::super::staging;
 
@@ -169,7 +169,7 @@ impl Sources {
             }
         }
         wanted.truncate(HEAD_SOURCES);
-        let head = head_blobs(cli, repo, &wanted).await;
+        let head = blobs_at(cli, repo, "HEAD", &wanted, HEAD_BYTES, HEAD_TIMEOUT).await;
         Self {
             repo: repo.to_path_buf(),
             head,
@@ -196,60 +196,6 @@ impl Sources {
         }
         std::fs::read_to_string(file).ok()
     }
-}
-
-/// The UTF-8 HEAD blobs at `paths`; a path missing in HEAD, binary or over
-/// the limits is left out.
-async fn head_blobs(cli: &GitCli, repo: &Path, paths: &[String]) -> HashMap<String, String> {
-    let mut blobs = HashMap::new();
-    if paths.is_empty() {
-        return blobs;
-    }
-    let input = paths
-        .iter()
-        .map(|path| format!("HEAD:{path}\n"))
-        .collect::<String>();
-    let Ok(Some(output)) = read_with_input(
-        cli,
-        repo,
-        &["cat-file", "--batch"],
-        input.as_bytes(),
-        HEAD_BYTES,
-        HEAD_TIMEOUT,
-    )
-    .await
-    else {
-        return blobs;
-    };
-    let mut rest = output.as_slice();
-    for path in paths {
-        let Some(end) = rest.iter().position(|byte| *byte == b'\n') else {
-            break;
-        };
-        let header = String::from_utf8_lossy(&rest[..end]).into_owned();
-        rest = &rest[end + 1..];
-        if header.ends_with(" missing") || header.ends_with(" ambiguous") {
-            continue;
-        }
-        let mut fields = header.split(' ');
-        let (Some(_), Some(kind), Some(size)) = (fields.next(), fields.next(), fields.next())
-        else {
-            break;
-        };
-        let Ok(size) = size.parse::<usize>() else {
-            break;
-        };
-        if rest.len() < size + 1 {
-            break;
-        }
-        if kind == "blob"
-            && let Ok(text) = std::str::from_utf8(&rest[..size])
-        {
-            blobs.insert(path.clone(), text.to_string());
-        }
-        rest = &rest[size + 1..];
-    }
-    blobs
 }
 
 #[cfg(test)]

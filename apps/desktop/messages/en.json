@@ -944,6 +944,8 @@
   "git_sync_service_space_sync_action": "Sync Space",
   "git_sync_service_space_not_synced": "The Space didn't sync. Open it to finish its sync, then sync the Space again here.",
   "git_sync_service_merged": "Svode merged its service files: {files}",
+  "git_sync_unique_id_renumbered": "Svode gave new IDs to items whose ID was already taken: {items}",
+  "git_sync_unique_id_renumbered_item": "{title} ({collection}): {from} → {to}",
   "git_sync_stop_resolve": "Resolve",
   "git_sync_stop_resolve_path": "Resolve {name}",
   "git_conflict_name_schema": "Collection schema “{name}”",

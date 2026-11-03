@@ -2,10 +2,15 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { gitSaveErrorFromError } from "../api/git-save-error";
 import { toGitPublicationBlock } from "../api/git-sync-error";
-import { syncStopFromResult, type GitSyncOutcome } from "../model";
+import {
+  syncStopFromResult,
+  type GitRenumberedItem,
+  type GitSyncOutcome,
+} from "../model";
 import type { GitCommitRefusal } from "../model/page-save-owner";
 import { gitSaveErrorDescription } from "../ui/git-save-error-copy";
 import {
+  gitRenumberedMessage,
   gitServiceMergedMessage,
   gitSyncStopTitle,
 } from "../ui/git-sync-stop-copy";
@@ -27,9 +32,16 @@ function notifyGitServiceMerged(files: string[] | undefined): void {
   if (files?.length) toast.info(gitServiceMergedMessage(files));
 }
 
+/** The sync result names the items it renumbered (DF-237 R5). */
+function notifyGitRenumbered(items: GitRenumberedItem[] | undefined): void {
+  if (items?.length) toast.info(gitRenumberedMessage(items));
+}
+
 export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
-  if (outcome.type === "Success" || outcome.type === "Conflict")
+  if (outcome.type === "Success" || outcome.type === "Conflict") {
     notifyGitServiceMerged(outcome.merged);
+    notifyGitRenumbered(outcome.renumbered);
+  }
   switch (outcome.type) {
     case "Conflict":
     case "UnmergedFiles":

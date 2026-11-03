@@ -70,7 +70,13 @@ async fn next_raised_differently_by_both_sides_merges_to_the_larger_one() {
         SyncResult::Success { merged, .. } => assert_eq!(merged, &[SCHEMA]),
         other => panic!("{other:?}"),
     }
-    assert_eq!(f.read(&f.local, SCHEMA), schema("Заметки", "T", 5));
+    // The merged `next` is 5; the local item repeating the published 3 then
+    // takes it and raises `next` to 6 (DF-237 R3).
+    assert_eq!(f.read(&f.local, SCHEMA), schema("Заметки", "T", 6));
+    assert_eq!(
+        f.read(&f.local, "tasks/from-local.md"),
+        item("From local", 5)
+    );
     assert_eq!(f.git(&f.local, &["status", "--porcelain"]), "");
     assert_eq!(f.git(&f.remote, &["rev-parse", "main"]), f.head(&f.local));
 }
@@ -96,7 +102,9 @@ async fn next_raised_equally_by_both_sides_merges_without_a_conflict() {
         SyncResult::Success { merged, .. } => assert!(merged.is_empty(), "{merged:?}"),
         other => panic!("{other:?}"),
     }
-    assert_eq!(f.read(&f.local, SCHEMA), schema("Заметка", "T", 4));
+    // Git merged the equal `next`; the local item repeating the published 3
+    // then takes 4 and raises it to 5 (DF-237 R3).
+    assert_eq!(f.read(&f.local, SCHEMA), schema("Заметка", "T", 5));
 }
 
 #[tokio::test]
@@ -107,10 +115,11 @@ async fn next_below_the_largest_number_of_the_result_rises_above_it() {
         )
     };
     let f = Fixture::new().with_tasks(&flow(3));
-    // A number written in the terminal is above the counter of its side.
+    // A number written in the terminal is above the counter of its side;
+    // no number repeats, so nothing is renumbered (DF-237 R3).
     f.incoming(&[
         (SCHEMA, &flow(5)),
-        ("tasks/from-other-a.md", &item("From other A", 3)),
+        ("tasks/from-other-a.md", &item("From other A", 4)),
         ("tasks/from-other-b.md", &item("From other B", 9)),
     ]);
     f.commit(

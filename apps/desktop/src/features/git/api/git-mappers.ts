@@ -54,6 +54,9 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         ...(dto.service?.length
           ? { service: dto.service.map((file) => ({ ...file })) }
           : {}),
+        ...(dto.renumbered?.length
+          ? { renumbered: dto.renumbered.map((item) => ({ ...item })) }
+          : {}),
       };
     case "resolved":
       return { type: "Resolved" };
@@ -62,6 +65,9 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         type: "Success",
         ...(dto.publishedHead ? { publishedHead: dto.publishedHead } : {}),
         ...(dto.merged?.length ? { merged: [...dto.merged] } : {}),
+        ...(dto.renumbered?.length
+          ? { renumbered: dto.renumbered.map((item) => ({ ...item })) }
+          : {}),
         ...(dto.parent
           ? {
               parent: toParentPublication(dto.parent),

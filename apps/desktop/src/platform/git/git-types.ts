@@ -66,6 +66,8 @@ export type SyncResultDto =
       publishedHead?: string;
       /** Svode service files this sync merged. */
       merged?: string[];
+      /** Items this sync gave a new `unique_id` number. */
+      renumbered?: GitRenumberedItemDto[];
       parent?: ParentPublicationDto;
       remoteStatus?: GitStatusDto;
     }
@@ -77,6 +79,8 @@ export type SyncResultDto =
       /** Svode service files this sync merged; the rest stay in `files`. */
       merged?: string[];
       service?: GitServiceFileDto[];
+      /** Items this sync gave a new `unique_id` number before the stop. */
+      renumbered?: GitRenumberedItemDto[];
     }
   | { type: "resolved" }
   | { type: "noRemote" }
@@ -257,6 +261,20 @@ export type GitFileResolutionDto =
 export interface GitServiceFileDto {
   path: string;
   state: "mergeable" | "space_diverged" | "space_unavailable";
+}
+
+/**
+ * An item that repeated a `unique_id` number published upstream and got a
+ * new one after the sync integrated it: `from` and `to` carry the prefix of
+ * the column, `collection` is the title of its Collection and `path` is
+ * relative to the repository.
+ */
+export interface GitRenumberedItemDto {
+  path: string;
+  title: string;
+  collection: string;
+  from: string;
+  to: string;
 }
 
 /** A merge in progress arrives as `conflict` with its files. */

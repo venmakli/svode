@@ -709,3 +709,6 @@ async fn an_unavailable_space_revision_stays_a_conflict_with_its_reason() {
 
 #[path = "unique_id_next_tests.rs"]
 mod unique_id_next;
+
+#[path = "unique_id_renumber_tests.rs"]
+mod unique_id_renumber;

@@ -34,6 +34,7 @@ pub mod publication;
 pub mod published_pointer;
 pub mod push_rejection;
 pub mod readers;
+mod renumber;
 #[cfg(test)]
 mod resolve_tests;
 pub mod rhythm;

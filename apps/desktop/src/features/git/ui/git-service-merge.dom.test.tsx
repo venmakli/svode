@@ -198,7 +198,86 @@ if (process.env.SVODE_SERVICE_MERGE_DOM !== "1") {
         ["git_merge_service_files", { spacePath: path, paths: ["space"] }],
       ]);
       expect(path in useGitStore.getState().syncStop).toBe(false);
-      expect(useGitStore.getState().serviceMerged[path]).toEqual(["space"]);
+      expect(useGitStore.getState().syncMerged[path]).toEqual({
+        files: ["space"],
+        renumbered: [],
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  test("a sync that renumbered repeated numbers names the items under the merged files", async () => {
+    calls.length = 0;
+    preflight = null;
+    const SCHEMA = "tasks/schema.yaml";
+    const items = [
+      {
+        path: "tasks/from-local.md",
+        title: "From local",
+        collection: "Tasks",
+        from: "T-3",
+        to: "T-5",
+      },
+      {
+        path: "tasks/from-local-b.md",
+        title: "From local B",
+        collection: "Tasks",
+        from: "T-4",
+        to: "T-6",
+      },
+    ];
+    const { dialog, close, useGitStore } = await openDialog();
+    const m = await import("@/paraglide/messages.js");
+    const { recordGitSyncResult } = await import("../api/git-operation-events");
+    try {
+      // A background sync merged the schema and renumbered two items.
+      await act(async () => {
+        recordGitSyncResult(
+          path,
+          {
+            type: "success",
+            publishedHead: "abc",
+            merged: [SCHEMA],
+            renumbered: items,
+          },
+          null,
+        );
+      });
+      await settle();
+
+      const merged = dialog().querySelector("[data-git-service-merged]");
+      const renumbered = dialog().querySelector<HTMLElement>(
+        "[data-git-unique-id-renumbered]",
+      )!;
+      expect(merged?.textContent).toBe(
+        m.git_sync_service_merged({ files: SCHEMA }),
+      );
+      expect(renumbered.textContent).toBe(
+        m.git_sync_unique_id_renumbered({
+          items: items
+            .map((item) => m.git_sync_unique_id_renumbered_item(item))
+            .join(", "),
+        }),
+      );
+      expect(
+        renumbered.textContent?.includes("From local (Tasks): T-3 → T-5"),
+      ).toBe(true);
+      expect(merged?.nextElementSibling).toBe(renumbered);
+
+      // The next sync that renumbers nothing takes the line away.
+      await act(async () => {
+        recordGitSyncResult(
+          path,
+          { type: "success", publishedHead: "def" },
+          null,
+        );
+      });
+      await settle();
+      expect(dialog().querySelector("[data-git-unique-id-renumbered]")).toBe(
+        null,
+      );
+      expect(path in useGitStore.getState().syncMerged).toBe(false);
     } finally {
       await close();
     }

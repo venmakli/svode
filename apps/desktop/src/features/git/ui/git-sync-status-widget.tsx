@@ -47,6 +47,7 @@ import { GitResolveWithAgentButton } from "./git-resolve-with-agent-button";
 import { GitSyncAbortButton } from "./git-sync-abort-button";
 import {
   gitOperationAbortCopy,
+  gitRenumberedMessage,
   gitServiceMergedMessage,
   gitSyncStopTitle,
 } from "./git-sync-stop-copy";
@@ -338,12 +339,20 @@ export function GitSyncStatusWidget({
                     serviceMerge={serviceMerge}
                   />
                 )}
-                {sync.serviceMerged.length > 0 && (
+                {sync.syncMerged.files.length > 0 && (
                   <p
                     className="break-words text-sm text-muted-foreground"
                     data-git-service-merged
                   >
-                    {gitServiceMergedMessage(sync.serviceMerged)}
+                    {gitServiceMergedMessage(sync.syncMerged.files)}
+                  </p>
+                )}
+                {sync.syncMerged.renumbered.length > 0 && (
+                  <p
+                    className="break-words text-sm text-muted-foreground"
+                    data-git-unique-id-renumbered
+                  >
+                    {gitRenumberedMessage(sync.syncMerged.renumbered)}
                   </p>
                 )}
                 {!parentBlock && publish.block && (
