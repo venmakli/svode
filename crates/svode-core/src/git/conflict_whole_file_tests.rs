@@ -425,6 +425,119 @@ async fn a_page_copy_goes_right_after_the_original() {
     assert_eq!(git(&merge.local, &["status", "--porcelain"]), "");
 }
 
+/// An add/add Page `Plan.md` beside `Alpha.md` and `Zeta.md`; `order` is the
+/// order file of the base, if any.
+async fn page_add_add(order: Option<&'static str>) -> Merge {
+    let (merge, result) = Merge::new(
+        "",
+        |repo| {
+            if let Some(order) = order {
+                write(repo, ".svode/order.json", order.as_bytes());
+            }
+            write(repo, "Alpha.md", b"---\ntitle: Alpha\n---\n");
+            write(repo, "Zeta.md", b"---\ntitle: Zeta\n---\n");
+        },
+        |repo| write(repo, "Plan.md", b"---\ntitle: Plan\n---\nTheirs\n"),
+        |repo| write(repo, "Plan.md", b"---\ntitle: Plan\n---\nOurs\n"),
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    merge
+}
+
+fn visible_names(repo: &Path) -> Vec<String> {
+    crate::content_tree::list_tree_children(repo.to_str().unwrap(), None)
+        .unwrap()
+        .into_iter()
+        .map(|child| child.name)
+        .collect()
+}
+
+fn order_of(repo: &Path) -> serde_json::Value {
+    serde_json::from_str(&text_of(repo, ".svode/order.json")).unwrap()
+}
+
+#[tokio::test]
+async fn a_page_copy_goes_right_after_the_original_without_an_explicit_order() {
+    let merge = page_add_add(None).await;
+    assert!(!merge.local.join(".svode/order.json").exists());
+    assert_eq!(
+        visible_names(&merge.local),
+        ["Alpha.md", "Plan.md", "Zeta.md"]
+    );
+    let result = resolve_as(&merge, "Plan.md", keep_both(MessageLanguage::En)).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    let expected = ["Alpha.md", "Plan.md", "Plan (incoming).md", "Zeta.md"];
+    assert_eq!(visible_names(&merge.local), expected);
+    assert_eq!(order_of(&merge.local), serde_json::json!({ ".": expected }));
+    // The new order file is part of the merge.
+    assert_eq!(git(&merge.local, &["status", "--porcelain"]), "");
+    assert!(git(&merge.local, &["show", "HEAD:.svode/order.json"]).contains("Plan (incoming).md"));
+}
+
+#[tokio::test]
+async fn a_page_copy_goes_right_after_the_original_missing_from_a_partial_order() {
+    let order = "{\n  \".\": [\n    \"Zeta.md\"\n  ],\n  \"zz\": [\n    \"x.md\"\n  ]\n}";
+    let merge = page_add_add(Some(order)).await;
+    assert_eq!(
+        visible_names(&merge.local),
+        ["Zeta.md", "Alpha.md", "Plan.md"]
+    );
+    let result = resolve_as(&merge, "Plan.md", keep_both(MessageLanguage::En)).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    let expected = ["Zeta.md", "Alpha.md", "Plan.md", "Plan (incoming).md"];
+    assert_eq!(visible_names(&merge.local), expected);
+    // Another section stays as it is, in its place.
+    let text = text_of(&merge.local, ".svode/order.json");
+    assert_eq!(
+        crate::content_tree::parse_order(&text)
+            .unwrap()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        [
+            (".".to_string(), expected.map(str::to_string).to_vec()),
+            ("zz".to_string(), vec!["x.md".to_string()]),
+        ]
+    );
+    assert_eq!(git(&merge.local, &["status", "--porcelain"]), "");
+}
+
+#[tokio::test]
+async fn a_page_copy_leaves_an_order_in_conflict_untouched() {
+    // Both sides change the order and mine is not an order: it stays in
+    // conflict with its markers.
+    let (merge, result) = Merge::new(
+        "",
+        |repo| write(repo, ".svode/order.json", br#"{".": ["Alpha.md"]}"#),
+        |repo| {
+            write(
+                repo,
+                ".svode/order.json",
+                br#"{".": ["Alpha.md", "Plan.md"]}"#,
+            );
+            write(repo, "Plan.md", b"---\ntitle: Plan\n---\nTheirs\n");
+        },
+        |repo| {
+            write(repo, ".svode/order.json", br#"{".": "mine"}"#);
+            write(repo, "Plan.md", b"---\ntitle: Plan\n---\nOurs\n");
+        },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    let before = bytes_of(&merge.local, ".svode/order.json");
+    assert!(String::from_utf8_lossy(&before).contains("<<<<<<<"));
+    let result = resolve_as(&merge, "Plan.md", keep_both(MessageLanguage::En)).await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    // The Page is resolved with its copy; the order is neither written nor
+    // staged.
+    assert_eq!(bytes_of(&merge.local, ".svode/order.json"), before);
+    let unmerged = unmerged(&merge);
+    assert!(!unmerged.contains("Plan"), "{unmerged}");
+    assert!(unmerged.contains(".svode/order.json"), "{unmerged}");
+    assert!(merge.local.join("Plan (incoming).md").exists());
+    assert!(!git(&merge.local, &["ls-files", "--stage", "Plan (incoming).md"]).is_empty());
+}
+
 async fn renames() -> Merge {
     let (merge, _) = Merge::new(
         "",

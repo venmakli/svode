@@ -64,19 +64,38 @@ fn order_rename_checked(
     Ok(())
 }
 
+/// Put `name` right after `after_name` in the order of the folder `dir_key`.
+/// When the list of the folder does not hold `after_name` (no section, or a
+/// partial one), the visible children of the folder other than `name` join
+/// the list first, in the order the tree shows them, so the other rows keep
+/// their places and `name` still lands right after `after_name`.
 fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str) {
     let _ = content_tree::update_order(space, |order| {
         let list = order.children_mut(dir_key);
         if list.iter().any(|item| item == name) {
             return false;
         }
-        if let Some(pos) = list.iter().position(|item| item == after_name) {
-            list.insert(pos + 1, name.to_string());
-        } else {
-            list.push(name.to_string());
+        if !list.iter().any(|item| item == after_name) {
+            for child in visible_child_names(space, dir_key) {
+                if child != name && !list.contains(&child) {
+                    list.push(child);
+                }
+            }
+        }
+        match list.iter().position(|item| item == after_name) {
+            Some(pos) => list.insert(pos + 1, name.to_string()),
+            None => list.push(name.to_string()),
         }
         true
     });
+}
+
+/// Names of the direct children of the folder `parent` in the order the tree
+/// shows them; empty when the folder cannot be listed.
+fn visible_child_names(space: &Path, parent: &str) -> Vec<String> {
+    content_tree::list_tree_children(space.to_string_lossy().as_ref(), Some(parent))
+        .map(|children| children.into_iter().map(|child| child.name).collect())
+        .unwrap_or_default()
 }
 
 fn order_remove_key(space: &Path, dir_key: &str) {
@@ -1298,15 +1317,7 @@ pub fn move_page_with_project(
 
     let from_is_dir = abs_from.is_dir();
     let is_md = from_is_dir || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
-    let target_sibling_order =
-        content_tree::list_tree_children(space.to_string_lossy().as_ref(), Some(to_parent))
-            .map(|children| {
-                children
-                    .into_iter()
-                    .map(|child| child.name)
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
+    let target_sibling_order = visible_child_names(space, to_parent);
 
     fs::rename(&abs_from, &abs_to)?;
     update_order_after_move(space, from, &new_rel, from_is_dir, &target_sibling_order)?;

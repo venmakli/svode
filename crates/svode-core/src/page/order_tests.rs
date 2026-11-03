@@ -473,3 +473,92 @@ fn order_changes_in_different_folders_on_two_branches_merge_without_conflict() {
     assert_eq!(order["beta"], ["b2.md", "b1.md"]);
     assert_eq!(section_keys(&read_order(&root)), ["beta", ".", "alpha"]);
 }
+
+/// Names of the direct children of `parent` as the tree shows them.
+fn visible_names(root: &Path, parent: &str) -> Vec<String> {
+    list_tree_children(space_str(root), Some(parent))
+        .unwrap()
+        .into_iter()
+        .map(|child| child.name)
+        .collect()
+}
+
+/// A Space without order.json: Pages and folder Pages in the root and in
+/// `docs`, so no original comes first.
+fn unordered_fixture() -> tempfile::TempDir {
+    let space = tempfile::tempdir().unwrap();
+    let root = space.path();
+    for (path, title) in [
+        ("a.md", "A"),
+        ("m.md", "M"),
+        ("z.md", "Z"),
+        ("f/README.md", "F"),
+        ("docs/README.md", "Docs"),
+        ("docs/b.md", "B"),
+        ("docs/n.md", "N"),
+        ("docs/y.md", "Y"),
+        ("docs/sub/README.md", "Sub"),
+        ("docs/sub/s.md", "S"),
+    ] {
+        page(root, path, title);
+    }
+    space
+}
+
+/// Duplicate `source` and check that the copy is visible right after the
+/// original under `parent` and the other rows keep their places.
+fn assert_duplicate_after_original(root: &Path, source: &str, parent: &str, original: &str) {
+    let before = visible_names(root, parent);
+    let copy = store::duplicate_page(root, source).unwrap();
+    let copy_path = copy.path.strip_suffix("/README.md").unwrap_or(&copy.path);
+    let copy_name = Path::new(copy_path).file_name().unwrap().to_str().unwrap();
+    let mut expected = before.clone();
+    let at = expected.iter().position(|name| name == original).unwrap();
+    assert_ne!(at, 0, "the original must not come first: {before:?}");
+    expected.insert(at + 1, copy_name.to_string());
+    assert_eq!(visible_names(root, parent), expected);
+    let order = serde_json::from_str::<IndexMap<String, Vec<String>>>(&read_order(root)).unwrap();
+    let key = parent.strip_suffix("/README.md").unwrap_or(parent);
+    // The section lists every visible row in that order; a stale name may stay.
+    let listed = order[key]
+        .iter()
+        .filter(|name| expected.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(listed, expected);
+}
+
+#[test]
+fn a_duplicate_without_an_explicit_order_goes_right_after_the_original() {
+    // A leaf and a folder Page in the root of a Space without order.json.
+    let space = unordered_fixture();
+    let root = space.path();
+    assert_duplicate_after_original(root, "m.md", ".", "m.md");
+    assert_eq!(section_keys(&read_order(root)), ["."]);
+    assert_duplicate_after_original(root, "f/README.md", ".", "f");
+    assert_eq!(section_keys(&read_order(root)), ["."]);
+
+    // A leaf and a folder Page in a folder without a section, beside the
+    // section of the root, which stays as it is.
+    let root_section = serde_json::from_str::<IndexMap<String, Vec<String>>>(&read_order(root))
+        .unwrap()["."]
+        .clone();
+    assert_duplicate_after_original(root, "docs/n.md", "docs", "n.md");
+    assert_duplicate_after_original(root, "docs/sub/README.md", "docs", "sub");
+    let order = serde_json::from_str::<IndexMap<String, Vec<String>>>(&read_order(root)).unwrap();
+    assert_eq!(order["."], root_section);
+    assert_eq!(section_keys(&read_order(root)), [".", "docs"]);
+}
+
+#[test]
+fn a_duplicate_with_a_partial_order_goes_right_after_the_original() {
+    let space = unordered_fixture();
+    let root = space.path();
+    write_order(root, &[("docs", &["y.md", "gone.md"]), (".", &["z.md"])]);
+    assert_duplicate_after_original(root, "docs/n.md", "docs", "n.md");
+    let order = serde_json::from_str::<IndexMap<String, Vec<String>>>(&read_order(root)).unwrap();
+    // The ordered rows keep their places and a stale name stays.
+    assert_eq!(order["docs"][..2], ["y.md", "gone.md"]);
+    assert_eq!(order["."], ["z.md"]);
+    assert_eq!(section_keys(&read_order(root)), ["docs", "."]);
+}
