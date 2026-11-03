@@ -1775,7 +1775,9 @@ fn classify_failure(output: &GitOutput, stage: ServiceRefStage) -> ProbeResult {
         ],
     ) {
         RepositoryAccessReason::AmbiguousRejection
-    } else if stage == ServiceRefStage::Push && explicit_remote_write_denial(&output.stderr) {
+    } else if stage == ServiceRefStage::Push
+        && super::push_rejection::explicit_remote_write_denial(&output.stderr)
+    {
         return ProbeResult {
             status: RepositoryAccessStatus::ReadOnly,
             reason: None,
@@ -1787,22 +1789,6 @@ fn classify_failure(output: &GitOutput, stage: ServiceRefStage) -> ProbeResult {
         status: RepositoryAccessStatus::Unknown,
         reason: Some(reason),
     }
-}
-
-fn explicit_remote_write_denial(stderr: &str) -> bool {
-    // Free-form local/hook diagnostics and generic rejection summaries are not
-    // evidence of repository permissions. Accept only explicit remote answers.
-    stderr.lines().any(|line| {
-        let line = line.trim().to_ascii_lowercase();
-        let Some(message) = line.strip_prefix("remote:") else {
-            return false;
-        };
-        matches!(
-            message.trim().trim_end_matches('.'),
-            "write access to repository not granted"
-                | "you are not allowed to push code to this project"
-        )
-    })
 }
 
 fn exact_lease(reference: &str, expected: &str) -> String {

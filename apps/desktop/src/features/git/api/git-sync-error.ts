@@ -132,6 +132,8 @@ export function gitSyncErrorMessage(error: unknown): string {
         return m.git_push_repository_rules();
       case "non_fast_forward":
         return m.git_push_non_fast_forward();
+      case "write_access_denied":
+        return m.git_push_write_access_denied();
     }
     // Only lfs-s3 carries a declaration state; other strategies get neutral copy.
     const action = rejection.lfsDeclaration

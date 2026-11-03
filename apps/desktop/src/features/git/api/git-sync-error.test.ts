@@ -170,3 +170,33 @@ test("protected branch, repository rules and non-fast-forward rejections are nam
     await setLocale(original, { reload: false });
   }
 });
+
+test("an explicit remote write denial names the missing write access", async () => {
+  const original = getLocale();
+  try {
+    for (const [locale, text, unknownCause] of [
+      [
+        "en",
+        "The Git provider rejected the push: you have no write access to this repository. Ask the owner for write access, or sign in with an account that has it.",
+        "The cause is unknown.",
+      ],
+      [
+        "ru",
+        "Git-провайдер отклонил push: у вас нет права записи в этот репозиторий. Попросите владельца выдать доступ на запись или войдите аккаунтом, у которого он есть.",
+        "Причина не определена.",
+      ],
+    ] as const) {
+      await setLocale(locale, { reload: false });
+      const message = gitSyncErrorMessage({
+        kind: "git_push_rejected",
+        reason: "write_access_denied",
+        objectCount: null,
+        lfsDeclaration: null,
+      });
+      expect(message).toBe(text);
+      expect(message.includes(unknownCause)).toBe(false);
+    }
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});

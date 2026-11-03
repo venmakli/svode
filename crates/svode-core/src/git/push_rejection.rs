@@ -28,6 +28,9 @@ pub enum PushRejectionReason {
     RepositoryRules,
     /// The remote branch has commits this one does not contain.
     NonFastForward,
+    /// The remote explicitly answered that this account may not write to the
+    /// repository.
+    WriteAccessDenied,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +65,8 @@ pub(crate) fn classify(stderr: &str) -> Option<Classified> {
         || lower.contains("not allowed to force push code to a protected branch")
     {
         PushRejectionReason::ProtectedBranch
+    } else if explicit_remote_write_denial(stderr) {
+        PushRejectionReason::WriteAccessDenied
     } else if lower.lines().any(|line| {
         line.contains("[rejected]")
             && (line.contains("(fetch first)") || line.contains("(non-fast-forward)"))
@@ -73,6 +78,31 @@ pub(crate) fn classify(stderr: &str) -> Option<Classified> {
     Some(Classified {
         reason,
         object_count: None,
+    })
+}
+
+/// Whether the remote itself explicitly denied writing to the repository: the
+/// one rule of both push classification and the repository access check.
+pub(crate) fn explicit_remote_write_denial(stderr: &str) -> bool {
+    // Free-form local/hook diagnostics and generic rejection summaries are not
+    // evidence of repository permissions. Accept only explicit remote answers,
+    // and not the words of a hook that declined the push.
+    let lower = stderr.to_ascii_lowercase();
+    if ["hook declined", "pre-receive hook", "pre-push hook"]
+        .iter()
+        .any(|hook| lower.contains(hook))
+    {
+        return false;
+    }
+    lower.lines().any(|line| {
+        let Some(message) = line.trim().strip_prefix("remote:") else {
+            return false;
+        };
+        matches!(
+            message.trim().trim_end_matches('.'),
+            "write access to repository not granted"
+                | "you are not allowed to push code to this project"
+        )
     })
 }
 
@@ -230,6 +260,53 @@ remote: - Changes must be made through a pull request.\n \
         .unwrap();
         assert_eq!(json["reason"], "protected_branch");
         assert!(!json.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn recognizes_explicit_remote_write_denial_by_the_access_check_rule() {
+        let reason = |stderr: &str| classify(stderr).map(|classified| classified.reason);
+        for line in [
+            "remote: Write access to repository not granted.",
+            "remote: write access to repository not granted",
+            "REMOTE: WRITE ACCESS TO REPOSITORY NOT GRANTED.",
+            "remote: You are not allowed to push code to this project.",
+            "remote: you are not allowed to push code to this project",
+            "  remote:   You are not allowed to push code to this project.  ",
+        ] {
+            let stderr = format!(
+                "{line}\nfatal: unable to access 'https://user:secret@github.com/org/repo.git/': The requested URL returned error: 403\n"
+            );
+            assert_eq!(
+                reason(&stderr),
+                Some(PushRejectionReason::WriteAccessDenied),
+                "{stderr}"
+            );
+            assert!(explicit_remote_write_denial(&stderr), "{stderr}");
+        }
+        for stderr in [
+            // The authorization failure keeps its own path.
+            "remote: Write access to repository not granted.\nfatal: Authentication failed for 'https://github.com/org/repo.git/'",
+            "remote: Permission denied to user.\nremote: Write access to repository not granted.",
+            // Without the remote prefix, a local or free-form diagnostic.
+            "Write access to repository not granted.",
+            "error: You are not allowed to push code to this project.",
+            // The words of a hook that declined the push.
+            "remote: Write access to repository not granted.\n ! [remote rejected] main -> main (pre-receive hook declined)",
+            "remote: Write access to repository not granted.\nerror: failed to push some refs: pre-push hook failed",
+            // Other remote messages are not a write denial.
+            "remote: Write access to repository not granted for some branches.",
+            "remote: Permission to org/repo.git denied.",
+        ] {
+            assert_ne!(
+                reason(stderr),
+                Some(PushRejectionReason::WriteAccessDenied),
+                "{stderr}"
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(PushRejectionReason::WriteAccessDenied).unwrap(),
+            "write_access_denied"
+        );
     }
 
     #[test]

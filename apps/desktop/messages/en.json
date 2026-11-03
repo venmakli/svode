@@ -2508,6 +2508,7 @@
   "git_push_protected_branch": "The Git provider rejected the push: the branch is protected. Publish the changes through a pull or merge request, or ask for permission to push to it.",
   "git_push_repository_rules": "The Git provider rejected the push: it breaks the repository rules. Check the rules in the repository settings on the provider.",
   "git_push_non_fast_forward": "The remote branch has commits this copy doesn't have yet. Sync again to bring them in.",
+  "git_push_write_access_denied": "The Git provider rejected the push: you have no write access to this repository. Ask the owner for write access, or sign in with an account that has it.",
   "git_sync_stage_fetch": "Could not receive changes from the remote.",
   "git_sync_stage_integrate": "Could not merge the incoming changes.",
   "git_sync_stage_commit": "Could not create the merge commit.",

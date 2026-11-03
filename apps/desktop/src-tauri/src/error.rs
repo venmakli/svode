@@ -1056,6 +1056,26 @@ mod tests {
     }
 
     #[test]
+    fn write_access_denial_reaches_the_transport_as_a_push_rejection() {
+        let value = serde_json::to_value(AppError::from(svode_core::git::GitError::PushRejected {
+            reason: svode_core::git::push_rejection::PushRejectionReason::WriteAccessDenied,
+            object_count: None,
+            lfs_declaration: None,
+        }))
+        .unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "git_push_rejected",
+                "reason": "write_access_denied",
+                "objectCount": null,
+                "lfsDeclaration": null,
+            })
+        );
+    }
+
+    #[test]
     fn status_timeout_keeps_the_core_transport_shape() {
         let core = svode_core::git::GitError::StatusTimedOut {
             repository: "Research".into(),

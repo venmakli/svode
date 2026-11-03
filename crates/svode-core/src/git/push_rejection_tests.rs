@@ -206,3 +206,75 @@ async fn real_git_lfs_without_agent_reports_unconfigured_transfer() {
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
     assert!(!f.remote.join("lfs/objects").exists());
 }
+
+#[tokio::test]
+async fn explicit_remote_write_denial_is_typed_and_hook_words_are_not() {
+    use crate::git::diagnostics::{GitFailureCause, GitStage};
+    use crate::git::sync;
+    let f = Fixture::new();
+    commit(&f.root, "note", "outgoing content");
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    let receive_pack = f._temp.path().join("deny-receive-pack");
+    svode_testkit::write_executable(
+        &receive_pack,
+        "#!/bin/sh\necho 'remote: Write access to repository not granted.' >&2\nexit 1\n",
+    )
+    .unwrap();
+    git(
+        &f.root,
+        &[
+            "config",
+            "remote.origin.receivepack",
+            receive_pack.to_str().unwrap(),
+        ],
+    );
+    for publisher in ["push", "publish", "sync"] {
+        let result = match publisher {
+            "push" => ops::push(&f.cli, &f.root).await,
+            "publish" => ops::push_set_upstream(&f.cli, &f.root).await,
+            "sync" => sync::sync(&f.cli, &f.root).await.map(|_| ()),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            rejection(result),
+            serde_json::json!({
+                "kind": "git_push_rejected",
+                "reason": "write_access_denied",
+                "objectCount": null,
+                "lfsDeclaration": null,
+            }),
+            "{publisher}"
+        );
+    }
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+    git(&f.root, &["config", "--unset", "remote.origin.receivepack"]);
+
+    // A provider hook that declines with these words is not a permission answer.
+    remote_hook(
+        &f.remote,
+        Some("cat >/dev/null\necho 'Write access to repository not granted.' >&2\nexit 1"),
+    );
+    let error = sync::sync(&f.cli, &f.root).await.unwrap_err();
+    assert!(
+        matches!(&error, GitError::SyncFailed(failure) if failure.stage == GitStage::Push),
+        "{error:?}"
+    );
+    remote_hook(&f.remote, None);
+
+    // Nor is a local pre-push hook that prints them.
+    counting_hook(
+        &f.root,
+        "cat >/dev/null\necho 'Write access to repository not granted.' >&2\nexit 1",
+    );
+    let error = sync::sync(&f.cli, &f.root).await.unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            GitError::SyncFailed(failure)
+                if failure.stage == GitStage::Push
+                    && failure.cause == Some(GitFailureCause::Hook)
+        ),
+        "{error:?}"
+    );
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+}

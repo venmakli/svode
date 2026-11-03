@@ -175,7 +175,16 @@ pub async fn push_snapshot(
     let repo = repository.as_path();
     let fixed = match snapshot(cli, repo, first).await? {
         Ok(value) => value,
-        Err(out) => return Ok((out, None)),
+        Err(out) => {
+            // The dry run reaches the remote first: a refusal it already
+            // states is typed as for the push itself.
+            if let Some(rejection) =
+                super::push_rejection::push_rejection(cli, repo, &out.stderr).await
+            {
+                return Err(rejection);
+            }
+            return Ok((out, None));
+        }
     };
     let evidence = if !fixed.updates.is_empty() {
         // Local reads before the proof, which may contact Space sources.

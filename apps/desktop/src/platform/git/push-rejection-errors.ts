@@ -13,7 +13,8 @@ export type GitPushRejectionDto =
         | "lfs_transfer_unconfigured"
         | "protected_branch"
         | "repository_rules"
-        | "non_fast_forward";
+        | "non_fast_forward"
+        | "write_access_denied";
     };
 
 const DECLARATION_STATES: readonly string[] = [
@@ -57,6 +58,7 @@ export function toGitPushRejectionDto(
     case "protected_branch":
     case "repository_rules":
     case "non_fast_forward":
+    case "write_access_denied":
       return { kind: "git_push_rejected", reason: error.reason };
     default:
       return null;
