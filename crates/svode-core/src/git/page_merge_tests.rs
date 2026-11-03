@@ -749,3 +749,116 @@ async fn marker_lines_of_a_path_out_of_conflict_give_no_choice_by_properties() {
         }
     );
 }
+
+/// The working file of `path` rewritten by Git in the conflict `style`.
+fn checkout_conflict(stand: &Stand, path: &str, style: &str) -> String {
+    let status = Command::new("git")
+        .args(["checkout", &format!("--conflict={style}"), "--", path])
+        .current_dir(&stand.repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap();
+    assert!(status.success(), "git checkout --conflict={style}");
+    stand.read(path)
+}
+
+#[tokio::test]
+async fn a_place_from_the_first_line_in_the_diff3_style_is_decided_by_properties() {
+    let stand = Stand::merge(
+        "",
+        &[],
+        &[(
+            "Добавлена.md",
+            "---\ntitle: Добавлена\nowner: bob\n---\n\nДобавлена стороной B.\n",
+        )],
+        &[(
+            "Добавлена.md",
+            "---\ntitle: Добавлена\nowner: carol\n---\n\nДобавлена стороной A.\n",
+        )],
+    )
+    .await;
+    let written = checkout_conflict(&stand, "Добавлена.md", "diff3");
+    assert!(
+        written.starts_with("<<<<<<< ours\n---\ntitle: Добавлена\nowner: carol\n---\n"),
+        "{written}"
+    );
+    assert!(
+        written.contains("\n||||||| base\n=======\n---\n"),
+        "{written}"
+    );
+    let (properties, body) = merged(&stand, "Добавлена.md").await;
+    assert_eq!(disputed(&properties), ["owner"]);
+    assert_eq!(
+        property(&properties, "title").merged,
+        Some(yaml("Добавлена"))
+    );
+    assert_eq!(
+        body,
+        "\n<<<<<<< ours\nДобавлена стороной A.\n=======\nДобавлена стороной B.\n>>>>>>> theirs\n"
+    );
+    let content = composed(
+        &stand,
+        "Добавлена.md",
+        &[("owner", PropertyDecision::Ours)],
+        "\nДобавлена стороной A.\n",
+    )
+    .await;
+    assert_eq!(
+        content,
+        "---\ntitle: Добавлена\nowner: carol\n---\n\nДобавлена стороной A.\n"
+    );
+}
+
+#[tokio::test]
+async fn a_place_from_the_first_line_in_the_merge_style_is_decided_by_properties() {
+    let stand = Stand::merge(
+        "",
+        &[],
+        &[("Добавлена.md", "Добавлена стороной B.\n")],
+        &[(
+            "Добавлена.md",
+            "---\ntitle: Добавлена\nowner: carol\n---\nДобавлена стороной A.\n",
+        )],
+    )
+    .await;
+    let written = checkout_conflict(&stand, "Добавлена.md", "merge");
+    assert!(written.starts_with("<<<<<<< ours\n---\n"), "{written}");
+    let (properties, body) = merged(&stand, "Добавлена.md").await;
+    assert_eq!(disputed(&properties), ["title", "owner"]);
+    assert_eq!(
+        body,
+        "<<<<<<< ours\nДобавлена стороной A.\n=======\nДобавлена стороной B.\n>>>>>>> theirs\n"
+    );
+}
+
+#[tokio::test]
+async fn places_only_in_the_text_are_no_choice_by_properties() {
+    const PAGE: &str = "---\ntitle: T\nstatus: a\n---\nFirst line.\n";
+    let stand = Stand::merge(
+        "",
+        &[("page.md", PAGE)],
+        &[("page.md", &edit(PAGE, &[("First line.", "First theirs.")]))],
+        &[("page.md", &edit(PAGE, &[("First line.", "First mine.")]))],
+    )
+    .await;
+    assert_eq!(
+        read(&stand.cli, &stand.repo, "page.md").await.unwrap(),
+        PageMerge::Text
+    );
+    // Both sides added a Page without frontmatter: a place from the first
+    // line whose sides do not open with `---` is text.
+    let stand = Stand::merge(
+        "",
+        &[],
+        &[("plain.md", "Added by B.\n")],
+        &[("plain.md", "Added by A.\n")],
+    )
+    .await;
+    let written = checkout_conflict(&stand, "plain.md", "diff3");
+    assert!(written.starts_with("<<<<<<< ours\n"), "{written}");
+    assert_eq!(
+        read(&stand.cli, &stand.repo, "plain.md").await.unwrap(),
+        PageMerge::Text
+    );
+}

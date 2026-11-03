@@ -9,13 +9,16 @@ import type {
 
 /**
  * The Page at `path` (relative to `spacePath`) whose frontmatter is in
- * conflict, merged by its properties from the index stages (DF-292).
+ * conflict, merged by its properties from the index stages (DF-292); `null`
+ * when no conflict place of the file lies in its frontmatter, by the rule
+ * Svode places a Page with, and its conflict is in the text.
  */
 export async function readPageMerge(
   spacePath: string,
   path: string,
-): Promise<PageMerge> {
+): Promise<PageMerge | null> {
   const dto = await getPageMerge({ spacePath, path });
+  if (dto.type === "text") return null;
   if (dto.type === "unavailable") return dto;
   return {
     type: "merged",

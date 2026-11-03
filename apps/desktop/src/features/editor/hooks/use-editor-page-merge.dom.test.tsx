@@ -127,6 +127,8 @@ if (process.env.SVODE_EDITOR_PAGE_MERGE_DOM !== "1") {
   function page(file: string, version: string): Page {
     const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(file)?.[0] ?? "";
     const readable = frontmatter !== "" && !frontmatter.includes("<<<<<<<");
+    // A file that does not open with `---` reads as one without frontmatter.
+    const missing = !file.startsWith("---");
     return {
       path: PATH,
       body: readable ? file.slice(frontmatter.length) : file,
@@ -138,9 +140,10 @@ if (process.env.SVODE_EDITOR_PAGE_MERGE_DOM !== "1") {
         updated: "",
         extra: {},
       },
-      warnings: readable
-        ? []
-        : [{ kind: "malformed_frontmatter", message: "invalid YAML" }],
+      warnings:
+        readable || missing
+          ? []
+          : [{ kind: "malformed_frontmatter", message: "invalid YAML" }],
     } as Page;
   }
 
@@ -471,6 +474,108 @@ if (process.env.SVODE_EDITOR_PAGE_MERGE_DOM !== "1") {
       expect(view.mergeReads).toEqual([]);
       expect(view.state()).toBe(null);
       expect(view.text()).toBe("Текст.");
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  /**
+   * Both sides added the Page, Git wrote the `diff3` style: the place starts
+   * at the first line and holds the frontmatter of each side.
+   */
+  const ADDED = [
+    "<<<<<<< HEAD",
+    "---",
+    "title: Добавлена",
+    "owner: carol",
+    "---",
+    "",
+    "Добавлена стороной A.",
+    "||||||| c2ec8bd",
+    "=======",
+    "---",
+    "title: Добавлена",
+    "owner: bob",
+    "---",
+    "",
+    "Добавлена стороной B.",
+    ">>>>>>> defa59be",
+    "",
+  ].join("\n");
+  const ADDED_MERGE = {
+    type: "merged",
+    body: "\n<<<<<<< ours\nДобавлена стороной A.\n=======\nДобавлена стороной B.\n>>>>>>> theirs\n",
+    properties: [
+      {
+        key: "title",
+        ours: "Добавлена",
+        theirs: "Добавлена",
+        disputed: false,
+        merged: "Добавлена",
+      },
+      { key: "owner", ours: "carol", theirs: "bob", disputed: true },
+    ],
+  };
+
+  test("a place from the first line with the frontmatter of both added sides is decided by properties and the text below", async () => {
+    const view = await harness({
+      file: ADDED,
+      merge: ADDED_MERGE,
+      compose: (input) => {
+        const decision = (input.decisions as Record<string, { type: string }>)
+          .owner;
+        const owner = decision?.type === "ours" ? "carol" : "bob";
+        return {
+          type: "composed",
+          content: `---\ntitle: Добавлена\nowner: ${owner}\n---\n${input.body as string}`,
+        };
+      },
+    });
+    try {
+      // Svode is asked although the Page reads without frontmatter.
+      expect(view.mergeReads).toEqual([{ spacePath: SPACE, path: PATH }]);
+      expect(view.state()?.merge.type).toBe("merged");
+      // The text below the properties is one ordinary text block without the
+      // frontmatter lines of either side.
+      const blocks = view.editor.children.filter(
+        (node) => (node as TElement).type === "conflict",
+      ) as unknown as ConflictElement[];
+      expect(blocks.length).toBe(1);
+      expect(blocks[0]!.ours.trim()).toBe("Добавлена стороной A.");
+      expect(blocks[0]!.theirs.trim()).toBe("Добавлена стороной B.");
+      expect(view.text().includes("owner:")).toBe(false);
+      expect(view.text().includes("title:")).toBe(false);
+      expect(view.baseContents).toEqual([ADDED_MERGE.body]);
+
+      await view.decide("owner", { type: "ours" });
+      await view.save();
+      expect(view.writes).toEqual([]);
+      view.acceptText("ours");
+      await view.save();
+      expect(view.composes.length).toBe(1);
+      expect(view.composes[0]!.decisions).toEqual({ owner: { type: "ours" } });
+      expect(view.writes).toEqual([
+        "---\ntitle: Добавлена\nowner: carol\n---\n" + view.composes[0]!.body,
+      ]);
+      const written = view.writes[0]!;
+      expect(written.includes("Добавлена стороной A.")).toBe(true);
+      expect(written.includes("Добавлена стороной B.")).toBe(false);
+      expect(written.includes("<<<<<<<")).toBe(false);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  test("marker lines only in the text leave the properties alone", async () => {
+    const view = await harness({
+      file: "---\ntitle: Онбординг\n---\n" + MERGED_TEXT,
+      merge: { type: "text" },
+    });
+    try {
+      expect(view.mergeReads.length).toBe(1);
+      expect(view.state()).toBe(null);
+      expect(view.hasTextBlock()).toBe(true);
+      expect(view.baseContents).toEqual([MERGED_TEXT]);
     } finally {
       await view.cleanup();
     }

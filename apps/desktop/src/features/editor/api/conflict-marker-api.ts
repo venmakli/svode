@@ -57,18 +57,24 @@ export async function readConflictBases(
 }
 
 /**
- * Marker lines in the frontmatter keep it from reading: the whole file comes
- * as the body with a warning.
+ * The merge of the properties of the Page at `path` whose `body` has a line
+ * that could open a conflict block: Svode tells whether a conflict place lies
+ * in its frontmatter (DF-292, DF-293 R6), also a place from the first line,
+ * with which the Page reads as one without frontmatter. `null` when none
+ * does or the merge does not read.
  */
-function frontmatterInConflict(page: Pick<Page, "body" | "warnings">) {
-  return (
-    hasConflictMarkerCandidate(page.body) &&
-    Boolean(
-      page.warnings?.some(
-        (warning) => warning.kind === "malformed_frontmatter",
-      ),
-    )
-  );
+async function readConflictMerge(
+  spacePath: string,
+  path: string,
+  body: string,
+): Promise<PageMerge | null> {
+  if (!hasConflictMarkerCandidate(body)) return null;
+  try {
+    return await readPageMerge(spacePath, path);
+  } catch (error) {
+    console.error("Failed to read the merge of the Page properties:", error);
+    return null;
+  }
 }
 
 /**
@@ -80,7 +86,7 @@ function frontmatterInConflict(page: Pick<Page, "body" | "warnings">) {
 export async function readPageConflicts(
   spacePath: string,
   path: string,
-  page: Pick<Page, "body" | "warnings">,
+  page: Pick<Page, "body">,
 ): Promise<{
   markerSize: number;
   merge: PageMerge | null;
@@ -88,9 +94,7 @@ export async function readPageConflicts(
   bases: (string | null)[];
 }> {
   const markerSize = await readConflictMarkerSize(spacePath, path, page.body);
-  const merge = frontmatterInConflict(page)
-    ? await readPageMerge(spacePath, path)
-    : null;
+  const merge = await readConflictMerge(spacePath, path, page.body);
   const text = !merge ? page.body : merge.type === "merged" ? merge.body : "";
   const bases = await readConflictBases(spacePath, path, text, markerSize);
   return { markerSize, merge, text, bases };

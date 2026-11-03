@@ -255,7 +255,9 @@ export type PageMergeDto =
       reason:
         | { type: "missing_stage" }
         | { type: "unreadable"; stage: GitStageDto; message: string };
-    };
+    }
+  /** No conflict place of the file lies in its frontmatter. */
+  | { type: "text" };
 
 /** How the person decided a disputed property of a Page. */
 export type PageMergeDecisionDto =

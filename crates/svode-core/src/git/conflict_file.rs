@@ -1386,7 +1386,8 @@ fn not_in_conflict(path: &str) -> GitError {
     GitError::Conflict(format!("{path} is not in conflict"))
 }
 
-fn read_working(file: &Path) -> Result<Option<Vec<u8>>, GitError> {
+/// The working file `file`, or `None` when there is none.
+pub(super) fn read_working(file: &Path) -> Result<Option<Vec<u8>>, GitError> {
     match std::fs::read(file) {
         Ok(content) => Ok(Some(content)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),

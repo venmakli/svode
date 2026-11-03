@@ -83,6 +83,10 @@ pub enum PageMerge {
     Unavailable {
         reason: NoMerge,
     },
+    /// No conflict place of the working file lies in its frontmatter, by the
+    /// rule of the places of a Page: the conflict is in the text, decided by
+    /// its blocks.
+    Text,
 }
 
 /// How the person decided a disputed property.
@@ -306,18 +310,38 @@ struct Conflict {
     sides: Result<Sides, NoMerge>,
 }
 
-async fn conflict(cli: &GitCli, space: &Path, path: &str) -> Result<Conflict, GitError> {
+/// The repository of the Page at `path` (relative to `space`), its path in
+/// the repository and the size of its conflict markers.
+async fn locate(
+    cli: &GitCli,
+    space: &Path,
+    path: &str,
+) -> Result<(std::path::PathBuf, String, usize), GitError> {
     let (repo, prefix) = conflict_file::repository_of(cli, space).await?;
     let relative = conflict_file::repository_path(&prefix, path)?;
-    let conflicted = service_merge::index_conflicts(cli, &repo)
-        .await?
-        .into_iter()
-        .find(|conflict| conflict.path == relative);
     let size = markers::marker_sizes(cli, &repo, std::slice::from_ref(&relative))
         .await?
         .get(&relative)
         .copied()
         .unwrap_or(markers::DEFAULT_MARKER_SIZE);
+    Ok((repo, relative, size))
+}
+
+async fn conflict(cli: &GitCli, space: &Path, path: &str) -> Result<Conflict, GitError> {
+    let (repo, relative, size) = locate(cli, space, path).await?;
+    sides_of(cli, repo, relative, size).await
+}
+
+async fn sides_of(
+    cli: &GitCli,
+    repo: std::path::PathBuf,
+    relative: String,
+    size: usize,
+) -> Result<Conflict, GitError> {
+    let conflicted = service_merge::index_conflicts(cli, &repo)
+        .await?
+        .into_iter()
+        .find(|conflict| conflict.path == relative);
     // Marker lines of a path Git does not hold in conflict, as from history
     // or an agent, have no stage of any side.
     let sides = match conflicted {
@@ -338,9 +362,18 @@ async fn conflict(cli: &GitCli, space: &Path, path: &str) -> Result<Conflict, Gi
 /// The conflicted Page at `path` (relative to `space`, a path in its
 /// repository) by its properties: the frontmatter of its index stages merged
 /// key by key and the text below the properties merged as text, or why it
-/// has no choice by properties.
+/// has no choice by properties. Only a working file with a conflict place in
+/// its frontmatter ([`conflict_file::places_in_frontmatter`], the rule of the
+/// places in «Изменения») is decided by its properties; a place from the
+/// first line whose side opens with `---`, as both sides adding the Page in
+/// the `diff3` style write it, is one of them.
 pub async fn read(cli: &GitCli, space: &Path, path: &str) -> Result<PageMerge, GitError> {
-    let conflict = conflict(cli, space, path).await?;
+    let (repo, relative, size) = locate(cli, space, path).await?;
+    let working = conflict_file::read_working(&repo.join(&relative))?.unwrap_or_default();
+    if !conflict_file::places_in_frontmatter(&working, size) {
+        return Ok(PageMerge::Text);
+    }
+    let conflict = sides_of(cli, repo, relative, size).await?;
     let sides = match conflict.sides {
         Ok(sides) => sides,
         Err(reason) => return Ok(PageMerge::Unavailable { reason }),
