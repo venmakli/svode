@@ -20,8 +20,7 @@ use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_fro
 use svode_core::git::save::save;
 use svode_core::git::versions::{self, MessageLanguage};
 use svode_core::git::{
-    conflict_base, conflict_file, conflict_kind, conflict_properties, flow, markers, ops,
-    page_merge, sync,
+    conflict_base, conflict_file, conflict_kind, flow, markers, ops, page_merge, sync,
 };
 use svode_core::system_path;
 
@@ -837,26 +836,6 @@ pub async fn git_compose_page_merge(
     Ok(page_merge::compose(state.cli()?, &space, &path, &decisions, &body).await?)
 }
 
-/// The properties conflict of the Page at `path` (relative to `space_path`)
-/// whose text the editor read is `content`, with conflict markers of
-/// `marker_size`: the places of its frontmatter and the text after it,
-/// `None` when the text is not the whole file or no marker opens in the
-/// frontmatter.
-#[tauri::command]
-pub async fn git_page_properties_conflict(
-    space_path: String,
-    path: String,
-    content: String,
-    marker_size: usize,
-) -> Result<Option<conflict_properties::PropertiesConflict>, AppError> {
-    let target = svode_core::page::resolve_page_target(Path::new(&space_path), &path)?;
-    Ok(conflict_properties::page_properties(
-        &target.absolute,
-        content.as_bytes(),
-        marker_size,
-    ))
-}
-
 /// The base of each conflict block of the Page `content` the editor read at
 /// `path` (relative to `space_path`) with conflict markers of `marker_size`,
 /// in the order of the blocks; `None` for a block without one.
@@ -876,17 +855,6 @@ pub async fn git_page_conflict_bases(
         marker_size,
     )
     .await?)
-}
-
-/// The frontmatter of the Page `content` with the chosen side in every
-/// place of its properties, or why it does not resolve them.
-#[tauri::command]
-pub async fn git_resolve_page_properties(
-    content: String,
-    marker_size: usize,
-    choices: Vec<conflict_file::Side>,
-) -> conflict_properties::PropertiesResolution {
-    conflict_properties::resolve_properties(content.as_bytes(), marker_size, &choices)
 }
 
 /// Resolve the conflicted file at `path` (relative to `space_path`) by the

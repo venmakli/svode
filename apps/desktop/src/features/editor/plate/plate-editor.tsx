@@ -5,13 +5,17 @@ import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Page, PageMeta, PageSourceConflict } from "@/features/page";
+import {
+  usePageMergeState,
+  type Page,
+  type PageMeta,
+  type PageSourceConflict,
+} from "@/features/page";
 import { cn } from "@/shared/lib/utils";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 
 import { usePlateDocumentSession } from "../hooks/use-plate-document-session";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
-import { PropertiesConflictBlock } from "../ui/properties-conflict-block";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorKit } from "./editor-kit";
 import * as m from "@/paraglide/messages.js";
@@ -86,8 +90,6 @@ export function PlateDocumentEditor({
     spacePath,
     flushPendingSource,
     discardPendingSource,
-    documentKey,
-    handlePropertiesResolved,
   } = usePlateDocumentSession({
     bodyOnly,
     bodyOnlyMeta,
@@ -106,6 +108,11 @@ export function PlateDocumentEditor({
     onSourceConflict,
     onCommitRefused,
   });
+
+  // Without a choice by properties there is no text to edit: the property
+  // panel offers the version of a side for the whole Page (DF-292 R5).
+  const merge = usePageMergeState(spacePath, currentDocument);
+  const textUnavailable = merge?.merge.type === "unavailable";
 
   useEffect(() => {
     if (!registerPersistence) return;
@@ -157,25 +164,13 @@ export function PlateDocumentEditor({
                 documentLoading && "hidden",
               )}
             >
-              {documentKey && currentDocument ? (
-                <PropertiesConflictBlock
-                  documentKey={documentKey}
-                  spacePath={spacePath}
-                  path={currentDocument}
-                  readOnly={readOnly}
-                  onResolved={handlePropertiesResolved}
-                  className={
-                    usePageScroll
-                      ? "px-6"
-                      : "px-16 sm:px-[max(64px,calc(50%-350px))]"
-                  }
+              {textUnavailable ? null : (
+                <Editor
+                  variant={usePageScroll ? "none" : "default"}
+                  className={cn(usePageScroll && detailPageBodyClassName)}
+                  placeholder={m.editor_placeholder_body()}
                 />
-              ) : null}
-              <Editor
-                variant={usePageScroll ? "none" : "default"}
-                className={cn(usePageScroll && detailPageBodyClassName)}
-                placeholder={m.editor_placeholder_body()}
-              />
+              )}
             </EditorContainer>
           </div>
         </div>

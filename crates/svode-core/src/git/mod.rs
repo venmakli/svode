@@ -7,7 +7,6 @@ pub mod cli;
 pub mod conflict_base;
 pub mod conflict_file;
 pub mod conflict_kind;
-pub mod conflict_properties;
 pub mod diagnostics;
 pub mod flow;
 pub mod host;

@@ -3,11 +3,18 @@ import type { Descendant } from "platejs";
 import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 
-import type { Page, PageMeta } from "@/features/page";
+import {
+  getPageMergeState,
+  movePageMerge,
+  setPageMerge,
+  type Page,
+  type PageMerge,
+  type PageMeta,
+} from "@/features/page";
 import { readPage } from "@/features/page/page-api";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 
-import { readPageConflicts } from "../api/properties-conflict-api";
+import { readPageConflicts } from "../api/conflict-marker-api";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
 import { useEditorStore } from "../model";
 import {
@@ -19,12 +26,6 @@ import {
   setCachedDocumentValueByKey,
   setDocumentBaseline,
 } from "../model/plate-document-cache";
-import {
-  getPropertiesConflict,
-  movePropertiesConflict,
-  setPropertiesConflict,
-  type PropertiesConflict,
-} from "../model/properties-conflict";
 import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
 import * as m from "@/paraglide/messages.js";
 
@@ -81,10 +82,10 @@ function adoptPageBaseline(cacheKey: string, page: Page) {
 
 function showPageWarnings(
   page: { warnings?: { kind: string }[] },
-  propertiesConflict: boolean,
+  frontmatterInConflict: boolean,
 ) {
-  // Frontmatter in conflict has its own block instead.
-  if (propertiesConflict) return;
+  // Frontmatter in conflict shows in the property panel instead.
+  if (frontmatterInConflict) return;
   if (
     page.warnings?.some((warning) => warning.kind === "malformed_frontmatter")
   ) {
@@ -161,14 +162,14 @@ export function useEditorDocumentLoader({
 
   const applyLoadedPage = useCallback(
     (page: Pick<Page, "meta" | "warnings">) => {
-      const key = currentCacheKeyRef.current;
+      const path = currentPathRef.current;
       showPageWarnings(
         page,
-        key !== null && getPropertiesConflict(key) !== null,
+        path !== null && getPageMergeState(spacePath, path) !== null,
       );
       applyMeta(page.meta);
     },
-    [applyMeta, currentCacheKeyRef],
+    [applyMeta, currentPathRef, spacePath],
   );
 
   const refreshLoadedDocumentKey = useCallback(
@@ -222,9 +223,10 @@ export function useEditorDocumentLoader({
         );
         if (previousBaseline)
           setDocumentBaseline(currentCacheKey, previousBaseline);
-        movePropertiesConflict(
-          getDocumentCacheKey(spacePath, documentPathHandoff.previousPath),
-          currentCacheKey,
+        movePageMerge(
+          spacePath,
+          documentPathHandoff.previousPath,
+          currentDocument,
         );
         deleteCachedDocumentValue(documentPathHandoff.previousPath, spacePath);
         editorState.clearUnsaved(spacePath, documentPathHandoff.previousPath);
@@ -301,21 +303,25 @@ export function useEditorDocumentLoader({
     };
 
     // Marker lines in the frontmatter keep it out of Markdown IO: the editor
-    // gets the text after it, the properties block its places (1.F).
+    // gets the text below the properties merged as text, the property panel
+    // the merge of the properties (DF-292).
     const openSourcePage = (
       page: Page,
-      markerSize: number,
-      properties: PropertiesConflict | null,
-      bases: (string | null)[],
+      conflicts: {
+        markerSize: number;
+        merge: PageMerge | null;
+        text: string;
+        bases: (string | null)[];
+      },
     ) => {
-      setPropertiesConflict(currentCacheKey, properties);
+      setPageMerge(spacePath, currentDocument, conflicts.merge);
       applyLoadedPage(page);
       adoptPageBaseline(currentCacheKey, page);
       const value = deserializeWithConflicts(
         editor,
-        properties?.body ?? page.body,
-        markerSize,
-        bases,
+        conflicts.text,
+        conflicts.markerSize,
+        conflicts.bases,
       );
       const loadedValue = loadEditorValue(value);
       setCachedDocumentValue(spacePath, currentDocument, loadedValue);
@@ -339,13 +345,13 @@ export function useEditorDocumentLoader({
           if (sequence !== loadSeqRef.current) return;
           if (page && page.source_version !== cachedBaseline.version) {
             source = "read-page";
-            const { markerSize, properties, bases } = await readPageConflicts(
+            const conflicts = await readPageConflicts(
               spacePath,
               currentDocument,
               page,
             );
             if (sequence !== loadSeqRef.current) return;
-            openSourcePage(page, markerSize, properties, bases);
+            openSourcePage(page, conflicts);
             finish("ok", false, source);
             return;
           }
@@ -373,13 +379,13 @@ export function useEditorDocumentLoader({
             initialForDocument ??
             (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
-          const { markerSize, properties, bases } = await readPageConflicts(
+          const conflicts = await readPageConflicts(
             spacePath,
             currentDocument,
             page,
           );
           if (sequence !== loadSeqRef.current) return;
-          openSourcePage(page, markerSize, properties, bases);
+          openSourcePage(page, conflicts);
           finish("ok", false, source);
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;

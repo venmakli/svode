@@ -10,8 +10,9 @@ import type {
   GitFileResolutionDto,
   GitPathConflictDto,
   GitUncommittedGroupsDto,
-  PagePropertiesConflictDto,
-  PagePropertiesResolutionDto,
+  PageMergeDecisionDto,
+  PageMergeDto,
+  PageMergeResultDto,
   PublicationStatusDto,
   GitAvailabilityDto,
   GitStatusDto,
@@ -237,33 +238,28 @@ export function resolveGitConflictFile(input: {
 }
 
 /**
- * The properties conflict of the Page at `path` (relative to `spacePath`)
- * whose text the editor read is `content`, with conflict markers of
- * `markerSize`: the places of its frontmatter and the text after it, `null`
- * when the text is not the whole file or no marker opens in the frontmatter.
+ * The conflicted Page at `path` (relative to `spacePath`) by its properties:
+ * the frontmatter of its index stages merged key by key and the text below
+ * them merged as text, or why it has no choice by properties.
  */
-export function getPagePropertiesConflict(input: {
+export function getPageMerge(input: {
   spacePath: string;
   path: string;
-  content: string;
-  markerSize: number;
-}): Promise<PagePropertiesConflictDto | null> {
-  return invokeCommand<PagePropertiesConflictDto | null>(
-    "git_page_properties_conflict",
-    input,
-  );
+}): Promise<PageMergeDto> {
+  return invokeCommand<PageMergeDto>("git_page_merge", input);
 }
 
-/** The frontmatter of the Page `content` with a side in every place. */
-export function resolvePagePropertiesConflict(input: {
-  content: string;
-  markerSize: number;
-  choices: ("ours" | "theirs")[];
-}): Promise<PagePropertiesResolutionDto> {
-  return invokeCommand<PagePropertiesResolutionDto>(
-    "git_resolve_page_properties",
-    input,
-  );
+/**
+ * The conflicted Page at `path` composed from the `decisions` of its
+ * disputed properties and the text `body` below them; nothing is written.
+ */
+export function composePageMerge(input: {
+  spacePath: string;
+  path: string;
+  decisions: Record<string, PageMergeDecisionDto>;
+  body: string;
+}): Promise<PageMergeResultDto> {
+  return invokeCommand<PageMergeResultDto>("git_compose_page_merge", input);
 }
 
 /**

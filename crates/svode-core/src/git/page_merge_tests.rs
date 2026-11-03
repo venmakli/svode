@@ -728,3 +728,24 @@ async fn a_missing_stage_gives_no_choice_by_properties() {
         }
     );
 }
+
+#[tokio::test]
+async fn marker_lines_of_a_path_out_of_conflict_give_no_choice_by_properties() {
+    let stand = review("").await;
+    stand.write(
+        "Заметки.md",
+        "---\ntitle: Заметки\n<<<<<<< ours\nstatus: a\n=======\nstatus: b\n>>>>>>> theirs\n---\nText\n",
+    );
+    assert_eq!(
+        read(&stand.cli, &stand.repo, "Заметки.md").await.unwrap(),
+        PageMerge::Unavailable {
+            reason: NoMerge::MissingStage
+        }
+    );
+    assert_eq!(
+        compose_page(&stand, "Заметки.md", &[], "Text\n").await,
+        PageMergeResult::Unresolved {
+            finding: ResolutionFinding::Changed
+        }
+    );
+}

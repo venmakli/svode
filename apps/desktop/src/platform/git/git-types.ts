@@ -225,23 +225,47 @@ export interface GitSideChangeDto {
 /** The places of a text file in conflict, or why there are none. */
 export type GitConflictPlacesDto = NonNullable<GitConflictFileDto["places"]>;
 
-/** The frontmatter of a Page in conflict and the text after it. */
-export interface PagePropertiesConflictDto {
-  places: GitConflictPlacesDto;
-  /** The text after the frontmatter and its places. */
-  body: string;
-  /** A place takes the closing `---` and the start of the text. */
-  reachesText: boolean;
-  /**
-   * The opening `---` lies in a side of a place from the first line, as when
-   * both sides added the Page: the place is in the text of the Page.
-   */
-  opensInPlace: boolean;
+/** A stage of a conflicted path. */
+export type GitStageDto = "base" | "ours" | "theirs";
+
+/**
+ * A property of a Page in conflict as the index stages hold it: a side
+ * without the key has no field, a key the side holds empty is `null`.
+ */
+export interface PageMergePropertyDto {
+  key: string;
+  base?: unknown;
+  ours?: unknown;
+  theirs?: unknown;
+  /** Both sides changed the key from the base differently. */
+  disputed: boolean;
+  /** The merged value; absent while the key is disputed. */
+  merged?: unknown;
 }
 
-/** The frontmatter after a side in every place, or why it does not resolve. */
-export type PagePropertiesResolutionDto =
-  | { type: "resolved"; frontmatter: string }
+/**
+ * A Page in conflict by its properties: the merged and disputed keys and
+ * the text below them merged as text with conflict markers, or why it has
+ * no choice by properties.
+ */
+export type PageMergeDto =
+  | { type: "merged"; properties: PageMergePropertyDto[]; body: string }
+  | {
+      type: "unavailable";
+      reason:
+        | { type: "missing_stage" }
+        | { type: "unreadable"; stage: GitStageDto; message: string };
+    };
+
+/** How the person decided a disputed property of a Page. */
+export type PageMergeDecisionDto =
+  | { type: "ours" }
+  | { type: "theirs" }
+  | { type: "value"; value: unknown };
+
+/** The Page composed from the decisions, or why it does not resolve. */
+export type PageMergeResultDto =
+  | { type: "composed"; content: string }
   | { type: "unresolved"; finding: GitResolutionFindingDto };
 
 export type GitPlaceChoiceDto = "ours" | "theirs" | "both";

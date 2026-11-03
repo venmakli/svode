@@ -312,15 +312,19 @@ async fn conflict(cli: &GitCli, space: &Path, path: &str) -> Result<Conflict, Gi
     let conflicted = service_merge::index_conflicts(cli, &repo)
         .await?
         .into_iter()
-        .find(|conflict| conflict.path == relative)
-        .ok_or_else(|| GitError::Conflict(format!("{relative} is not in conflict")))?;
+        .find(|conflict| conflict.path == relative);
     let size = markers::marker_sizes(cli, &repo, std::slice::from_ref(&relative))
         .await?
         .get(&relative)
         .copied()
         .unwrap_or(markers::DEFAULT_MARKER_SIZE);
-    let sides = match stage_merge::read_stages(cli, &repo, &conflicted).await? {
-        Some(texts) => read_sides(&texts),
+    // Marker lines of a path Git does not hold in conflict, as from history
+    // or an agent, have no stage of any side.
+    let sides = match conflicted {
+        Some(conflicted) => match stage_merge::read_stages(cli, &repo, &conflicted).await? {
+            Some(texts) => read_sides(&texts),
+            None => Err(NoMerge::MissingStage),
+        },
         None => Err(NoMerge::MissingStage),
     };
     Ok(Conflict {

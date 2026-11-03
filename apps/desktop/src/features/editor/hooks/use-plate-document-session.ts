@@ -7,7 +7,12 @@ import {
   useActiveContentSpaceId,
 } from "@/features/artifact";
 import { useOpenPage } from "@/features/page/navigation";
-import type { Page, PageMeta, PageSourceConflict } from "@/features/page";
+import {
+  subscribePageMergeDecided,
+  type Page,
+  type PageMeta,
+  type PageSourceConflict,
+} from "@/features/page";
 import { useSignalUserEdit } from "@/features/navigation";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 
@@ -58,10 +63,6 @@ interface UsePlateDocumentSessionResult {
   spacePath: string;
   flushPendingSource: () => Promise<void>;
   discardPendingSource: () => Promise<void>;
-  /** The loaded document, for its properties block; null while it loads. */
-  documentKey: string | null;
-  /** The properties block of the document is resolved: it awaits a write. */
-  handlePropertiesResolved: () => void;
 }
 
 export function usePlateDocumentSession({
@@ -317,12 +318,15 @@ export function usePlateDocumentSession({
     ],
   );
 
-  const handlePropertiesResolved = useCallback(() => {
-    const currentPath = currentPathRef.current;
-    if (readOnly || !currentPath) return;
-    markUnsaved(spacePath, currentPath);
-    scheduleAutoSave();
-  }, [markUnsaved, readOnly, scheduleAutoSave, spacePath]);
+  // Decided properties of a Page in conflict wait for a write of the Page,
+  // made with the text once its blocks are decided too (DF-292 R4).
+  useEffect(() => {
+    if (readOnly || !currentDocument || !spacePath) return;
+    return subscribePageMergeDecided(spacePath, currentDocument, () => {
+      markUnsaved(spacePath, currentDocument);
+      scheduleAutoSave();
+    });
+  }, [currentDocument, markUnsaved, readOnly, scheduleAutoSave, spacePath]);
 
   const deserializeToolbarMarkdown = useCallback(
     (text: string) =>
@@ -342,7 +346,5 @@ export function usePlateDocumentSession({
     spacePath,
     flushPendingSource,
     discardPendingSource,
-    documentKey: linkValidationDocumentKey,
-    handlePropertiesResolved,
   };
 }

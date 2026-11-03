@@ -37,7 +37,7 @@ use super::sync::SyncResult;
 use super::versions::MessageLanguage;
 
 /// A text file larger than this is not shown or resolved by places.
-pub(super) const MAX_TEXT: usize = 4 * 1024 * 1024;
+const MAX_TEXT: usize = 4 * 1024 * 1024;
 /// A version of a side larger than this is not taken for the whole file.
 const MAX_SIDE: usize = 64 * 1024 * 1024;
 /// Git decides a version is binary by a NUL byte among its first bytes.
@@ -338,7 +338,6 @@ pub fn places(content: &[u8], size: usize, page: bool) -> Places {
     let frontmatter = page
         .then(|| frontmatter_places(content, &lines, &splits))
         .flatten()
-        .map(|places| places.blocks)
         .unwrap_or_default();
     Places::Places {
         places: splits
@@ -352,36 +351,19 @@ pub fn places(content: &[u8], size: usize, page: bool) -> Places {
 /// The line that opens and closes the frontmatter of a Page.
 const FRONTMATTER_DELIMITER: &[u8] = b"---";
 
-/// The places of a Page that lie in its frontmatter.
-pub(super) struct FrontmatterPlaces {
-    /// Indices into the blocks of the file of those in the frontmatter.
-    pub(super) blocks: Vec<usize>,
-    /// Index of the first line after the frontmatter.
-    pub(super) end_line: usize,
-    /// A place takes the closing `---` and the start of the text.
-    pub(super) reaches_text: bool,
-    /// The opening `---` lies in a side of a place from the first line.
-    pub(super) opens_in_place: bool,
-}
-
-/// The places among `splits` of the Page `content` read as `lines` that
-/// lie in its frontmatter: a block that opens before the closing `---`,
+/// The indices into `splits` of the places of the Page `content` read as
+/// `lines` that lie in its frontmatter: a block that opens before the closing `---`,
 /// including one that takes the closing `---` and the start of the text, and
 /// one from the first line whose side opens with `---`. `None` when the Page
 /// has no frontmatter or no `<` marker line stands in it; a `<` line that
 /// folds into no block leaves the places empty.
-pub(super) fn frontmatter_places(
-    content: &[u8],
-    lines: &[Line],
-    splits: &[Split],
-) -> Option<FrontmatterPlaces> {
+fn frontmatter_places(content: &[u8], lines: &[Line], splits: &[Split]) -> Option<Vec<usize>> {
     let delimiter = |index: usize| {
         lines
             .get(index)
             .is_some_and(|line| &content[line.start..line.content_end] == FRONTMATTER_DELIMITER)
     };
     let mut opened = delimiter(0);
-    let opens_in_place = !opened;
     if !opened {
         // A conflict from the first line holds the opening `---` in a side.
         let first = splits.first().filter(|split| split.lt == 0)?;
@@ -391,7 +373,6 @@ pub(super) fn frontmatter_places(
     }
     let mut index = usize::from(opened);
     let mut blocks = Vec::new();
-    let mut reaches_text = false;
     while index < lines.len() {
         if let Some(at) = splits.iter().position(|split| split.lt == index) {
             let split = splits[at];
@@ -403,7 +384,6 @@ pub(super) fn frontmatter_places(
             if delimiters(split.lt, split.bar.unwrap_or(split.eq)) >= closing
                 || delimiters(split.eq, split.gt) >= closing
             {
-                reaches_text = true;
                 break;
             }
             opened = true;
@@ -417,12 +397,7 @@ pub(super) fn frontmatter_places(
     if blocks.is_empty() && !lines[..index].iter().any(|line| line.kind == Some(b'<')) {
         return None;
     }
-    Some(FrontmatterPlaces {
-        blocks,
-        end_line: index,
-        reaches_text,
-        opens_in_place,
-    })
+    Some(blocks)
 }
 
 /// Whether a conflict place of the Page `content` with markers of `size`
@@ -454,11 +429,7 @@ pub(super) fn ambiguous(lines: &[Line], splits: &[Split], index: usize) -> bool 
 
 /// Whether a marker line Git would still see after a choice in every block
 /// of `splits` lies in `range` of `lines` outside those blocks.
-pub(super) fn unowned_marker(
-    lines: &[Line],
-    splits: &[Split],
-    range: std::ops::Range<usize>,
-) -> bool {
+fn unowned_marker(lines: &[Line], splits: &[Split], range: std::ops::Range<usize>) -> bool {
     let mut owned = vec![false; lines.len()];
     for split in splits {
         owned[split.lt] = true;
@@ -478,7 +449,7 @@ pub(super) fn unowned_marker(
 
 /// The place of block `split`: its marker lines, the text of each side and
 /// whether it lies in the frontmatter of a Page.
-pub(super) fn conflict_place(
+fn conflict_place(
     content: &[u8],
     lines: &[Line],
     split: &Split,
@@ -503,12 +474,7 @@ pub(super) fn conflict_place(
 
 /// The lines of the side `ours` (or the incoming one) of block `split` with
 /// their endings: each is followed by a marker line.
-pub(super) fn raw_side<'a>(
-    content: &'a [u8],
-    lines: &[Line],
-    split: &Split,
-    ours: bool,
-) -> &'a [u8] {
+fn raw_side<'a>(content: &'a [u8], lines: &[Line], split: &Split, ours: bool) -> &'a [u8] {
     let (from, to) = if ours {
         (split.lt, split.bar.unwrap_or(split.eq))
     } else {
@@ -597,7 +563,7 @@ pub fn check_result(path: &str, content: &[u8], size: usize) -> Option<Resolutio
 
 /// Why the frontmatter of the Markdown `content` does not read, if it does
 /// not; Markdown without frontmatter reads.
-pub(super) fn frontmatter_finding(content: &[u8]) -> Option<ResolutionFinding> {
+fn frontmatter_finding(content: &[u8]) -> Option<ResolutionFinding> {
     let text = match std::str::from_utf8(content) {
         Ok(text) => text,
         Err(error) => {

@@ -1,3 +1,4 @@
+import { readPageMerge, type Page, type PageMerge } from "@/features/page";
 import {
   getGitConflictMarkerSize,
   getPageConflictBases,
@@ -53,4 +54,44 @@ export async function readConflictBases(
     console.error("Failed to read the conflict bases:", error);
     return [];
   }
+}
+
+/**
+ * Marker lines in the frontmatter keep it from reading: the whole file comes
+ * as the body with a warning.
+ */
+function frontmatterInConflict(page: Pick<Page, "body" | "warnings">) {
+  return (
+    hasConflictMarkerCandidate(page.body) &&
+    Boolean(
+      page.warnings?.some(
+        (warning) => warning.kind === "malformed_frontmatter",
+      ),
+    )
+  );
+}
+
+/**
+ * The conflicts of the Page `page` read at `path`: the conflict marker size,
+ * the merge of its properties when its frontmatter is in conflict (DF-292),
+ * the text the editor gets — the text below the properties merged as text,
+ * none without a choice by properties — and the base of each of its blocks.
+ */
+export async function readPageConflicts(
+  spacePath: string,
+  path: string,
+  page: Pick<Page, "body" | "warnings">,
+): Promise<{
+  markerSize: number;
+  merge: PageMerge | null;
+  text: string;
+  bases: (string | null)[];
+}> {
+  const markerSize = await readConflictMarkerSize(spacePath, path, page.body);
+  const merge = frontmatterInConflict(page)
+    ? await readPageMerge(spacePath, path)
+    : null;
+  const text = !merge ? page.body : merge.type === "merged" ? merge.body : "";
+  const bases = await readConflictBases(spacePath, path, text, markerSize);
+  return { markerSize, merge, text, bases };
 }

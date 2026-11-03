@@ -5,7 +5,12 @@ import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 
 import {
+  composeDecidedPage,
+  getPageMergeState,
+  pageMergeDecided,
   pageSourceErrorKind,
+  setPageMerge,
+  setPageMergeWrite,
   type Page,
   type PageSourceConflict,
   type WritePageResult,
@@ -32,7 +37,7 @@ import {
   type GitSaveScopeTreeNode,
 } from "@/features/git/editor";
 
-import { readPageConflicts } from "../api/properties-conflict-api";
+import { readPageConflicts } from "../api/conflict-marker-api";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
@@ -45,11 +50,6 @@ import {
   setCachedDocumentValue,
   setDocumentBaseline,
 } from "../model/plate-document-cache";
-import {
-  getPropertiesConflict,
-  resolvedFrontmatter,
-  setPropertiesConflict,
-} from "../model/properties-conflict";
 import { retryWhileSourceBusy } from "../model/source-sync";
 import { useEditorSaveResultHandler } from "./use-editor-save-result-handler";
 import { useEditorSourceSync } from "./use-editor-source-sync";
@@ -168,9 +168,6 @@ export function useEditorDocumentWriter({
   const sourceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const resolutionChainRef = useRef<Promise<void>>(Promise.resolve());
   const autoSavePausedRef = useRef(false);
-  const reloadSourceRef = useRef<(path: string) => Promise<void>>(
-    async () => {},
-  );
   const {
     applyAutoSaveResult,
     applySavedDocumentResult,
@@ -204,13 +201,13 @@ export function useEditorDocumentWriter({
       const write = async () => {
         if (!editor || !spacePath) return null;
 
-        // Until the properties block is resolved the frontmatter is not
-        // written; its lines go before the body as they were chosen (1.F).
-        const properties = getPropertiesConflict(baselineKey(path));
-        const frontmatter = resolvedFrontmatter(properties);
-        if (properties && frontmatter === null) {
+        // A Page with its frontmatter in conflict is written once every
+        // disputed property and text block is decided, in one write of the
+        // properties the decisions give and the text (DF-292 R4).
+        const merge = getPageMergeState(spacePath, path);
+        if (merge && !pageMergeDecided(merge)) {
           if (explicitSave) {
-            toast.error(m.editor_properties_conflict_save_blocked());
+            toast.error(m.page_merge_save_blocked());
           }
           return null;
         }
@@ -224,20 +221,52 @@ export function useEditorDocumentWriter({
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
         const body = bodyWithSourceLeadingBlankLines(
-          properties
-            ? properties.conflict.body
+          merge?.merge.type === "merged"
+            ? merge.merge.body
             : (getDocumentBaseline(baselineKey(path))?.body ?? ""),
           markdown,
         );
-        const result = await retryWhileSourceBusy(() =>
-          writePage({
-            spacePath,
-            path,
-            content: (frontmatter ?? "") + body,
-            projectPath: projectPath ?? null,
-            sourceVersion,
-          }),
-        );
+        let content = body;
+        if (merge) {
+          setPageMergeWrite(spacePath, path, { status: "writing" });
+          try {
+            const composed = await composeDecidedPage(
+              spacePath,
+              path,
+              merge,
+              body,
+            );
+            if (composed.type === "unresolved") {
+              setPageMergeWrite(spacePath, path, {
+                status: "refused",
+                finding: composed.finding,
+              });
+              return null;
+            }
+            content = composed.content;
+          } catch (error) {
+            setPageMergeWrite(spacePath, path, {
+              status: "failed",
+              message: String(error),
+            });
+            return null;
+          }
+        }
+        let result: WritePageResult;
+        try {
+          result = await retryWhileSourceBusy(() =>
+            writePage({
+              spacePath,
+              path,
+              content,
+              projectPath: projectPath ?? null,
+              sourceVersion,
+            }),
+          );
+        } catch (error) {
+          if (merge) setPageMergeWrite(spacePath, path, { status: "idle" });
+          throw error;
+        }
 
         if (result.writeNonce) {
           ownNoncesRef.current.add(result.writeNonce);
@@ -248,13 +277,8 @@ export function useEditorDocumentWriter({
             body,
           });
         }
-        if (properties) {
-          setPropertiesConflict(baselineKey(path), null);
-          // Text lines of a place through the closing `---` now open the
-          // body, which the editor reads again.
-          if (properties.conflict.reachesText)
-            await reloadSourceRef.current(path);
-        }
+        // The Page reads again: its properties leave the conflict mode.
+        if (merge) setPageMerge(spacePath, path, null);
 
         return result;
       };
@@ -299,21 +323,16 @@ export function useEditorDocumentWriter({
   const loadSource = useCallback(
     async (path: string, page: Page) => {
       if (!editor) return;
-      const { markerSize, properties, bases } = await readPageConflicts(
+      const { markerSize, merge, text, bases } = await readPageConflicts(
         spacePath,
         path,
         page,
       );
       isLoadingRef.current = true;
       try {
-        setPropertiesConflict(baselineKey(path), properties);
+        setPageMerge(spacePath, path, merge);
         const loadedValue = loadEditorValue(
-          deserializeWithConflicts(
-            editor,
-            properties?.body ?? page.body,
-            markerSize,
-            bases,
-          ),
+          deserializeWithConflicts(editor, text, markerSize, bases),
         );
         setCachedDocumentValue(spacePath, path, loadedValue);
         if (page.source_version) {
@@ -338,11 +357,6 @@ export function useEditorDocumentWriter({
       spacePath,
     ],
   );
-
-  useEffect(() => {
-    reloadSourceRef.current = async (path) =>
-      loadSource(path, await readPage({ spacePath, path }));
-  }, [loadSource, spacePath]);
 
   const sourceSync = useEditorSourceSync({
     baseline: (path) => getDocumentBaseline(baselineKey(path)),

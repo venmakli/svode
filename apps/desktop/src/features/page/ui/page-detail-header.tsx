@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { useSignalUserEdit } from "@/features/navigation";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
+import { usePageMergeState } from "../model/page-merge";
+import { pageWithMerge } from "../model/page-merge-view";
 import type { Page } from "../model/types";
 import {
   showPageHeaderSaveError,
@@ -13,6 +15,7 @@ import {
 } from "./page-identity-header";
 import { PageReadError } from "./page-read-error";
 import { PageSaveStatus } from "./page-save-status";
+import { PageMergeUnavailable } from "./page-merge-unavailable";
 import { PagePropertyPanel } from "./page-property-panel";
 import { PageSystemFields } from "./page-system-fields";
 
@@ -31,14 +34,21 @@ export function PageDetailHeader({
 }) {
   const context = usePageDetailContext();
   const signalUserEdit = useSignalUserEdit();
-  const { page, schemaResult } = context;
+  const { page: sourcePage, schemaResult } = context;
+  // While the frontmatter is in conflict the header shows the merged
+  // properties, read only until the editor writes the decisions (DF-292).
+  const merge = usePageMergeState(context.spacePath, sourcePage?.path);
+  const page =
+    sourcePage && merge ? pageWithMerge(sourcePage, merge) : sourcePage;
 
   if (context.status === "loading") {
     return <PageDetailHeaderSkeleton actions={actions} />;
   }
 
   const metadataReadOnly =
-    readOnly || (context.status !== "missing" && context.status !== "ready");
+    readOnly ||
+    merge !== null ||
+    (context.status !== "missing" && context.status !== "ready");
   const canCreateReadme = context.status === "missing" && !readOnly;
   // A failed write the save block presents is not reported again.
   const saveHeaderField = (field: PageHeaderSaveField) => (error: unknown) => {
@@ -114,20 +124,34 @@ export function PageDetailHeader({
         readOnly={metadataReadOnly}
       />
       {showReadError && context.status === "error" ? <PageReadError /> : null}
-      {page &&
-      schemaResult &&
-      (schemaResult.schema.columns.length > 0 || !readOnly) ? (
+      {page && merge?.merge.type === "unavailable" ? (
+        <div className="max-w-5xl">
+          <PageMergeUnavailable
+            spacePath={context.spacePath}
+            path={page.path}
+            reason={merge.merge.reason}
+            readOnly={readOnly}
+          />
+        </div>
+      ) : sourcePage &&
+        (merge ||
+          (schemaResult &&
+            (schemaResult.schema.columns.length > 0 || !readOnly))) ? (
         <div className="max-w-5xl">
           <PagePropertyPanel
             key={`properties:${readOnly ? "view" : "edit"}`}
             spacePath={context.spacePath}
             projectPath={context.projectPath}
             spaceId={context.spaceId}
-            page={pageWithDrafts(
-              page,
-              schemaResult.schema.columns,
-              context.metadataDrafts,
-            )}
+            page={
+              schemaResult
+                ? pageWithDrafts(
+                    sourcePage,
+                    schemaResult.schema.columns,
+                    context.metadataDrafts,
+                  )
+                : sourcePage
+            }
             schemaResult={schemaResult}
             presentation={presentation}
             readOnly={readOnly}

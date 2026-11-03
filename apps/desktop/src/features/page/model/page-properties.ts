@@ -21,20 +21,21 @@ export function definePageSchemaProperties(
     edit,
   }: {
     actorCandidates?: readonly ActorCandidate[];
-    edit?: (field: string) => CollectionPropertyEdit<Page>;
+    /** The owner's editing of a property; none where it is not edited. */
+    edit?: (field: string) => CollectionPropertyEdit<Page> | undefined;
   } = {},
 ): CollectionPropertyDefinition<Page>[] {
-  return schema.columns.map((column) =>
-    defineSchemaBackedCollectionProperty({
+  return schema.columns.map((column) => {
+    const columnEdit =
+      edit && column.type !== "unique_id" ? edit(column.name) : undefined;
+    return defineSchemaBackedCollectionProperty({
       ...(actorCandidates ? { actorCandidates } : {}),
       // Nothing filters, sorts or edits a property of a newer Svode version;
       // a `unique_id` number is assigned, never typed.
       capabilities: column.newer
         ? {}
         : {
-            ...(edit && column.type !== "unique_id"
-              ? { edit: edit(column.name) }
-              : {}),
+            ...(columnEdit ? { edit: columnEdit } : {}),
             filter: { kind: "standard" },
             sort: { kind: "standard" },
           },
@@ -42,6 +43,6 @@ export function definePageSchemaProperties(
       getAccessibilityLabel: (page: Page) =>
         `${column.name}: ${page.meta.title}`,
       getValue: (page: Page) => page.meta.extra[column.name],
-    }),
-  );
+    });
+  });
 }

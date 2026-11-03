@@ -11,6 +11,11 @@ import {
   resolveStandardPropertyColumn,
   type CollectionPropertyDefinition,
 } from "../model/collection-property";
+import type {
+  CollectionPropertyConflictEntry,
+  CollectionPropertyPanelConflict,
+} from "../model/collection-property-conflict";
+import type { Column } from "../model/types";
 import {
   isEmptyCollectionPropertyFact,
   type CollectionPropertyFactGroup,
@@ -35,6 +40,11 @@ import {
   SchemaValueRepair,
   useSchemaAddOptionDialog,
 } from "./collection-property-panel-schema";
+import {
+  ConflictDecision,
+  ConflictLabel,
+  ConflictSummary,
+} from "./collection-property-conflict";
 import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
 
 const VALID: PropertyValidationState = { invalid: false };
@@ -54,8 +64,15 @@ const VALID: PropertyValidationState = { invalid: false };
  * with its repair, "Number repeats" of a `unique_id`, the values the schema
  * does not declare and "+ Add property", alone while the schema has no
  * properties.
+ *
+ * In the conflict mode of `conflict` the panel shows the merged values read
+ * only, under one line about the conflict; a disputed property is shown even
+ * when it is hidden or empty, with the conflict mark, its control and the
+ * variants of the sides, and a disputed key without a property comes first
+ * with its value as text. The schema cannot be edited meanwhile.
  */
 export function CollectionPropertyPanel<Item>({
+  conflict,
   factGroups = [],
   properties,
   item,
@@ -63,6 +80,7 @@ export function CollectionPropertyPanel<Item>({
   readOnly = false,
   schemaPanel,
 }: {
+  conflict?: CollectionPropertyPanelConflict<Item>;
   factGroups?: readonly CollectionPropertyFactGroup[];
   properties: readonly CollectionPropertyDefinition<Item>[];
   item: Item;
@@ -72,12 +90,38 @@ export function CollectionPropertyPanel<Item>({
   schemaPanel?: CollectionSchemaPanel;
 }) {
   const optionDialog = useSchemaAddOptionDialog(schemaPanel);
-  const rows = properties.flatMap((property) => {
+  const disputed = new Map(
+    conflict?.disputed.map((entry) => [entry.key, entry]),
+  );
+  const schemaReadOnly = readOnly || Boolean(conflict);
+  const extraEntries = conflict
+    ? conflict.disputed.filter(
+        (entry) =>
+          !properties.some(
+            (property) =>
+              property.common !== "title" &&
+              propertyKey(property) === entry.key,
+          ),
+      )
+    : [];
+  const rows = properties.flatMap((property): PanelRowModel<Item>[] => {
     if (property.common === "title") return [];
     const schemaColumn =
       schemaPanel && property.owner.kind === "schema"
         ? property.owner.column
         : null;
+    const entry = disputed.get(propertyKey(property));
+    if (entry) {
+      return [
+        {
+          kind: readOnly || conflict?.readOnly ? "value" : "edit",
+          property,
+          schemaColumn,
+          validation: VALID,
+          entry,
+        },
+      ];
+    }
     const validation = schemaColumn
       ? validatePropertyValue(
           schemaColumn,
@@ -86,10 +130,11 @@ export function CollectionPropertyPanel<Item>({
         )
       : VALID;
     const kind = panelRowKind(property, item, {
-      readOnly,
+      // The merged values of a conflict are read only until written.
+      readOnly: schemaReadOnly,
       // A schema property keeps its row, and its column menu, while the
       // schema can be edited; an invalid value shows its state anyway.
-      keep: schemaColumn !== null && (!readOnly || validation.invalid),
+      keep: schemaColumn !== null && (!schemaReadOnly || validation.invalid),
     });
     return kind ? [{ kind, property, schemaColumn, validation }] : [];
   });
@@ -100,15 +145,32 @@ export function CollectionPropertyPanel<Item>({
     }))
     .filter((group) => group.facts.length > 0);
   const addAction =
-    schemaPanel && !readOnly ? (
+    schemaPanel && !schemaReadOnly ? (
       <SchemaAddPropertyAction schemaPanel={schemaPanel} />
     ) : null;
-  // A Collection without properties offers only the first one to add.
-  if (schemaPanel && schemaPanel.schema.columns.length === 0) return addAction;
+  const summary = conflict ? <ConflictSummary conflict={conflict} /> : null;
   const orphanCount = schemaPanel?.orphanEntries.length ?? 0;
-  if (rows.length === 0 && visibleGroups.length === 0 && orphanCount === 0) {
+  if (
+    !conflict &&
+    ((schemaPanel && schemaPanel.schema.columns.length === 0) ||
+      (rows.length === 0 && visibleGroups.length === 0 && orphanCount === 0))
+  ) {
+    // A Collection without properties offers only the first one to add.
     return addAction;
   }
+  const renderConflictValue =
+    (property: CollectionPropertyDefinition<Item> | null) =>
+    (variantItem: Item, text: string) =>
+      property ? (
+        <CollectionPropertyValue
+          context="detail"
+          property={property as CollectionPropertyDefinition<unknown>}
+          item={variantItem}
+          relationContext={schemaPanel?.relationContext}
+        />
+      ) : (
+        <ConflictText text={text} />
+      );
 
   const grid = (
     <div
@@ -119,31 +181,58 @@ export function CollectionPropertyPanel<Item>({
       )}
       data-collection-property-panel
     >
-      {rows.map(({ kind, property, schemaColumn, validation }) => {
+      {conflict
+        ? extraEntries.map((entry) => (
+            <PanelRow
+              key={`conflict:${entry.key}`}
+              label={
+                <ConflictLabel>
+                  <PanelLabel
+                    icon={PROPERTY_TYPE_ICONS.text}
+                    label={entry.label}
+                  />
+                </ConflictLabel>
+              }
+              rowAttributes={{ "data-collection-panel-property": entry.key }}
+            >
+              {entry.decision ? (
+                <ConflictText text={entry.decidedText} />
+              ) : null}
+              <ConflictDecision
+                conflict={conflict}
+                entry={entry}
+                renderValue={renderConflictValue(null)}
+              />
+            </PanelRow>
+          ))
+        : null}
+      {rows.map(({ kind, property, schemaColumn, validation, entry }) => {
         const column = resolveStandardPropertyColumn(property);
         const edit = property.capabilities?.edit;
+        const label =
+          schemaColumn && schemaPanel ? (
+            <SchemaPropertyLabel
+              column={schemaColumn}
+              readOnly={schemaReadOnly}
+              schemaPanel={schemaPanel}
+              validation={validation}
+            />
+          ) : (
+            <PanelLabel
+              icon={PROPERTY_TYPE_ICONS[column?.type ?? "text"]}
+              label={property.label}
+            />
+          );
         return (
           <PanelRow
             key={`property:${property.key}`}
-            label={
-              schemaColumn && schemaPanel ? (
-                <SchemaPropertyLabel
-                  column={schemaColumn}
-                  readOnly={readOnly}
-                  schemaPanel={schemaPanel}
-                  validation={validation}
-                />
-              ) : (
-                <PanelLabel
-                  icon={PROPERTY_TYPE_ICONS[column?.type ?? "text"]}
-                  label={property.label}
-                />
-              )
-            }
+            label={entry ? <ConflictLabel>{label}</ConflictLabel> : label}
             rowAttributes={{ "data-collection-panel-property": property.key }}
           >
             {edit && kind === "edit" ? (
               <CollectionPropertyEditor
+                // A decision by a side draws the control again with its value.
+                key={entry ? `${entry.decision ?? "open"}` : undefined}
                 column={column}
                 disabled={validation.code === "type_conflict"}
                 edit={edit}
@@ -153,15 +242,25 @@ export function CollectionPropertyPanel<Item>({
                 relationContext={schemaPanel?.relationContext}
                 onRequestActors={schemaPanel?.loadActors}
               />
-            ) : (
+            ) : !entry || entry.decision ? (
               <CollectionPropertyValue
                 context="detail"
                 property={property as CollectionPropertyDefinition<unknown>}
                 item={item}
                 relationContext={schemaPanel?.relationContext}
               />
-            )}
-            {schemaColumn && schemaPanel && validation.invalid && !readOnly ? (
+            ) : null}
+            {entry && conflict ? (
+              <ConflictDecision
+                conflict={conflict}
+                entry={entry}
+                renderValue={renderConflictValue(property)}
+              />
+            ) : null}
+            {schemaColumn &&
+            schemaPanel &&
+            validation.invalid &&
+            !schemaReadOnly ? (
               <SchemaValueRepair
                 column={schemaColumn}
                 value={readValue(property, item)}
@@ -177,7 +276,7 @@ export function CollectionPropertyPanel<Item>({
       })}
       {schemaPanel ? (
         <SchemaOrphanRows
-          readOnly={readOnly}
+          readOnly={schemaReadOnly}
           schemaPanel={schemaPanel}
           renderRow={({ key, label, value }) => (
             <PanelRow
@@ -218,13 +317,40 @@ export function CollectionPropertyPanel<Item>({
       ))}
     </div>
   );
-  if (!schemaPanel) return grid;
+  if (!schemaPanel && !summary) return grid;
   return (
     <div className="flex flex-col gap-2">
+      {summary}
       {grid}
       {addAction}
-      {readOnly ? null : optionDialog.dialog}
+      {schemaReadOnly ? null : optionDialog.dialog}
     </div>
+  );
+}
+
+interface PanelRowModel<Item> {
+  kind: "edit" | "value";
+  property: CollectionPropertyDefinition<Item>;
+  schemaColumn: Column | null;
+  validation: PropertyValidationState;
+  /** The property is disputed in conflict mode. */
+  entry?: CollectionPropertyConflictEntry<Item>;
+}
+
+/** The key of the item's values a property shows. */
+function propertyKey<Item>(property: CollectionPropertyDefinition<Item>) {
+  return property.owner.kind === "schema"
+    ? property.owner.column.name
+    : property.key;
+}
+
+function ConflictText({ text }: { text: string }) {
+  return text ? (
+    <span className="block min-w-0 whitespace-pre-wrap break-words select-text [overflow-wrap:anywhere]">
+      {text}
+    </span>
+  ) : (
+    <span className="text-muted-foreground">-</span>
   );
 }
 
