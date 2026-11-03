@@ -127,6 +127,23 @@ export function followOwnContentRelocation(
 }
 
 /**
+ * Takes each open Page that a move this Desktop learns of after it ran, such
+ * as one an agent ran through Svode MCP, left to the path `relocate` gives
+ * it, with its session and draft.
+ */
+export function followReportedContentRelocation(
+  spacePath: string,
+  relocate: (path: string) => string | null,
+) {
+  const space = normalizePath(spacePath);
+  for (const watch of [...watches]) {
+    if (!watch.follower || normalizePath(watch.spacePath) !== space) continue;
+    const next = relocate(normalizePath(watch.path));
+    if (next) watch.follower.follow(next);
+  }
+}
+
+/**
  * Watches the Page file at `path` for deletions, renames and moves of this
  * Desktop that leave it: the watcher may report the path gone while such a
  * change runs or after it finished, or not at all. A deletion moves its root

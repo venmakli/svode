@@ -12,3 +12,4 @@ export {
   useOpenPage,
   useRetargetPage,
 } from "./hooks/use-page-navigation";
+export { followReportedContentRelocation } from "./model/own-path-change";

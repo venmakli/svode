@@ -12,6 +12,8 @@ export interface FileTreeEditorSync {
   suppressPaths: (paths: string[]) => void;
   clearInitialUnsaved: (path: string) => void;
   reopenInitialPage: (fromPath: string, toPath: string) => void;
+  /** Opens the initial Page at the path `relocate` gives it, if any. */
+  followInitialPage: (relocate: (path: string) => string | null) => void;
 }
 
 export function createFileTreeEditorSync(
@@ -36,6 +38,19 @@ export function createFileTreeEditorSync(
     reopenInitialPage: (fromPath, toPath) => {
       if (!isInitialPage(fromPath)) return;
       clearEditorFileUnsaved(spacePath, fromPath);
+      openPage(toPath, spaceId);
+    },
+    followInitialPage: (relocate) => {
+      // A shown Page that followed with its session has left the path.
+      if (
+        initialActiveContentPathSpaceId !== spaceId ||
+        !initialActiveContentPath ||
+        getActiveContentPath() !== initialActiveContentPath
+      )
+        return;
+      const toPath = relocate(initialActiveContentPath);
+      if (!toPath) return;
+      clearEditorFileUnsaved(spacePath, initialActiveContentPath);
       openPage(toPath, spaceId);
     },
   };

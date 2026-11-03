@@ -31,8 +31,8 @@ use svode_tools::catalog;
 use svode_tools::dispatch::{call_tool, check_tool, served_definitions};
 use svode_tools::error::ToolError;
 use svode_tools::host::{
-    MutationRuntime, ReadRuntime, RequestTarget, RoutineCaller, RoutineRunner, RoutineRuntime,
-    ToolHost,
+    ContentRelocation, MutationRuntime, ReadRuntime, RequestTarget, RoutineCaller, RoutineRunner,
+    RoutineRuntime, ToolHost,
 };
 use svode_tools::result::ToolCallResult;
 
@@ -60,6 +60,7 @@ struct FixtureHost {
     lfs_probes: Mutex<Vec<PathBuf>>,
     deliveries: Mutex<Vec<ManagedImportDelivery>>,
     routine_invalidations: Mutex<Vec<RoutineOwnerDescriptor>>,
+    relocations: Mutex<Vec<Value>>,
     runner: Option<FixtureRunner>,
     routines: Arc<RoutineStoreState>,
     index: IndexRuntimeState,
@@ -83,6 +84,7 @@ impl FixtureHost {
             lfs_probes: Mutex::new(Vec::new()),
             deliveries: Mutex::new(Vec::new()),
             routine_invalidations: Mutex::new(Vec::new()),
+            relocations: Mutex::new(Vec::new()),
             runner: Some(FixtureRunner::default()),
             updates: IndexUpdateState::new(routines.clone()),
             routines,
@@ -245,6 +247,20 @@ impl ToolHost for FixtureHost {
 
     fn deliver_managed_import(&self, delivery: &ManagedImportDelivery) {
         self.deliveries.lock().unwrap().push(delivery.clone());
+    }
+
+    fn content_relocating(&self, space: &Path) {
+        self.relocations
+            .lock()
+            .unwrap()
+            .push(json!({ "started": space }));
+    }
+
+    fn content_relocated(&self, space: &Path, relocations: &[ContentRelocation]) {
+        self.relocations
+            .lock()
+            .unwrap()
+            .push(json!({ "finished": space, "relocations": relocations }));
     }
 
     fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, ToolError> {
@@ -3838,4 +3854,55 @@ async fn move_content_under_a_page_converts_its_parents_and_refuses_unusable_par
     // A move without a conversion reports none.
     let plain = call("notes.md", "archive").await;
     assert_eq!(structured(&plain)["convertedParents"], json!([]));
+}
+
+/// move_content tells the host when a move of a Space starts and which paths
+/// it moved once it ends (DF-296): a converted target before the moved
+/// content, an emptied folder Page after it. A move refused before it starts
+/// tells nothing.
+#[tokio::test]
+async fn move_content_tells_the_host_the_paths_it_moved() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let call = async |from: &str, to_parent: &str| {
+        call_tool(
+            &host,
+            Some(&target),
+            "move_content",
+            json!({ "from": from, "toParent": to_parent }),
+        )
+        .await
+    };
+    let take = || std::mem::take(&mut *host.relocations.lock().unwrap());
+    let space = json!(project);
+
+    let refused = call("notes.md", "Nope/Deep").await;
+    assert_eq!(error_code(&refused), "FILE_NOT_FOUND");
+    assert_eq!(take(), Vec::<Value>::new());
+
+    structured(&call("notes.md", "leaf.md").await);
+    assert_eq!(
+        take(),
+        vec![
+            json!({ "started": space }),
+            json!({ "finished": space, "relocations": [
+                { "from": "leaf.md", "to": "leaf/README.md", "converted": true },
+                { "from": "notes.md", "to": "leaf/notes.md", "converted": false },
+            ] }),
+        ]
+    );
+
+    structured(&call("leaf/notes.md", "").await);
+    assert_eq!(
+        take(),
+        vec![
+            json!({ "started": space }),
+            json!({ "finished": space, "relocations": [
+                { "from": "leaf/notes.md", "to": "notes.md", "converted": false },
+                { "from": "leaf/README.md", "to": "leaf.md", "converted": true },
+            ] }),
+        ]
+    );
 }

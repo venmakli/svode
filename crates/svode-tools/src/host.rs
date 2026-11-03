@@ -316,6 +316,28 @@ pub trait ToolHost: Sync {
     fn app_process(&self) -> Option<&dyn AppProcessHost> {
         None
     }
+
+    /// A content move of `space` starts: the host holds what shows content of
+    /// that Space at a path the move may leave until `content_relocated`.
+    fn content_relocating(&self, _space: &Path) {}
+
+    /// The content move of `space` announced by `content_relocating` ended;
+    /// `relocations` lists the paths it moved, the moved content and every
+    /// converted parent, and is empty when it failed. The source result does
+    /// not depend on it.
+    fn content_relocated(&self, _space: &Path, _relocations: &[ContentRelocation]) {}
+}
+
+/// One path a content move left and the path the same content has after it,
+/// both relative to its Space.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentRelocation {
+    pub from: String,
+    pub to: String,
+    /// A parent Page that changed form, a leaf into a folder Page or back:
+    /// only its own file moves, the Pages inside a moved folder go with it.
+    pub converted: bool,
 }
 
 /// Freshness of the pools `index` already holds open for a read in `scope`,

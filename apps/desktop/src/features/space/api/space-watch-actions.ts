@@ -5,6 +5,10 @@ import {
   unwatchSpace,
   watchSpace,
 } from "@/platform/space/space-api";
+import {
+  listenContentRelocation,
+  type ContentRelocationEventDto,
+} from "@/platform/space/space-events-api";
 import type {
   SpaceDirtyEvent,
   SpaceFileEvent,
@@ -43,4 +47,10 @@ export function listenWatchedSpaceDirty(
   handler: SpaceDirtyEventHandler,
 ): Promise<() => void> {
   return listenSpaceDirty((event) => handler({ payload: event.payload }));
+}
+
+export function listenAgentContentRelocation(
+  handler: (event: ContentRelocationEventDto) => void,
+): Promise<() => void> {
+  return listenContentRelocation(handler);
 }

@@ -9,7 +9,7 @@ use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
 use svode_tools::host::{
     AppControlOutcome, AppProcessAction, AppProcessHost, AppProcessReport, AppProcessTarget,
-    RoutineCaller, RoutineRunner, RoutineRuntime,
+    ContentRelocation, RoutineCaller, RoutineRunner, RoutineRuntime,
 };
 
 use crate::project_sessions::{ProjectSessions, RequestSession};
@@ -182,6 +182,46 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
 
     fn app_process(&self) -> Option<&dyn AppProcessHost> {
         Some(self)
+    }
+
+    fn content_relocating(&self, space: &Path) {
+        emit_content_relocation(&self.app, space, None);
+    }
+
+    fn content_relocated(&self, space: &Path, relocations: &[ContentRelocation]) {
+        let space_path = space.to_string_lossy();
+        for relocation in relocations {
+            crate::navigation::artifact_moved(
+                &self.app,
+                &space_path,
+                &relocation.from,
+                &relocation.to,
+            );
+        }
+        emit_content_relocation(&self.app, space, Some(relocations));
+    }
+}
+
+/// Event of a content move an agent started: the windows keep the content
+/// they show at a path it leaves from `started` until `finished`, then take
+/// it to its new path, as after a move of their own.
+const CONTENT_RELOCATION_EVENT: &str = "content:relocation";
+
+fn emit_content_relocation(
+    app: &AppHandle,
+    space: &Path,
+    relocations: Option<&[ContentRelocation]>,
+) {
+    let payload = match relocations {
+        None => serde_json::json!({ "space": space, "phase": "started" }),
+        Some(relocations) => serde_json::json!({
+            "space": space,
+            "phase": "finished",
+            "relocations": relocations,
+        }),
+    };
+    if let Err(error) = app.emit(CONTENT_RELOCATION_EVENT, payload) {
+        tracing::warn!("content relocation not delivered: {error}");
     }
 }
 

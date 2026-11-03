@@ -21,7 +21,7 @@ use svode_core::structure::{self, CollectionCreate, ConvertToCollectionOutcome, 
 
 use crate::args::{CollectionArgs, PathArgs};
 use crate::error::ToolError;
-use crate::host::{RequestTarget, ToolHost};
+use crate::host::{ContentRelocation, RequestTarget, ToolHost};
 use crate::mutation::{PageHandles, authorize, failure, space_relative_busy, within_authorized};
 use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
@@ -343,7 +343,10 @@ pub(crate) async fn move_content(
     )
     .await?;
     let authorized = authorize(host, &space, planned).await?;
-    let (moved, mut changes) = within_authorized(
+    // A Desktop keeps the content it shows at a path the move leaves and takes
+    // it to the new path once the move ends.
+    host.content_relocating(Path::new(&space));
+    let outcome = within_authorized(
         authorized,
         observe_structural_change(&space, project, async {
             Ok(Box::pin(structure::move_page(
@@ -356,14 +359,48 @@ pub(crate) async fn move_content(
             .await?)
         }),
     )
-    .await
-    .map_err(|error| space_relative_busy(&space, error))?;
+    .await;
+    host.content_relocated(
+        Path::new(&space),
+        &outcome
+            .as_ref()
+            .map(|(moved, _)| move_relocations(&from, moved))
+            .unwrap_or_default(),
+    );
+    let (moved, mut changes) = outcome.map_err(|error| space_relative_busy(&space, error))?;
     changes.include(&space, project, &moved.removed_paths);
     let mut result = structural_operation_result("Moved content", &from, &moved.new_path, changes);
     if let Some(structured_content) = result.structured_content.as_mut() {
         structured_content["convertedParents"] = json!(moved.converted_parents);
     }
     Ok(result)
+}
+
+/// The paths a move left: a converted target before the moved content, a
+/// folder Page that became a leaf after it.
+fn move_relocations(from: &str, moved: &structure::MovePageOutcome) -> Vec<ContentRelocation> {
+    let converted = |parent: &structure::ConvertedParent| ContentRelocation {
+        from: parent.old_path.clone(),
+        to: parent.new_path.clone(),
+        converted: true,
+    };
+    let became_folder = |parent: &&structure::ConvertedParent| {
+        Path::new(&parent.new_path)
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    };
+    let (targets, emptied): (Vec<_>, Vec<_>) =
+        moved.converted_parents.iter().partition(became_folder);
+    targets
+        .into_iter()
+        .map(converted)
+        .chain(std::iter::once(ContentRelocation {
+            from: from.to_string(),
+            to: moved.new_path.clone(),
+            converted: false,
+        }))
+        .chain(emptied.into_iter().map(converted))
+        .collect()
 }
 
 pub(crate) async fn reorder_content(
