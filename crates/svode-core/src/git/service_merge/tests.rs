@@ -706,3 +706,6 @@ async fn an_unavailable_space_revision_stays_a_conflict_with_its_reason() {
     }
     assert_eq!(f.space_state(&f.local), before);
 }
+
+#[path = "unique_id_next_tests.rs"]
+mod unique_id_next;

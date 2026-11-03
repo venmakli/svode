@@ -137,6 +137,29 @@ pub async fn merge_texts(
     size: usize,
     style: ConflictStyle,
 ) -> Result<Vec<u8>, GitError> {
+    merge_file(cli, repo, texts, size, style)
+        .await
+        .map(|(_, merged)| merged)
+}
+
+/// `texts` merged as [`merge_texts`] does, `None` when a conflict remains.
+pub async fn merge_texts_clean(
+    cli: &GitCli,
+    repo: &Path,
+    texts: &StageTexts,
+) -> Result<Option<Vec<u8>>, GitError> {
+    let (conflicts, merged) = merge_file(cli, repo, texts, 7, ConflictStyle::Merge).await?;
+    Ok((conflicts == 0).then_some(merged))
+}
+
+/// The number of conflicts of the merge and its result.
+async fn merge_file(
+    cli: &GitCli,
+    repo: &Path,
+    texts: &StageTexts,
+    size: usize,
+    style: ConflictStyle,
+) -> Result<(i32, Vec<u8>), GitError> {
     let dir = tempfile::tempdir()?;
     let file = |name: &str, content: &[u8]| -> Result<String, GitError> {
         let path = dir.path().join(name);
@@ -178,7 +201,7 @@ pub async fn merge_texts(
             out.stderr.trim()
         )));
     }
-    Ok(std::fs::read(&ours)?)
+    Ok((out.exit_code, std::fs::read(&ours)?))
 }
 
 /// The stages of `conflict` in `repo` merged by [`merge_texts`], `None`

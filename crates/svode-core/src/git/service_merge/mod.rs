@@ -3,8 +3,10 @@
 //! The mechanism belongs to Git: the sides of a conflicted path come from its
 //! index stages, the result marks the path resolved explicitly and the merged
 //! paths are named. The value of a merged file comes from the rule of its
-//! owner: `.svode/order.json` from Pages ([`crate::content_tree`]), the Space
-//! pointer from Git ([`pointer`]). One rule set serves the in-memory preflight
+//! owner: `.svode/order.json` from Pages ([`crate::content_tree`]), `next`
+//! of the `unique_id` column in a Collection `schema.yaml` from Collections
+//! ([`crate::collections::unique_id_merge`]), the Space pointer from Git
+//! ([`pointer`]). One rule set serves the in-memory preflight
 //! over `git merge-tree --write-tree` ([`parse_merge_tree`], [`evaluate`]),
 //! the merge Svode started and the action for a merge started outside Svode
 //! ([`merge_in_index`]); a rule added to [`RULES`] applies to all three.
@@ -24,6 +26,7 @@ use super::cli::{GitCli, literal_pathspec_input};
 /// entry here and its owner's [`ServiceRule`]; every caller picks it up.
 const RULES: &[&dyn ServiceRule] = &[
     &crate::content_tree::order_merge::OrderRule,
+    &crate::collections::unique_id_merge::UniqueIdNextRule,
     &pointer::PointerRule,
 ];
 

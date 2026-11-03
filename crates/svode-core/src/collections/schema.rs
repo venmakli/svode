@@ -101,7 +101,7 @@ pub fn find_collection_root_by_location(space: &Path, file_path: &str) -> Option
 
 /// `<root>/<name>.md` or `<root>/<name>/README.md`; the Collection's own
 /// `.templates/` and `.routines/` sources keep its schema at any depth.
-fn is_direct_collection_path(root: &Path, file_path: &str) -> bool {
+pub(crate) fn is_direct_collection_path(root: &Path, file_path: &str) -> bool {
     let rel = normalize_rel_path(file_path);
     let Ok(inner) = Path::new(&rel).strip_prefix(root) else {
         return false;
