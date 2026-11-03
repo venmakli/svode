@@ -8,6 +8,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 import type { CollectionSchemaPanel } from "../hooks/use-collection-schema-panel";
@@ -23,14 +24,20 @@ import { propertyValidationMessage } from "./validation-message";
 /**
  * The label of a schema property: its column menu, disabled in read-only
  * mode, or the explanation of a property of a newer Svode version; an
- * invalid saved value shows its reason next to it.
+ * invalid saved value shows its reason next to it. It is centred on the
+ * first line of its value: stretched over its grid row no higher than that
+ * line, a line of text or, `besideControl`, a control under the padding of
+ * the value cell, so a taller value or neighbouring cell leaves it at the
+ * top of the row.
  */
 export function SchemaPropertyLabel({
+  besideControl = false,
   column,
   readOnly,
   schemaPanel,
   validation,
 }: {
+  besideControl?: boolean;
   column: Column;
   readOnly: boolean;
   schemaPanel: CollectionSchemaPanel;
@@ -38,7 +45,12 @@ export function SchemaPropertyLabel({
 }) {
   const open = schemaPanel.openColumn === column.name;
   return (
-    <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-1 text-sm text-muted-foreground",
+        besideControl ? "max-h-11" : "max-h-8",
+      )}
+    >
       <div className="min-w-0 flex-1">
         {column.newer ? (
           <NewerPropertyLabel column={column} />

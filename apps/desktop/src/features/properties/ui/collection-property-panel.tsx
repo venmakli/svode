@@ -212,6 +212,7 @@ export function CollectionPropertyPanel<Item>({
         const label =
           schemaColumn && schemaPanel ? (
             <SchemaPropertyLabel
+              besideControl={Boolean(edit) && kind === "edit"}
               column={schemaColumn}
               readOnly={schemaReadOnly}
               schemaPanel={schemaPanel}
