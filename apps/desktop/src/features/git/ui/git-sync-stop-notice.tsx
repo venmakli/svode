@@ -82,7 +82,7 @@ export function GitSyncStopNotice({
             <div>{m.git_sync_stop_commit_hint()}</div>
           </>
         ) : stop.kind === "incoming" ? (
-          <IncomingStopDetails stop={stop} />
+          <IncomingStopDetails stop={stop} nameOf={nameOf} />
         ) : stop.kind === "explicit_sync" ? (
           <div>{m.git_sync_stop_explicit_description()}</div>
         ) : stop.kind !== "operation" ? (
@@ -152,13 +152,15 @@ export function GitSyncStopNotice({
 }
 
 /**
- * The paths whose incoming changes conflict with local ones, each with its
- * kind; nothing is merged until the user syncs.
+ * The paths whose incoming changes conflict with local ones, each by its
+ * name with its kind; nothing is merged until the user syncs.
  */
 function IncomingStopDetails({
   stop,
+  nameOf,
 }: {
   stop: Extract<GitSyncStop, { kind: "incoming" }>;
+  nameOf?: (path: string) => string;
 }) {
   const service = new Map(stop.service.map((file) => [file.path, file]));
   return (
@@ -181,7 +183,7 @@ function IncomingStopDetails({
                   className="min-w-0 truncate text-foreground"
                   title={file.path}
                 >
-                  {file.path}
+                  {nameOf?.(file.path) ?? file.path}
                 </span>
                 <span className="shrink-0 text-xs">
                   {serviceFile && serviceFile.state !== "mergeable"

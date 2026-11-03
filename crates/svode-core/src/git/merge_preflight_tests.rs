@@ -350,6 +350,113 @@ async fn the_stop_names_every_conflicted_path_with_its_kind() {
     );
 }
 
+fn names(files: &[PathConflict]) -> Vec<(&str, Option<&str>)> {
+    let mut names: Vec<_> = files
+        .iter()
+        .map(|file| (file.path.as_str(), file.name.as_deref()))
+        .collect();
+    names.sort_by_key(|(path, _)| *path);
+    names
+}
+
+/// DF-301: both stops name a Page or an item of a Collection by the title
+/// of my version, or of the incoming one when mine is gone, whatever the
+/// sidebar loaded.
+#[tokio::test]
+async fn both_stops_name_a_page_by_the_title_of_its_versions() {
+    let item = |status: &str, assignee: &str| {
+        format!("---\ntitle: Вторая\nСтатус: {status}\nИсполнитель: {assignee}\n---\nОписание.\n")
+    };
+    let renamed = |title: &str| {
+        format!(
+            "---\ntitle: {title}\n---\nСтрока один.\nСтрока два.\nСтрока три.\nСтрока четыре.\n"
+        )
+    };
+    let f = Fixture::new().await;
+    f.commit(
+        &f.other,
+        &[
+            ("Задачи/Вторая.md", item("Открыта", "Анна").as_str()),
+            ("Удалённая.md", "---\ntitle: Удалённая\n---\nbase\n"),
+            ("Без заголовка.md", "---\nstatus: a\n---\nbase\n"),
+            ("Переименованная.md", renamed("Переименованная").as_str()),
+        ],
+    );
+    f.git(&f.other, &["push", "-q", "origin", "main"]);
+    f.git(&f.local, &["pull", "-q", "--no-rebase", "origin", "main"]);
+
+    f.git(&f.other, &["mv", "Переименованная.md", "Их имя.md"]);
+    f.incoming(&[
+        ("Задачи/Вторая.md", item("Готово", "Борис").as_str()),
+        (
+            "Удалённая.md",
+            "---\ntitle: Изменённая у них\n---\ntheirs\n",
+        ),
+        ("Без заголовка.md", "---\nstatus: b\n---\nbase\n"),
+        ("Новая.md", "---\ntitle: Их новая\n---\n"),
+        ("Их имя.md", renamed("Их имя").as_str()),
+        ("Сломанная.md", "---\ntitle: Их сломанная\n---\n"),
+        ("notes.txt", "theirs\n"),
+    ]);
+    f.git(&f.local, &["rm", "-q", "Удалённая.md"]);
+    f.git(&f.local, &["mv", "Переименованная.md", "Моё имя.md"]);
+    f.commit(
+        &f.local,
+        &[
+            ("Задачи/Вторая.md", item("Открыта", "Вера").as_str()),
+            ("Без заголовка.md", "---\nstatus: c\n---\nbase\n"),
+            ("Новая.md", "---\ntitle: Моя новая\n---\n"),
+            ("Моё имя.md", renamed("Моё имя").as_str()),
+            // My version does not read: the incoming one names the Page.
+            ("Сломанная.md", "---\ntitle: [\n---\n"),
+            ("notes.txt", "mine\n"),
+        ],
+    );
+
+    let SyncResult::IncomingConflict { files, .. } = f.background().await else {
+        panic!("a background conflict stops sync");
+    };
+    assert_eq!(
+        kinds(&files)
+            .into_iter()
+            .find(|(path, _)| *path == "Задачи/Вторая.md"),
+        Some(("Задачи/Вторая.md", ConflictKind::PageProperties))
+    );
+    assert_eq!(
+        names(&files),
+        [
+            ("notes.txt", None),
+            ("Без заголовка.md", Some("Без заголовка")),
+            ("Задачи/Вторая.md", Some("Вторая")),
+            ("Их имя.md", Some("Их имя")),
+            ("Моё имя.md", Some("Моё имя")),
+            ("Новая.md", Some("Моя новая")),
+            // Neither side keeps the original name of a rename/rename.
+            ("Переименованная.md", None),
+            ("Сломанная.md", Some("Их сломанная")),
+            ("Удалённая.md", Some("Изменённая у них")),
+        ]
+    );
+
+    let SyncResult::Conflict { kinds: stopped, .. } = sync::sync(&f.cli, &f.local).await.unwrap()
+    else {
+        panic!("an explicit sync stops in the merge");
+    };
+    assert_eq!(
+        names(&stopped),
+        [
+            ("notes.txt", None),
+            ("Без заголовка.md", Some("Без заголовка")),
+            ("Задачи/Вторая.md", Some("Вторая")),
+            // One rename/rename conflict at my name, named by my version.
+            ("Моё имя.md", Some("Моё имя")),
+            ("Новая.md", Some("Моя новая")),
+            ("Сломанная.md", Some("Их сломанная")),
+            ("Удалённая.md", Some("Изменённая у них")),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn a_binary_file_changed_on_both_sides_is_binary() {
     let f = Fixture::new().await;
@@ -734,6 +841,7 @@ fn the_stop_keeps_its_transport_shape() {
         files: vec![PathConflict {
             path: "page.md".into(),
             kind: ConflictKind::PageProperties,
+            name: Some("Page".into()),
             also: Vec::new(),
         }],
         service: vec![ServiceFile {
@@ -745,7 +853,7 @@ fn the_stop_keeps_its_transport_shape() {
         serde_json::to_value(stop).unwrap(),
         serde_json::json!({
             "type": "incomingConflict",
-            "files": [{ "path": "page.md", "kind": "page_properties" }],
+            "files": [{ "path": "page.md", "kind": "page_properties", "name": "Page" }],
             "service": [{ "path": "space", "state": "space_diverged" }],
         })
     );

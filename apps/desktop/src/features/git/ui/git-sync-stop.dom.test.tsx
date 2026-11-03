@@ -686,6 +686,12 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
         type: "incomingConflict",
         files: [
           { path: "Page.md", kind: "page_properties" },
+          // An item of a Collection the sidebar has not loaded.
+          {
+            path: "Задачи/Вторая.md",
+            kind: "page_properties",
+            name: "Вторая",
+          },
           { path: "space", kind: "space_pointer" },
         ],
         service: [{ path: "space", state: "space_diverged" }],
@@ -698,6 +704,11 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
         kind: "incoming",
         files: [
           { path: "Page.md", kind: "page_properties" },
+          {
+            path: "Задачи/Вторая.md",
+            kind: "page_properties",
+            name: "Вторая",
+          },
           { path: "space", kind: "space_pointer" },
         ],
         service: [{ path: "space", state: "space_diverged" }],
@@ -741,12 +752,22 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       );
       expect(rows.map((row) => row.dataset.gitIncomingConflict)).toEqual([
         "page_properties",
+        "page_properties",
         "space_pointer",
       ]);
+      // Rows are named as at a merge stop, the full path in their hint.
       expect(rows[0].textContent).toBe(
         `Page.md${m.git_conflict_kind_page_properties()}`,
       );
       expect(rows[1].textContent).toBe(
+        `Вторая${m.git_conflict_kind_page_properties()}`,
+      );
+      expect(
+        Array.from(rows, (row) =>
+          row.querySelector("[title]")?.getAttribute("title"),
+        ),
+      ).toEqual(["Page.md", "Задачи/Вторая.md", "space"]);
+      expect(rows[2].textContent).toBe(
         `space${m.git_conflict_kind_space_pointer()} · ${m.git_sync_service_space_diverged()}`,
       );
       expect(slot.querySelector("button")).toBe(null);

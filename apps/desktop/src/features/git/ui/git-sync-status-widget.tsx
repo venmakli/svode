@@ -107,7 +107,7 @@ export function GitSyncStatusWidget({
     sync.repositoryPath,
     sync.stop?.kind === "conflict",
   );
-  const nameOf = useConflictPathNames(sync.repositoryPath);
+  const nameOf = useConflictPathNames(sync.repositoryPath, sync.stop);
   const resolveWithAgent = useResolveWithAgent(sync, nameOf);
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);

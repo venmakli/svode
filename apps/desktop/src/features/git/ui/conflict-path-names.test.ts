@@ -32,3 +32,20 @@ test("conflicted paths are named by their Page, Collection or file", () => {
     "table.json",
   );
 });
+
+test("the title Svode read from the versions of a Page comes before the tree", () => {
+  // An item of a Collection the sidebar has not loaded.
+  expect(
+    conflictPathName("/project", "tasks/second.md", spaces, "Second"),
+  ).toBe("Second");
+  expect(conflictPathName("/project", "plan.md", spaces, "Plan v2")).toBe(
+    "Plan v2",
+  );
+  // Without it, the tree and the file name as before.
+  expect(conflictPathName("/project", "tasks/second.md", spaces)).toBe(
+    "second.md",
+  );
+  expect(conflictPathName("/project", "plan.md", spaces, undefined)).toBe(
+    "Plan",
+  );
+});

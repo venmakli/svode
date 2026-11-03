@@ -147,9 +147,18 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
     repository = undefined;
     preflight = {
       type: "conflict",
-      files: ["Onboarding.md", ".svode/order.json", "a.md", "b.md", "data.bin"],
+      files: [
+        "Onboarding.md",
+        "Задачи/Вторая.md",
+        ".svode/order.json",
+        "a.md",
+        "b.md",
+        "data.bin",
+      ],
       kinds: [
         { path: "Onboarding.md", kind: "page_text" },
+        // Named by Svode from its versions: the sidebar has not loaded it.
+        { path: "Задачи/Вторая.md", kind: "page_properties", name: "Вторая" },
         { path: ".svode/order.json", kind: "text" },
         { path: "b.md", kind: "rename_rename", also: ["a.md"] },
         { path: "data.bin", kind: "binary" },
@@ -172,6 +181,12 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
       expect(agent.dataset.variant).toBe("outline");
       expect(agent.disabled).toBe(false);
       expect(places.at(-1)).toBe("/project/space");
+      // The row and the request name the item by the title Svode read.
+      const item = dialog.querySelector<HTMLElement>(
+        '[data-git-conflict-path="Задачи/Вторая.md"] [title]',
+      )!;
+      expect(item.textContent).toBe("Вторая");
+      expect(item.title).toBe("Задачи/Вторая.md");
 
       await act(async () => {
         agent.click();
@@ -187,6 +202,7 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
         "",
         m.agent_conflict_request_files(),
         `- Onboarding: \`Onboarding.md\` (${m.git_conflict_kind_page_text()})`,
+        `- Вторая: \`Задачи/Вторая.md\` (${m.git_conflict_kind_page_properties()})`,
         `- \`b.md\`, \`a.md\` (${m.git_conflict_kind_rename_rename()})`,
         `- \`data.bin\` (${m.git_conflict_kind_binary()})`,
         "",
@@ -264,6 +280,11 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
           type: "incomingConflict",
           files: [
             { path: "Onboarding.md", kind: "page_text" },
+            {
+              path: "Задачи/Вторая.md",
+              kind: "page_properties",
+              name: "Вторая",
+            },
             { path: "notes.txt", kind: "text" },
           ],
         },
@@ -280,8 +301,15 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
       // resolved cleanly, so only the Page is left.
       syncReport = {
         type: "conflict",
-        files: ["Onboarding.md"],
-        kinds: [{ path: "Onboarding.md", kind: "page_text" }],
+        files: ["Onboarding.md", "Задачи/Вторая.md"],
+        kinds: [
+          { path: "Onboarding.md", kind: "page_text" },
+          {
+            path: "Задачи/Вторая.md",
+            kind: "page_properties",
+            name: "Вторая",
+          },
+        ],
         merged: [".svode/order.json"],
       };
       await act(async () => {
@@ -293,11 +321,12 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
       expect(events).toEqual(["sync", "submit"]);
       expect(useGitStore.getState().syncStop[path]?.kind).toBe("conflict");
       expect(submitted[0].mark).toBe("agent_commits");
-      expect(submitted[0].text.split("\n").slice(0, 5)).toEqual([
+      expect(submitted[0].text.split("\n").slice(0, 6)).toEqual([
         m.agent_conflict_request_merge({ path }),
         "",
         m.agent_conflict_request_files(),
         `- Onboarding: \`Onboarding.md\` (${m.git_conflict_kind_page_text()})`,
+        `- Вторая: \`Задачи/Вторая.md\` (${m.git_conflict_kind_page_properties()})`,
         "",
       ]);
     } finally {

@@ -213,6 +213,11 @@ export interface GitPathConflict {
   path: string;
   kind: GitConflictKind;
   /**
+   * The title of the Page at the path from its versions, whatever the
+   * sidebar loaded; absent for a path that is not a Page or does not read.
+   */
+  name?: string;
+  /**
    * The other paths of the same conflict, resolved with it: the original
    * and the incoming name of a rename/rename conflict at my name.
    */

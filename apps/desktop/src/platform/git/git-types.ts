@@ -137,6 +137,11 @@ export type GitConflictKindDto =
 export interface GitPathConflictDto {
   path: string;
   kind: GitConflictKindDto;
+  /**
+   * The title of the Page at the path, read from my version or else the
+   * incoming one; absent for a path that is not a Page or does not read.
+   */
+  name?: string;
   /** The other paths of the same conflict, resolved with it. */
   also?: string[];
 }

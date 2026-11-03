@@ -169,6 +169,7 @@ fn conflict(path: &str, kind: ConflictKind) -> PathConflict {
     PathConflict {
         path: path.into(),
         kind,
+        name: None,
         also: Vec::new(),
     }
 }
@@ -243,7 +244,10 @@ async fn kinds_follow_the_index_stages() {
                 ..conflict("moved-ours.txt", ConflictKind::RenameRename)
             },
             conflict("notes.txt", ConflictKind::Text),
-            conflict("page.md", ConflictKind::PageProperties),
+            PathConflict {
+                name: Some("C".into()),
+                ..conflict("page.md", ConflictKind::PageProperties)
+            },
             conflict("renamed-ours.txt", ConflictKind::RenameDelete),
         ]
     );
@@ -686,7 +690,10 @@ async fn a_page_is_resolved_by_places_without_both_in_its_frontmatter() {
     .await;
     assert_eq!(
         merge.kinds().await,
-        [conflict(path, ConflictKind::PageProperties)]
+        [PathConflict {
+            name: Some("Ours".into()),
+            ..conflict(path, ConflictKind::PageProperties)
+        }]
     );
     // The places of the whole file, the frontmatter one marked.
     let file = merge.places(path).await;

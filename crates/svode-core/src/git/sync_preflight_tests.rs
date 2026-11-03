@@ -213,6 +213,7 @@ fn operation_result_serializes_with_the_operation_name() {
             kinds: vec![PathConflict {
                 path: "Page.md".into(),
                 kind: crate::git::conflict_kind::ConflictKind::PageText,
+                name: None,
                 also: Vec::new(),
             }],
         })

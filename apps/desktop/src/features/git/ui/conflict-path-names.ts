@@ -10,14 +10,17 @@ export interface ConflictNameSpace {
 /**
  * The name the person knows a conflicted path by (1.F): the title of its
  * Page, «Схема коллекции „Задачи“» for a Collection schema, otherwise the
- * file name. `path` is relative to `repositoryPath`; the Space holding it
- * gives the titles of its objects by their paths in it.
+ * file name. `path` is relative to `repositoryPath`; `name` is the title
+ * Svode read from the versions of the Page and comes first, then the Space
+ * holding the path gives the titles of its objects by their paths in it.
  */
 export function conflictPathName(
   repositoryPath: string,
   path: string,
   spaces: readonly ConflictNameSpace[],
+  name?: string,
 ): string {
+  if (name) return name;
   const absolute = `${trimSlashes(repositoryPath)}/${path}`;
   const space = spaces
     .filter(

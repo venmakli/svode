@@ -161,6 +161,8 @@ async fn merge_in_memory(
             facts.entry(page.as_str()).or_default().frontmatter = true;
         }
     }
+    let mut names =
+        conflict_kind::page_names(cli, repo, left.iter().copied(), [head, revision]).await;
     let files = left
         .into_iter()
         .map(|conflict| PathConflict {
@@ -172,6 +174,7 @@ async fn merge_in_memory(
                     .copied()
                     .unwrap_or_default(),
             ),
+            name: names.remove(&conflict.path),
             also: Vec::new(),
         })
         .collect();

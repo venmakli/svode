@@ -5,7 +5,7 @@
 //! apart by where the places of the merge of its stages stand, not by its
 //! working file.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
@@ -14,7 +14,7 @@ use super::GitError;
 use super::cli::GitCli;
 use super::markers;
 use super::service_merge::{self, ConflictedPath, StageEntry};
-use super::stage_merge::{self, ConflictStyle};
+use super::stage_merge::{self, ConflictStyle, MAX_STAGE};
 
 /// Git decides a side is binary by a NUL byte among its first bytes.
 const BINARY_PROBE: usize = 8000;
@@ -51,6 +51,11 @@ pub enum ConflictKind {
 pub struct PathConflict {
     pub path: String,
     pub kind: ConflictKind,
+    /// The title of the Page at the path, as [`page_names`] reads it from
+    /// its versions; `None` for a path that is not a Page or whose versions
+    /// do not read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The other paths of the same conflict, resolved with it: the original
     /// name and the incoming name of a rename/rename conflict, whose entry
     /// stands at my name.
@@ -126,7 +131,7 @@ pub fn classify(conflict: &ConflictedPath, facts: KindFacts) -> ConflictKind {
 /// `merge` attribute unset — makes the path binary; a conflict place in the
 /// frontmatter of a Page merged again from its index stages with the marker
 /// size of its path tells its properties from its text, whatever its working
-/// file holds now.
+/// file holds now. A Page is named by its versions ([`page_names`]).
 pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, GitError> {
     let conflicts = service_merge::index_conflicts(cli, repo).await?;
     if conflicts.is_empty() {
@@ -177,12 +182,14 @@ pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, 
             facts.frontmatter = super::conflict_file::places_in_frontmatter(&merged, *size);
         }
     }
+    let mut names = page_names(cli, repo, &conflicts, ["HEAD", "MERGE_HEAD"]).await;
     let kinds: Vec<PathConflict> = conflicts
         .iter()
         .zip(facts)
         .map(|(conflict, facts)| PathConflict {
             path: conflict.path.clone(),
             kind: classify(conflict, facts),
+            name: names.remove(&conflict.path),
             also: Vec::new(),
         })
         .collect();
@@ -335,6 +342,141 @@ pub async fn unresolved_under(
             })
         })
         .collect())
+}
+
+/// The names of the Pages among `conflicts`, by path (DF-301): the title of
+/// my version as the Space tree shows a Page — its `title` property,
+/// otherwise the name of its file, for the `README.md` of a folder the name
+/// of the folder — or of the incoming version when mine is missing or does
+/// not read. A path that is not a Page, or none of whose versions reads,
+/// has no name. My version is the stage of my side; at a side of a
+/// rename/rename, whose single stage Git fills with the merge of both
+/// renamed versions, it is the path in `revisions[0]`, the incoming one in
+/// `revisions[1]`. The versions of a side are read by one `git cat-file
+/// --batch` for all the paths, a version larger than [`MAX_STAGE`] is not
+/// read, and the title is taken from the frontmatter at its head; the
+/// working file, which may hold markers in its frontmatter, takes no part.
+pub(crate) async fn page_names<'a>(
+    cli: &GitCli,
+    repo: &Path,
+    conflicts: impl IntoIterator<Item = &'a ConflictedPath>,
+    revisions: [&str; 2],
+) -> HashMap<String, String> {
+    let mut pending: Vec<&ConflictedPath> = conflicts
+        .into_iter()
+        .filter(|conflict| names_a_page(&conflict.path))
+        .collect();
+    let sides: [fn(&ConflictedPath) -> Option<&StageEntry>; 2] = [
+        |conflict| conflict.ours.as_ref(),
+        |conflict| conflict.theirs.as_ref(),
+    ];
+    let mut names = HashMap::new();
+    for (side, revision) in sides.into_iter().zip(revisions) {
+        let read: Vec<(&str, String)> = pending
+            .iter()
+            .filter_map(|conflict| {
+                let stage = side(conflict).filter(|stage| stage.is_regular_file())?;
+                let object = if conflict.sides().count() > 1 {
+                    stage.oid.clone()
+                } else if conflict.path.contains('\n') {
+                    return None;
+                } else {
+                    format!("{revision}:{}", conflict.path)
+                };
+                Some((conflict.path.as_str(), object))
+            })
+            .collect();
+        if read.is_empty() {
+            continue;
+        }
+        for ((path, _), title) in read.iter().zip(version_titles(cli, repo, &read).await) {
+            if let Some(title) = title {
+                names.insert((*path).to_owned(), title);
+            }
+        }
+        pending.retain(|conflict| !names.contains_key(&conflict.path));
+    }
+    names
+}
+
+/// How long reading the versions that name the Pages may take.
+const NAME_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Whether `path` is a Page the Space tree shows: a Markdown file outside
+/// hidden folders, not hidden itself and not the README of the Space.
+fn names_a_page(path: &str) -> bool {
+    super::versions::is_page(path)
+        && crate::page::naming::is_user_document(path)
+        && !path.rsplit('/').next().unwrap_or(path).starts_with('.')
+}
+
+/// The titles of the Pages at the paths of `read` from their versions, the
+/// objects named there, in their order; `None` for a version that is
+/// missing or does not read, and for every one when the read fails.
+async fn version_titles(cli: &GitCli, repo: &Path, read: &[(&str, String)]) -> Vec<Option<String>> {
+    let input: String = read
+        .iter()
+        .map(|(_, object)| format!("{object}\n"))
+        .collect();
+    let mut titles = Vec::with_capacity(read.len());
+    if let Ok(Some(output)) = super::cli::read_with_input(
+        cli,
+        repo,
+        &["cat-file", "--batch"],
+        input.as_bytes(),
+        read.len() * (MAX_STAGE + 128),
+        NAME_READ_TIMEOUT,
+    )
+    .await
+    {
+        let mut rest = output.as_slice();
+        for (path, _) in read {
+            let Some(end) = rest.iter().position(|byte| *byte == b'\n') else {
+                break;
+            };
+            let header = String::from_utf8_lossy(&rest[..end]).into_owned();
+            rest = &rest[end + 1..];
+            // A missing object is its header alone.
+            if header.ends_with(" missing") || header.ends_with(" ambiguous") {
+                titles.push(None);
+                continue;
+            }
+            let [_, kind, size] = header.split(' ').collect::<Vec<_>>()[..] else {
+                break;
+            };
+            let Ok(size) = size.parse::<usize>() else {
+                break;
+            };
+            if rest.len() <= size {
+                break;
+            }
+            titles.push(
+                (kind == "blob" && size <= MAX_STAGE)
+                    .then(|| page_title(path, &rest[..size]))
+                    .flatten(),
+            );
+            rest = &rest[size + 1..];
+        }
+    }
+    titles.resize(read.len(), None);
+    titles
+}
+
+/// The title of the Page at `path` from its `version`, as the Space tree
+/// shows it; `None` when its frontmatter does not read.
+fn page_title(path: &str, version: &[u8]) -> Option<String> {
+    let (folder, file) = path.rsplit_once('/').unwrap_or(("", path));
+    let fallback = if file.eq_ignore_ascii_case("README.md") {
+        folder.rsplit('/').next().unwrap_or(folder)
+    } else {
+        file.strip_suffix(".md").unwrap_or(file)
+    };
+    let title = crate::content_tree::source_title(version, fallback.to_owned())?;
+    Some(if title.trim().is_empty() {
+        fallback.to_owned()
+    } else {
+        title
+    })
 }
 
 /// The paths among `conflicts` with a base stage and one side that the
@@ -541,6 +683,47 @@ mod tests {
             theirs: entry("160000"),
         };
         assert_eq!(classify(&pointer, none), ConflictKind::SpacePointer);
+    }
+
+    #[test]
+    fn a_page_is_named_as_the_space_tree_shows_it() {
+        let title = |path: &str, version: &str| page_title(path, version.as_bytes());
+        assert_eq!(
+            title(
+                "Задачи/Вторая.md",
+                "---\ntitle: Вторая\nСтатус: Открыта\n---\nТекст\n"
+            ),
+            Some("Вторая".into())
+        );
+        // Without a `title` property, the name of the file.
+        assert_eq!(
+            title("Задачи/Вторая.md", "---\nСтатус: Открыта\n---\n"),
+            Some("Вторая".into())
+        );
+        assert_eq!(title("notes/plan.md", "Plain text\n"), Some("plan".into()));
+        assert_eq!(
+            title("plan.md", "---\ntitle: \"\"\n---\n"),
+            Some("plan".into())
+        );
+        // The README of a folder names the folder-Page.
+        assert_eq!(
+            title("docs/guide/README.md", "---\ntitle: Guide\n---\n"),
+            Some("Guide".into())
+        );
+        assert_eq!(
+            title("docs/guide/README.md", "# Guide\n"),
+            Some("guide".into())
+        );
+        // Frontmatter that does not read names nothing.
+        assert_eq!(title("plan.md", "---\ntitle: [\n---\n"), None);
+        assert_eq!(title("plan.md", "---\ntitle: A\n"), None);
+
+        assert!(names_a_page("Задачи/Вторая.md"));
+        assert!(names_a_page("docs/README.md"));
+        assert!(!names_a_page("README.md"), "the README of the Space");
+        assert!(!names_a_page("Задачи/schema.yaml"));
+        assert!(!names_a_page(".svode/notes.md"));
+        assert!(!names_a_page("docs/.draft.md"));
     }
 
     #[test]

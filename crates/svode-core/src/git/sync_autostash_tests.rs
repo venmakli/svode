@@ -214,7 +214,7 @@ async fn conflicted_files_without_an_operation_stop_sync_before_pull_and_keep_th
         serde_json::json!({
             "type": "unmergedFiles",
             "files": ["q.md"],
-            "kinds": [{ "path": "q.md", "kind": "page_text" }]
+            "kinds": [{ "path": "q.md", "kind": "page_text", "name": "q" }]
         })
     );
 }

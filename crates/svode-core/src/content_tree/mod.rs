@@ -360,14 +360,39 @@ pub fn read_frontmatter_meta_head_with_fallback(
     let Ok(file) = fs::File::open(abs_path) else {
         return (fallback, None, None);
     };
-    let mut reader = BufReader::new(file);
+    match frontmatter_head(BufReader::new(file)) {
+        FrontmatterHead::Valid(meta) => title_or_fallback(meta, fallback),
+        FrontmatterHead::Missing | FrontmatterHead::Unreadable => (fallback, None, None),
+    }
+}
+
+/// The title the Space tree shows for the Markdown source `content`: its
+/// `title` property, otherwise `fallback`. `None` when its frontmatter does
+/// not read; a source without frontmatter takes `fallback`.
+pub fn source_title(content: &[u8], fallback: String) -> Option<String> {
+    match frontmatter_head(content) {
+        FrontmatterHead::Valid(meta) => Some(title_or_fallback(meta, fallback).0),
+        FrontmatterHead::Missing => Some(fallback),
+        FrontmatterHead::Unreadable => None,
+    }
+}
+
+/// The frontmatter at the head of a Markdown source, read up to its closing
+/// line and no further than [`MAX_FRONTMATTER_HEAD_BYTES`].
+enum FrontmatterHead {
+    Missing,
+    Valid(PageSourceMeta),
+    Unreadable,
+}
+
+fn frontmatter_head(mut reader: impl BufRead) -> FrontmatterHead {
     let mut head = String::new();
     let mut started = false;
 
     loop {
         let mut line = String::new();
         let Ok(bytes) = reader.read_line(&mut line) else {
-            return (fallback, None, None);
+            return FrontmatterHead::Unreadable;
         };
         if bytes == 0 {
             break;
@@ -379,10 +404,10 @@ pub fn read_frontmatter_meta_head_with_fallback(
                 continue;
             }
             if line.trim_end() != "---" {
-                return (fallback, None, None);
+                return FrontmatterHead::Missing;
             }
             if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
-                return (fallback, None, None);
+                return FrontmatterHead::Unreadable;
             }
             started = true;
             head.push_str(&line);
@@ -391,18 +416,22 @@ pub fn read_frontmatter_meta_head_with_fallback(
 
         let is_closing = line.trim_end() == "---";
         if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
-            return (fallback, None, None);
+            return FrontmatterHead::Unreadable;
         }
         head.push_str(&line);
         if is_closing {
-            match parse_markdown(&head, "") {
-                ParsedMarkdown::Valid(meta, _) => return title_or_fallback(meta, fallback),
-                _ => return (fallback, None, None),
-            }
+            return match parse_markdown(&head, "") {
+                ParsedMarkdown::Valid(meta, _) => FrontmatterHead::Valid(meta),
+                _ => FrontmatterHead::Unreadable,
+            };
         }
     }
 
-    (fallback, None, None)
+    if started {
+        FrontmatterHead::Unreadable
+    } else {
+        FrontmatterHead::Missing
+    }
 }
 
 fn repo_path_string(path: &Path) -> String {
