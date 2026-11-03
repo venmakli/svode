@@ -168,11 +168,16 @@ async fn resolving_one_path_keeps_the_merge_open_and_unrelated_work_unstaged() {
         "plan.md",
         "Plan\n=======\n\nour line\ntheir line\n",
     );
-    // A passed path that still carries markers is refused without touching the index.
+    // A passed path that still carries markers is refused, by its reason and
+    // path, without touching the index or committing.
     let index = git(&f.local, &["ls-files", "--stage"]);
     let refused = f.resolve(&["plan.md", "data.json"]).await;
-    assert!(matches!(refused, Err(GitError::Conflict(_))), "{refused:?}");
+    assert!(
+        matches!(&refused, Err(GitError::ConflictMarkers { path }) if path == "data.json"),
+        "{refused:?}"
+    );
     assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);
+    assert_eq!(git(&f.local, &["rev-parse", "HEAD"]), head);
 
     let result = f
         .resolve(&["plan.md", "notes.md", "stray.md"])
@@ -306,7 +311,7 @@ async fn markers_of_the_path_marker_size_refuse_resolution_under_any_line_ending
                 );
                 let refused = f.resolve(&["plan.md"]).await;
                 assert!(
-                    matches!(refused, Err(GitError::Conflict(_))),
+                    matches!(&refused, Err(GitError::ConflictMarkers { path }) if path == "plan.md"),
                     "{size} {ending:?} {marker:?}: {refused:?}"
                 );
                 assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);
@@ -327,7 +332,7 @@ async fn crlf_file_with_default_markers_is_not_resolved() {
         );
         let refused = f.resolve(&["plan.md"]).await;
         assert!(
-            matches!(refused, Err(GitError::Conflict(_))),
+            matches!(&refused, Err(GitError::ConflictMarkers { path }) if path == "plan.md"),
             "{marker:?}: {refused:?}"
         );
         assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);

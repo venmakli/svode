@@ -164,7 +164,7 @@ impl From<GitError> for ToolError {
             | GitError::SyncFailed(_) => "GIT_COMMAND_FAILED",
             GitError::PathNotAccessible(_) => "PATH_NOT_ACCESSIBLE",
             GitError::RepositoryAccessDenied { .. } => "REPOSITORY_ACCESS_DENIED",
-            GitError::Conflict(_) => "GIT_CONFLICT",
+            GitError::Conflict(_) | GitError::ConflictMarkers { .. } => "GIT_CONFLICT",
             GitError::AuthRequired(_) => "GIT_AUTH_REQUIRED",
             GitError::NoRemote => "GIT_NO_REMOTE",
             _ => SVODE_ERROR,
@@ -444,6 +444,13 @@ mod tests {
                 RoutineServiceError::Git(GitError::GitNotFound).into(),
                 "GIT_NOT_FOUND",
             ),
+            (
+                GitError::ConflictMarkers {
+                    path: "plan.md".to_string(),
+                }
+                .into(),
+                "GIT_CONFLICT",
+            ),
         ];
         for (error, code) in cases {
             assert_eq!(error.code, code, "{}", error.message);
@@ -471,5 +478,13 @@ mod tests {
         );
         let missing: ToolError = PageError::FileNotFound("a.md".into()).into();
         assert_eq!(missing.message, "File not found: a.md");
+        let markers: ToolError = GitError::ConflictMarkers {
+            path: "plan.md".to_string(),
+        }
+        .into();
+        assert_eq!(
+            markers.message,
+            "Git conflict: Conflict markers remain in plan.md"
+        );
     }
 }

@@ -275,6 +275,7 @@ impl From<svode_core::git::GitError> for AppError {
             },
             GitError::SyncFailed(failure) => Self::GitSyncFailed(failure),
             GitError::Conflict(message) => Self::GitConflict(message),
+            GitError::ConflictMarkers { path } => Self::GitConflictMarkers { path },
             GitError::AuthRequired(message) => Self::GitAuthRequired(message),
             GitError::NoRemote => Self::GitNoRemote,
             GitError::RemoteNotEmpty => Self::GitRemoteNotEmpty,
@@ -536,6 +537,9 @@ pub enum AppError {
     #[error("Git conflict: {0}")]
     GitConflict(String),
 
+    #[error("Git conflict: Conflict markers remain in {path}")]
+    GitConflictMarkers { path: String },
+
     #[error("Git auth required: {0}")]
     GitAuthRequired(String),
 
@@ -650,7 +654,7 @@ impl AppError {
             AppError::GitStatusTimedOut { .. } => "git_status_timed_out",
             AppError::GitSaveFailed { .. } => "git_save_failed",
             AppError::GitSyncFailed(_) => "git_sync_failed",
-            AppError::GitConflict(_) => "git_conflict",
+            AppError::GitConflict(_) | AppError::GitConflictMarkers { .. } => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
             AppError::RepositoryAccessDenied { .. } => "repository_access_denied",
             AppError::GitNoRemote => "git_no_remote",
@@ -727,6 +731,9 @@ impl Serialize for AppError {
             }
             AppError::GitBranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
+            }
+            AppError::GitConflictMarkers { path } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "reason": "markers", "path": path }).serialize(serializer)
             }
             AppError::GitUnsupported { version } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "version": version, "minimumVersion": svode_core::git::version::GitVersion::MINIMUM.to_string() }).serialize(serializer)
@@ -1120,6 +1127,26 @@ mod tests {
             assert_eq!(value["repository"], "Research");
             assert_eq!(value["cause"], "hook");
         }
+    }
+
+    #[test]
+    fn markers_refusal_carries_its_reason_and_path() {
+        let core = svode_core::git::GitError::ConflictMarkers {
+            path: "pages/plan.md".into(),
+        };
+        let expected = serde_json::to_value(&core).unwrap();
+        let value = serde_json::to_value(AppError::from(core)).unwrap();
+
+        assert_eq!(value, expected);
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "git_conflict",
+                "message": "Git conflict: Conflict markers remain in pages/plan.md",
+                "reason": "markers",
+                "path": "pages/plan.md",
+            })
+        );
     }
 
     #[test]

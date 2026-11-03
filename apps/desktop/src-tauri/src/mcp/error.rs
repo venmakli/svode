@@ -27,7 +27,7 @@ impl From<AppError> for ToolError {
             AppError::PathNotAccessible(_) => "PATH_NOT_ACCESSIBLE",
             AppError::GitNotFound => "GIT_NOT_FOUND",
             AppError::GitCommandFailed(_) | AppError::GitSyncFailed(_) => "GIT_COMMAND_FAILED",
-            AppError::GitConflict(_) => "GIT_CONFLICT",
+            AppError::GitConflict(_) | AppError::GitConflictMarkers { .. } => "GIT_CONFLICT",
             AppError::GitAuthRequired(_) => "GIT_AUTH_REQUIRED",
             AppError::RepositoryAccessDenied { .. } => "REPOSITORY_ACCESS_DENIED",
             AppError::GitNoRemote => "GIT_NO_REMOTE",

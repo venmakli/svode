@@ -99,6 +99,32 @@ test("a pull blocked by local files names every file and the recovery", async ()
   }
 });
 
+test("a resolution refused for remaining markers is named in the interface language", async () => {
+  const original = getLocale();
+  const refusal = {
+    kind: "git_conflict",
+    message: "Git conflict: Conflict markers remain in pages/Plan.md",
+    reason: "markers",
+    path: "pages/Plan.md",
+  };
+  try {
+    await setLocale("ru", { reload: false });
+    expect(gitSyncErrorMessage(refusal)).toBe(
+      "В файле остались строки маркеров конфликта. Уберите их, чтобы разрешить конфликт.",
+    );
+    await setLocale("en", { reload: false });
+    expect(gitSyncErrorMessage(refusal)).toBe(
+      "Conflict marker lines remain in the file. Remove them to resolve the conflict.",
+    );
+    // Without its reason the conflict keeps the existing text.
+    expect(gitSyncErrorMessage({ ...refusal, reason: undefined })).toBe(
+      refusal.message,
+    );
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});
+
 test("a failed sync step names the repository, the stage and the cause without Git output", async () => {
   const original = getLocale();
   try {

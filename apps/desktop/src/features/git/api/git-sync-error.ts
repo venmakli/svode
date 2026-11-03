@@ -1,3 +1,4 @@
+import { toGitConflictMarkersDto } from "@/platform/git/conflict-errors";
 import {
   toGitSyncFailureDto,
   type GitFailureCauseDto,
@@ -107,6 +108,7 @@ export function gitSyncErrorMessage(error: unknown): string {
       }[publication.reason]();
     return m.git_sync_publication_blocked_status();
   }
+  if (toGitConflictMarkersDto(error)) return m.git_resolve_page_markers();
   const pullBlock = toGitPullBlockDto(error);
   if (pullBlock)
     return m.git_sync_pull_blocked({ files: pullBlock.files.join(", ") });

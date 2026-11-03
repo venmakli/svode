@@ -999,14 +999,23 @@ test("an autosave of a Page outside the conflict resolves nothing", async () => 
   }
 });
 
-const markersRefusal = "Git conflict: Conflict markers remain in the Page";
+/** The refusal `git_resolve_continue` sends for a path with marker lines left. */
+const markersRefusal = (path: string) => ({
+  kind: "git_conflict",
+  message: `Git conflict: Conflict markers remain in ${path}`,
+  reason: "markers",
+  path,
+});
 
-test("a refused resolution after an autosave is named at the editor and the file stays written", async () => {
+test("a refused resolution after an autosave is named at the editor in the interface language and the file stays written", async () => {
   const path = "pages/resolution-refused.md";
+  const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+  const locale = getLocale();
+  await setLocale("ru", { reload: false });
   const view = await harness(path, "Status: ok\n\nMiddle\n");
   try {
     await view.conflict([path]);
-    view.disk.resolveError = markersRefusal;
+    view.disk.resolveError = markersRefusal(path);
     appendToBlock(view.editor, "Middle", " edited");
     const shown = await toastsResolving(() => view.save());
     expect(view.writes.length).toBe(1);
@@ -1014,15 +1023,20 @@ test("a refused resolution after an autosave is named at the editor and the file
     expect(view.resolves).toEqual([[path]]);
     // Saving is not blocked: the refusal is not a failed write.
     expect(view.writeBlocks).toEqual([]);
+    const reason =
+      "В файле остались строки маркеров конфликта. Уберите их, чтобы разрешить конфликт.";
     expect(shown).toEqual([
       {
         type: "error",
-        title: m.git_resolve_page_failed({ page: "Plan" }),
-        description: markersRefusal,
+        title: "Не удалось разрешить конфликт в «Plan»",
+        description: reason,
       },
     ]);
+    // The sync error of the Dialog names the same reason.
+    expect(Object.values(useGitStore.getState().syncError)).toEqual([reason]);
   } finally {
     await view.cleanup();
+    await setLocale(locale, { reload: false });
   }
 });
 
@@ -1033,7 +1047,7 @@ test("⌘S of a conflicted Page goes the same way: it writes, resolves the path,
     await view.conflict([path, "pages/other.md"]);
     appendToBlock(view.editor, "Middle", " chosen");
     useEditorStore.getState().markUnsaved(SPACE, path);
-    view.disk.resolveError = markersRefusal;
+    view.disk.resolveError = markersRefusal(path);
     let refusal: GitCommitRefusal | null = null;
     const refused = await toastsResolving(async () => {
       refusal = await view.commitPage("notify");
@@ -1047,7 +1061,7 @@ test("⌘S of a conflicted Page goes the same way: it writes, resolves the path,
       {
         type: "error",
         title: m.git_resolve_page_failed({ page: "Plan" }),
-        description: markersRefusal,
+        description: m.git_resolve_page_markers(),
       },
     ]);
 

@@ -112,6 +112,10 @@ pub enum GitError {
     StatusTimedOut { repository: String, seconds: u64 },
     #[error("Git conflict: {0}")]
     Conflict(String),
+    /// Resolving the path was refused: marker lines of its size remain in
+    /// the file (1.F, item 3). `path` is relative to the repository.
+    #[error("Git conflict: Conflict markers remain in {path}")]
+    ConflictMarkers { path: String },
     #[error("Git auth required: {0}")]
     AuthRequired(String),
     #[error("Git no remote configured")]
@@ -145,7 +149,7 @@ impl GitError {
             GitError::SaveFailed { .. } => "git_save_failed",
             GitError::SyncFailed(_) => "git_sync_failed",
             GitError::StatusTimedOut { .. } => "git_status_timed_out",
-            GitError::Conflict(_) => "git_conflict",
+            GitError::Conflict(_) | GitError::ConflictMarkers { .. } => "git_conflict",
             GitError::AuthRequired(_) => "git_auth_required",
             GitError::NoRemote => "git_no_remote",
             GitError::RemoteNotEmpty => "git_remote_not_empty",
@@ -231,6 +235,13 @@ impl serde::Serialize for GitError {
             GitError::SourceBusy { path } => {
                 serde_json::json!({ "kind": self.kind(), "path": path }).serialize(serializer)
             }
+            GitError::ConflictMarkers { path } => serde_json::json!({
+                "kind": self.kind(),
+                "message": self.to_string(),
+                "reason": "markers",
+                "path": path,
+            })
+            .serialize(serializer),
             GitError::GitUnsupported { version } => serde_json::json!({
                 "kind": self.kind(),
                 "message": self.to_string(),
@@ -378,6 +389,14 @@ mod tests {
         assert_eq!(denied["repositoryId"], "repo-parent");
         assert_eq!(denied["status"], "unknown");
         assert_eq!(denied["reason"], "mutation_plan_changed");
+
+        let markers = serde_json::to_value(GitError::ConflictMarkers {
+            path: "pages/plan.md".to_string(),
+        })
+        .unwrap();
+        assert_eq!(markers["kind"], "git_conflict");
+        assert_eq!(markers["reason"], "markers");
+        assert_eq!(markers["path"], "pages/plan.md");
 
         // Everything else keeps the plain message of the existing contract.
         assert_eq!(

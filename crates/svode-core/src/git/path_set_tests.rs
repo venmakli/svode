@@ -513,7 +513,7 @@ async fn continuing_a_merge_beyond_the_command_line_limit_commits_every_resolved
     // A marker left in one file of the set refuses the whole set.
     let refusal = resolve_and_continue(&cli, &local, &files).await;
     assert!(
-        matches!(&refusal, Err(GitError::Conflict(message)) if message.contains(last.as_str())),
+        matches!(&refusal, Err(GitError::ConflictMarkers { path }) if path == last),
         "{refusal:?}"
     );
     let unmerged = git(&cli, &local, &["ls-files", "--unmerged", "-z"]).await;

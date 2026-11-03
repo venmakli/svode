@@ -936,6 +936,7 @@
   "git_sync_conflict": "Sync conflict in {count} files",
   "git_resolve_conflicts_remaining": "Conflict in “{page}” resolved. Files still in conflict: {count}",
   "git_resolve_page_failed": "Could not resolve the conflict in “{page}”",
+  "git_resolve_page_markers": "Conflict marker lines remain in the file. Remove them to resolve the conflict.",
   "git_sync_auth_required": "Sign in to the Git remote to sync.",
   "git_sync_failed": "Failed to sync",
   "git_sync_stop_conflict_title": "Sync stopped by a conflict",

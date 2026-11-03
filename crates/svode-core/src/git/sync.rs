@@ -1126,9 +1126,7 @@ pub async fn resolve_and_continue(
             .copied()
             .unwrap_or(super::markers::DEFAULT_MARKER_SIZE);
         if super::markers::has_marker_lines(content, size) {
-            return Err(GitError::Conflict(format!(
-                "Conflict markers remain in {path}"
-            )));
+            return Err(GitError::ConflictMarkers { path: path.clone() });
         }
     }
     if !paths.is_empty() {
