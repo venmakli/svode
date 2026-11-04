@@ -45,13 +45,7 @@ pub use error::AppError;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(logging::env_filter(
-            std::env::var(tracing_subscriber::EnvFilter::DEFAULT_ENV)
-                .ok()
-                .as_deref(),
-        ))
-        .init();
+    logging::init();
 
     tracing::info!("Starting Svode desktop app");
 
@@ -127,6 +121,9 @@ pub fn run() {
             app_windows::handle_window_event(app, window, event);
         })
         .setup(|app| {
+            if let Ok(dir) = app.path().app_log_dir() {
+                logging::open_log_files(&dir);
+            }
             app_windows::build_main_window(app.handle())?;
             let routine_stores = Arc::new(routines::RoutineStoreState::new());
             app.manage(routine_stores.clone());

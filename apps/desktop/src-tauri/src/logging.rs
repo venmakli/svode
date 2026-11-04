@@ -1,4 +1,20 @@
+use std::io;
+use std::path::Path;
+use std::sync::OnceLock;
+
+use tracing_appender::rolling::{RollingFileAppender, RollingWriter, Rotation};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::writer::{EitherWriter, MakeWriter};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+const LOG_FILE_PREFIX: &str = "svode";
+const LOG_FILE_SUFFIX: &str = "log";
+/// Daily files of the last week stay in the log directory.
+const KEPT_LOG_FILES: usize = 7;
+
+/// The daily log files, opened once the app knows its log directory.
+static LOG_FILES: OnceLock<RollingFileAppender> = OnceLock::new();
 
 /// Lib targets of the workspace crates Desktop links as normal dependencies.
 /// Their `info` and above reach the default log; a test keeps the list in
@@ -27,10 +43,79 @@ fn default_directives() -> String {
 /// The Desktop log filter. A valid `RUST_LOG` replaces it entirely; an unset
 /// or invalid one gives Desktop `debug`, workspace crates `info` and no
 /// third-party targets.
-pub(crate) fn env_filter(rust_log: Option<&str>) -> EnvFilter {
+fn env_filter(rust_log: Option<&str>) -> EnvFilter {
     rust_log
         .and_then(|directives| EnvFilter::try_new(directives).ok())
         .unwrap_or_else(|| EnvFilter::new(default_directives()))
+}
+
+/// Desktop events go to stdout and, once [`open_log_files`] succeeds, to the
+/// log files too: a release build on Windows has no console, so a file is the
+/// only trace a crash leaves. Files are written without buffering, so the
+/// last lines before an abort are kept.
+pub(crate) fn init() {
+    let rust_log = std::env::var(EnvFilter::DEFAULT_ENV).ok();
+    tracing_subscriber::registry()
+        .with(env_filter(rust_log.as_deref()))
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(LogFiles),
+        )
+        .init();
+    log_panics();
+}
+
+/// Start writing the log into daily files of `dir`. A failure leaves the
+/// log on stdout alone.
+pub(crate) fn open_log_files(dir: &Path) {
+    match daily_log_files(dir) {
+        Ok(files) => {
+            if LOG_FILES.set(files).is_ok() {
+                tracing::info!(dir = %dir.display(), "writing the log to files");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(dir = %dir.display(), %error, "the log files did not open");
+        }
+    }
+}
+
+fn daily_log_files(
+    dir: &Path,
+) -> Result<RollingFileAppender, tracing_appender::rolling::InitError> {
+    RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix(LOG_FILE_PREFIX)
+        .filename_suffix(LOG_FILE_SUFFIX)
+        .max_log_files(KEPT_LOG_FILES)
+        .build(dir)
+}
+
+/// Panics reach the log with their backtrace before the default hook prints
+/// them.
+fn log_panics() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!(target: "svode_lib::panic", "{info}\n{backtrace}");
+        default_hook(info);
+    }));
+}
+
+/// The writer of the file layer: the log files once open, nothing before.
+struct LogFiles;
+
+impl<'a> MakeWriter<'a> for LogFiles {
+    type Writer = EitherWriter<RollingWriter<'a>, io::Sink>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        match LOG_FILES.get() {
+            Some(files) => EitherWriter::A(files.make_writer()),
+            None => EitherWriter::B(io::sink()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +197,29 @@ mod tests {
                     .unwrap_or_else(|| krate["package"]["name"].as_str().unwrap().replace('-', "_"))
             })
             .collect()
+    }
+
+    #[test]
+    fn log_files_are_daily_svode_logs_in_a_created_log_directory() {
+        use std::io::Write;
+
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("logs");
+        let files = daily_log_files(&dir).unwrap();
+        files.make_writer().write_all(b"line\n").unwrap();
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names.len(), 1, "{names:?}");
+        assert!(
+            names[0].starts_with("svode.") && names[0].ends_with(".log"),
+            "{names:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(&names[0])).unwrap(),
+            "line\n"
+        );
     }
 
     #[test]
