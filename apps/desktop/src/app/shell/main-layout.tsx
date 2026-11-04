@@ -7,7 +7,6 @@ import type {
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { PanelImperativeHandle } from "react-resizable-panels";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   SidebarProvider,
   SidebarInset,
@@ -124,9 +123,7 @@ interface DesktopResizableShellProps {
 export function MainLayout({ view = "space" }: { view?: ShellView }) {
   return (
     <ShellViewContext.Provider value={view}>
-      <TooltipProvider delayDuration={300}>
-        <MainLayoutRuntime view={view} />
-      </TooltipProvider>
+      <MainLayoutRuntime view={view} />
     </ShellViewContext.Provider>
   );
 }

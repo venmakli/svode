@@ -2,10 +2,12 @@ import { expect, test } from "bun:test";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, type ReactNode } from "react";
+import { act } from "react";
 import type { Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
+// "Default agent" of the settings window, rendered through the app
+// composition with its own tooltip provider and none of the test's.
 if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
   test("default agent row DOM", () => {
     const child = spawnSync(
@@ -32,10 +34,22 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   const { createRoot } = await import("react-dom/client");
 
-  const spaceState: { activeRootPath: string | null } = {
+  // The sidebar of the settings window asks for the viewport width.
+  dom.window.matchMedia = (() => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  })) as unknown as typeof window.matchMedia;
+  const spaceState: {
+    activeRootPath: string | null;
+    spaces: { path: string }[];
+  } = {
     activeRootPath: "/project",
+    spaces: [],
   };
+  const space = await import("@/features/space");
   mock.module("@/features/space", () => ({
+    ...space,
     useSpace: (selector?: (state: typeof spaceState) => unknown) =>
       selector ? selector(spaceState) : spaceState,
   }));
@@ -46,7 +60,7 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
     { agent: "custom-mine", name: "Mine" },
   ];
   const draftKey = { agent: "codex", namespace: "native", sessionId: "d1" };
-  /** Calls of the commands the row uses, with their arguments. */
+  /** Calls of the commands, with their arguments. */
   const calls: { command: string; payload: Record<string, unknown> }[] = [];
   const channels = new Map<string, { id: number; index: number }>();
   let stored: unknown = null;
@@ -57,6 +71,33 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
     const payload = (args ?? {}) as Record<string, unknown>;
     calls.push({ command, payload });
     switch (command) {
+      case "git_check_availability":
+        return {
+          git: true,
+          gitLfs: false,
+          gitVersion: "2.51.0",
+          gitLfsVersion: null,
+          gitVersionSupported: true,
+          gitMinimumVersion: "2.31.0",
+        };
+      case "get_git_identity":
+        return {
+          global: { name: "Alice", email: "alice@example.test" },
+          source: "global",
+          fingerprint: "v1",
+        };
+      case "get_app_preferences":
+        return { language: "en", theme: "light", themeNeedsRecovery: false };
+      case "agent_setup_list":
+        return agents.slice(0, 2).map(({ agent }) => agentSetup(agent));
+      case "agent_custom_list":
+      case "speech_dictated_texts":
+      case "speech_model_licenses":
+        return [];
+      case "plugin:app|version":
+        return "0.0.9";
+      case "mcp_get_status":
+        return mcpStatus();
       case "agent_adapters_list_identities":
         return agents.map(({ agent, name }) => ({
           id: agent,
@@ -110,8 +151,14 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
   const m = await import("@/paraglide/messages.js");
   const { setLocale } = await import("@/paraglide/runtime");
   setLocale("en", { reload: false });
-  const { TooltipProvider } = await import("@/components/ui/tooltip");
-  const { DefaultAgentRow } = await import("./default-agent-row");
+  const { useShellStore } = await import("@/app/shell/model");
+  const { AppProviders } = await import("./app-providers");
+  const {
+    RouterProvider,
+    createMemoryHistory,
+    createRootRoute,
+    createRouter,
+  } = await import("@tanstack/react-router");
 
   const mounted: Root[] = [];
   function rowTest(name: string, fn: () => Promise<void>) {
@@ -124,6 +171,7 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
       try {
         await fn();
       } finally {
+        await act(async () => useShellStore.getState().closeSettings());
         for (const root of mounted.splice(0)) {
           await act(async () => root.unmount());
         }
@@ -135,7 +183,7 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
   rowTest(
     "a chosen agent and value are stored at once while the popover stays open, and the agent's draft session runs in the project root until it closes",
     async () => {
-      await mount(<DefaultAgentRow onSignIn={() => undefined} />);
+      await mount();
       expect(trigger().textContent).toBe(m.settings_default_agent_none());
       // Nothing about the agents is read before the popover opens.
       expect(
@@ -219,7 +267,7 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
           { setting: "mode", value: "agent" },
         ],
       };
-      await mount(<DefaultAgentRow onSignIn={() => undefined} />);
+      await mount();
       await click(trigger());
       expect(lastCall("agent_runtime_hold_draft")).toEqual({
         agent: "codex",
@@ -250,7 +298,7 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
           { setting: "legacy_toggle", value: "on" },
         ],
       };
-      await mount(<DefaultAgentRow onSignIn={() => undefined} />);
+      await mount();
       await click(trigger());
       // Only the values the agent offers apply; nothing is written.
       expect(
@@ -303,7 +351,7 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
           agentVersion: "0.163.0",
         },
       ];
-      await mount(<DefaultAgentRow onSignIn={() => undefined} />);
+      await mount();
       expect(trigger().textContent?.includes("GPT-5.6 Luna")).toBe(true);
       expect(trigger().textContent?.includes("High")).toBe(true);
 
@@ -334,6 +382,48 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
       ).toBe(false);
     },
   );
+
+  rowTest(
+    "with two or more agents the settings window opens the agent choice, and an agent tab without a label names its agent on hover",
+    async () => {
+      await mount();
+      await click(trigger());
+      const tabs = agentTabs();
+      expect(tabs.length).toBe(3);
+      // The tab of the chosen agent carries its label; the others only an icon.
+      const unlabeled = tabs.find(
+        (tab) => tab.getAttribute("aria-selected") !== "true",
+      );
+      if (!unlabeled) throw new Error("no tab without a label");
+      const name = unlabeled.getAttribute("aria-label");
+      expect(name !== null && unlabeled.textContent?.includes(name) !== true).toBe(
+        true,
+      );
+      expect(tooltip()).toBe(null);
+
+      await act(async () => {
+        unlabeled.parentElement!.dispatchEvent(
+          new window.PointerEvent("pointermove", { bubbles: true }),
+        );
+      });
+      // The app's tooltips show after 300 ms.
+      await wait(150);
+      expect(tooltip()).toBe(null);
+      await wait(250);
+      expect(tooltip()?.textContent?.includes(name!)).toBe(true);
+      expect(popover() !== null).toBe(true);
+    },
+  );
+
+  async function wait(ms: number) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+  }
+
+  function tooltip() {
+    return document.querySelector<HTMLElement>('[data-slot="tooltip-content"]');
+  }
 
   function staleNotes() {
     return Array.from(popover()?.querySelectorAll("p") ?? []).filter(
@@ -446,13 +536,23 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
     ).__TAURI_INTERNALS__.runCallback(id, data);
   }
 
-  async function mount(element: ReactNode) {
+  /** The app with its settings window open on the agents. */
+  async function mount() {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
     mounted.push(root);
+    // The app's root route without its screens.
+    const router = createRouter({
+      routeTree: createRootRoute({ component: AppProviders }),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
     await act(async () => {
-      root.render(<TooltipProvider>{element}</TooltipProvider>);
+      root.render(<RouterProvider router={router} />);
+    });
+    await settle();
+    await act(async () => {
+      useShellStore.getState().openAppSettings("providers");
     });
     await settle();
   }
@@ -588,4 +688,61 @@ function installDomGlobals(dom: JSDOM) {
       writable: true,
     });
   }
+}
+
+/** An agent the device found, ready and turned on. */
+function agentSetup(agent: string) {
+  return {
+    agent,
+    enabled: true,
+    verdict: { state: "supported" },
+    installHint: `https://example.test/${agent}`,
+    canSignIn: true,
+    cli: {
+      adapter: agent,
+      status: "ready",
+      executablePath: `/Users/test/.bun/bin/${agent}`,
+      version: "1.0.0",
+      authenticated: true,
+      code: null,
+      message: null,
+    },
+    cliRange: { minimum: "1.0.0", testedUpTo: "1.0.0" },
+    cliVersion: { state: "supported" },
+    adapter: {
+      package: `@agentclientprotocol/${agent}-acp`,
+      pinnedVersion: "1.0.0",
+      install: { state: "installed", version: "1.0.0" },
+      requiredNodeMajor: 22,
+      node: { state: "ready", path: "/usr/local/bin/node", version: "22.23.1" },
+    },
+  };
+}
+
+/** Svode tools installed for none of the agents. */
+function mcpStatus() {
+  const command = "/Users/test/.svode/bin/svode-mcp";
+  return {
+    server: {
+      status: "installed",
+      command,
+      version: "0.0.9",
+      runtime: { kind: "desktop", version: "0.0.9" },
+    },
+    clients: [],
+    sharedSkill: {
+      path: "/Users/test/.agents/skills/svode",
+      state: "absent",
+      readers: [],
+      requiredBy: [],
+    },
+    manualConfig: {
+      name: "svode",
+      transport: "stdio",
+      command,
+      args: [],
+      env: {},
+    },
+    doctor: { ok: true, messages: [], errors: [], bridgeCompatible: true },
+  };
 }
