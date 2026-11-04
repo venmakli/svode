@@ -297,3 +297,46 @@ jobs:
           if (-not (Test-Path $speech)) { throw "the installed package has no svode-speech.exe" }
           & target\release\examples\installed.exe $speech $env:SVODE_SPEECH_TEST_MODEL
           if ($LASTEXITCODE -ne 0) { throw "the installed speech process check failed" }
+
+      # The installed app launched into a project that its registry names as
+      # the last view, as a user reopens Svode: it must still run a minute
+      # later and write its log file. A release build on Windows once
+      # overflowed the 1 MiB main thread stack on the first IPC calls of the
+      # opened project (tauri-apps/tauri#14167).
+      - name: The installed app opens a project and keeps running
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $project = Join-Path $env:USERPROFILE 'Documents\smoke-project'
+          New-Item -ItemType Directory -Force "$project\.svode", "$project\notes" | Out-Null
+          [IO.File]::WriteAllText("$project\.svode\config.json", (@{ name = 'smoke-project'; icon = ''; description = ''; spaces = @() } | ConvertTo-Json), $utf8)
+          [IO.File]::WriteAllText("$project\README.md", "# smoke-project`n", $utf8)
+          [IO.File]::WriteAllText("$project\notes\Note.md", "# Note`n", $utf8)
+          git -C $project init -q -b main
+          git -C $project -c user.name=smoke -c user.email=smoke@example.com add -A
+          git -C $project -c user.name=smoke -c user.email=smoke@example.com commit -q -m init
+          $configDir = Join-Path $env:APPDATA 'app.svode.desktop'
+          New-Item -ItemType Directory -Force $configDir | Out-Null
+          $id = '01kxsmoke000000000000000000'
+          $registry = [ordered]@{
+            spaces = @([ordered]@{ id = $id; lastOpened = '2026-01-01T00:00:00+00:00'; path = $project })
+            lastActive = $id
+            lastView = [ordered]@{ kind = 'project'; projectId = $id }
+          }
+          [IO.File]::WriteAllText("$configDir\spaces.json", ($registry | ConvertTo-Json -Depth 5), $utf8)
+
+          $exe = Join-Path $env:RUNNER_TEMP 'Svode\svode-desktop.exe'
+          $out = Join-Path $env:RUNNER_TEMP 'smoke'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $process = Start-Process -FilePath $exe -PassThru `
+            -RedirectStandardOutput "$out\stdout.log" -RedirectStandardError "$out\stderr.log"
+          $exited = $process.WaitForExit(60000)
+          if (-not $exited) { Stop-Process -Id $process.Id -Force }
+          Start-Sleep -Seconds 2
+          $logs = Join-Path $env:LOCALAPPDATA 'app.svode.desktop\logs'
+          $log = Get-ChildItem $logs -Filter 'svode.*.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+          '--- stderr ---'; Get-Content "$out\stderr.log" -Tail 40 -ErrorAction SilentlyContinue
+          '--- log file ---'; if ($log) { Get-Content $log.FullName -Tail 40 } else { "no log file in $logs" }
+          if ($exited) { throw ("the app exited within a minute of opening the project, code 0x{0:X8}" -f $process.ExitCode) }
+          if (-not $log) { throw "the app wrote no log file into $logs" }
