@@ -1070,7 +1070,10 @@ mod tests {
                 if !name.ends_with(".rs") || name.ends_with("tests.rs") {
                     continue;
                 }
-                let source = std::fs::read_to_string(&path).unwrap();
+                // A Windows checkout may have CRLF line endings.
+                let source = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("\r\n", "\n");
                 // Inline test modules sit after the production code.
                 let production = source.split("#[cfg(test)]\nmod tests {").next().unwrap();
                 let starts_git = production.lines().any(|line| {
