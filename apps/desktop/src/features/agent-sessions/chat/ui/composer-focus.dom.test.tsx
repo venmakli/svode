@@ -110,6 +110,8 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   const prompts: unknown[] = [];
   /** The request mark each prompt carried (Stage 11 1.10). */
   const marks: unknown[] = [];
+  /** The answers given to requests of the agent. */
+  const answers: unknown[] = [];
   /** The activity channel of each session and its next message index. */
   const channels = new Map<string, { id: number; index: number }>();
 
@@ -157,8 +159,12 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
         };
       case "agent_adapters_list_identities":
         return [{ id: "codex", displayName: "Codex" }];
+      case "agent_runtime_answer":
+        answers.push(payload.answer);
+        return null;
       case "agent_runtime_unsubscribe":
       case "agent_runtime_release_draft":
+      case "agent_runtime_cancel":
         return null;
     }
     if (command.startsWith("plugin:")) return 1;
@@ -187,6 +193,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
       writer = "acp";
       prompts.length = 0;
       marks.length = 0;
+      answers.length = 0;
       try {
         await fn();
       } finally {
@@ -263,6 +270,16 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     await settle();
   }
 
+  /** Typing one key after another, as `beforeinput` of each character. */
+  async function typeKeys(text: string) {
+    for (const character of text) await type(character);
+  }
+
+  /** The text of the field. */
+  function fieldText() {
+    return field().textContent?.replace(/\uFEFF/g, "") ?? "";
+  }
+
   async function pressEnter() {
     await act(async () => {
       field().dispatchEvent(
@@ -323,8 +340,45 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
 
   function deferred() {
     let resolve!: (turnId: string) => void;
-    const promise = new Promise<string>((done) => (resolve = done));
-    return { promise, resolve };
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<string>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  }
+
+  const REQUEST = {
+    id: "perm-1",
+    kind: "permission",
+    title: "Run this command?",
+    toolCallId: null,
+    options: [
+      { id: "allow", label: "Allow", kind: "allow_once" },
+      { id: "reject", label: "Reject", kind: "reject_once" },
+    ],
+    fields: [],
+    state: "pending",
+  };
+
+  /** The agent's request arrives or closes in the given state. */
+  function pendingChange(state: string, sessionId = "s1") {
+    const channel = channels.get(sessionId)!;
+    const index = channel.index++;
+    runCallback(channel.id, {
+      index,
+      message: {
+        type: "delta",
+        value: { seq: index, change: "pending", value: { ...REQUEST, state } },
+      },
+    });
+  }
+
+  function button(label: string) {
+    return Array.from(document.querySelectorAll("button")).find(
+      (candidate) =>
+        candidate.textContent === label || candidate.getAttribute("aria-label") === label,
+    )!;
   }
 
   const chat = () => <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />;
@@ -337,7 +391,6 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     promptAnswer = () => send.promise;
     await pressEnter();
     // Sending: the text stays and takes no edits.
-    expect(field().getAttribute("contenteditable")).toBe("false");
     expect(field().textContent).toBe("Hello");
     await act(async () => send.resolve("turn-1"));
     await settle();
@@ -441,46 +494,48 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(await fieldFocused()).toBe(true);
   });
 
+  /** A host showing a new session draft, then the session it creates. */
+  function DraftHost() {
+    const [started, setStarted] = useState<string | null>(null);
+    const [shown, setShown] = useState(false);
+    // The peek around the session takes focus when the draft's field
+    // goes, as its focus trap does.
+    const trap = (element: HTMLDivElement | null) => {
+      if (!element) return;
+      new window.MutationObserver((mutations) => {
+        if (
+          document.activeElement === document.body &&
+          mutations.some((mutation) => mutation.removedNodes.length > 0)
+        ) {
+          element.focus();
+        }
+      }).observe(element, { childList: true, subtree: true });
+    };
+    return (
+      <div ref={trap} tabIndex={-1}>
+        {started === null ? (
+          <NewSessionDraft
+            spacePath="/project"
+            onStarted={(session) => {
+              setStarted(session.sessionId);
+              // The host shows the created session once it has it.
+              setTimeout(() => setShown(true), 10);
+            }}
+            onOpenAgentSettings={() => undefined}
+          />
+        ) : shown ? (
+          <SessionChat
+            sessionId={started}
+            session={{ ...key, sessionId: "s2" }}
+            scope={{ kind: "project", name: "Project", icon: null }}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   focusTest("the first send of a new session draft leaves focus in the created session's field", async () => {
-    function Host() {
-      const [started, setStarted] = useState<string | null>(null);
-      const [shown, setShown] = useState(false);
-      // The peek around the session takes focus when the draft's field
-      // goes, as its focus trap does.
-      const trap = (element: HTMLDivElement | null) => {
-        if (!element) return;
-        new window.MutationObserver((mutations) => {
-          if (
-            document.activeElement === document.body &&
-            mutations.some((mutation) => mutation.removedNodes.length > 0)
-          ) {
-            element.focus();
-          }
-        }).observe(element, { childList: true, subtree: true });
-      };
-      return (
-        <div ref={trap} tabIndex={-1}>
-          {started === null ? (
-            <NewSessionDraft
-              spacePath="/project"
-              onStarted={(session) => {
-                setStarted(session.sessionId);
-                // The host shows the created session once it has it.
-                setTimeout(() => setShown(true), 10);
-              }}
-              onOpenAgentSettings={() => undefined}
-            />
-          ) : shown ? (
-            <SessionChat
-              sessionId={started}
-              session={{ ...key, sessionId: "s2" }}
-              scope={{ kind: "project", name: "Project", icon: null }}
-            />
-          ) : null}
-        </div>
-      );
-    }
-    await mount(<Host />);
+    await mount(<DraftHost />);
     await focusField();
     await type("Start");
     await pressEnter();
@@ -647,6 +702,267 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(stored()).toBe("next more");
     expect(field().textContent).toBe("next more");
   });
+
+  focusTest("while sending the field keeps focus and the text being sent takes no edits", async () => {
+    await mount(chat());
+    await focusField();
+    // Typed, so undo has something to take back.
+    await type("Hello");
+    const focusOuts: Event[] = [];
+    field().addEventListener("focusout", (event) => focusOuts.push(event));
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    expect(field().getAttribute("contenteditable")).toBe("true");
+    expect(field().contains(document.activeElement)).toBe(true);
+    await typeKeys("ab");
+    await act(async () => {
+      field().dispatchEvent(
+        new window.InputEvent("beforeinput", {
+          inputType: "deleteContentBackward",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      field().dispatchEvent(
+        new window.InputEvent("beforeinput", {
+          inputType: "insertLineBreak",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      const paste = new window.Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", {
+        value: {
+          types: ["text/plain"],
+          files: [],
+          items: [],
+          getData: (type: string) => (type === "text/plain" ? "pasted" : ""),
+        },
+      });
+      field().dispatchEvent(paste);
+      const drop = new window.MouseEvent("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(drop, "dataTransfer", {
+        value: {
+          types: ["text/plain"],
+          files: [],
+          items: [],
+          dropEffect: "none",
+          getData: (type: string) => (type === "text/plain" ? "dropped" : ""),
+        },
+      });
+      field().dispatchEvent(drop);
+      for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+        field().dispatchEvent(
+          new window.KeyboardEvent("keydown", {
+            key: "z",
+            bubbles: true,
+            cancelable: true,
+            ...modifier,
+          }),
+        );
+      }
+    });
+    await settle();
+    // Enter does not send again.
+    await pressEnter();
+    expect(fieldText()).toBe("Hello");
+    expect(stored()).toBe("Hello");
+    expect(prompts.length).toBe(1);
+    expect(focusOuts.length).toBe(0);
+    expect(field().contains(document.activeElement)).toBe(true);
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    expect(stored()).toBe("ab");
+    expect(fieldText()).toBe("ab");
+  });
+
+  focusTest("Cyrillic and Latin typed while sending stand in the field in typing order once the send is accepted", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    await focusField();
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await typeKeys("черновик draft");
+    expect(fieldText()).toBe("Hello");
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    expect(prompts).toEqual([[{ type: "text", text: "Hello" }]]);
+    expect(stored()).toBe("черновик draft");
+    expect(fieldText()).toBe("черновик draft");
+    expect(await fieldFocused()).toBe(true);
+    expect(await caret()).toBe("черновик draft".length);
+    await type("!");
+    expect(stored()).toBe("черновик draft!");
+  });
+
+  focusTest("text typed while sending stands after the text of a refused send, caret at the end", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    await focusField();
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await typeKeys(" ещё more");
+    await act(async () =>
+      send.reject({ kind: "agent_runtime", code: "turn_active", message: "busy" }),
+    );
+    await settle();
+    expect(document.body.textContent?.includes(m.sessions_chat_refusal_turn_active())).toBe(true);
+    expect(stored()).toBe("Hello ещё more");
+    expect(fieldText()).toBe("Hello ещё more");
+    expect(await fieldFocused()).toBe(true);
+    expect(await caret()).toBe("Hello ещё more".length);
+  });
+
+  focusTest("text typed while sending stands after the text of a send not sent, which stays marked", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    await focusField();
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await typeKeys(" again");
+    await act(async () => send.reject(new Error("lost")));
+    await settle();
+    // Still sending until the reconcile wait ends; typing still waits.
+    await typeKeys(" now");
+    expect(fieldText()).toBe("Hello");
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 1_600)));
+    await settle();
+    expect(document.body.textContent?.includes(m.sessions_chat_not_sent())).toBe(true);
+    expect(stored()).toBe("Hello again now");
+    expect(fieldText()).toBe("Hello again now");
+    expect(await fieldFocused()).toBe(true);
+    expect(await caret()).toBe("Hello again now".length);
+  });
+
+  focusTest("text typed before focus moved elsewhere during the send stands in the field", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    await focusField();
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await typeKeys("ab");
+    await act(async () => elsewhere.focus());
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    await pastFocusRetries();
+    expect(stored()).toBe("ab");
+    expect(fieldText()).toBe("ab");
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  focusTest("text typed during the first send of a new session draft stands in the created session's focused field", async () => {
+    await mount(<DraftHost />);
+    await focusField();
+    await type("Start");
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await typeKeys("и дальше");
+    expect(fieldText()).toBe("Start");
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    expect(prompts).toEqual([[{ type: "text", text: "Start" }]]);
+    expect(Boolean(document.querySelector("[data-session-chat-bottom]"))).toBe(true);
+    expect(stored(sessionDraftKey("codex:s2"))).toBe("и дальше");
+    expect(fieldText()).toBe("и дальше");
+    expect(await fieldFocused()).toBe(true);
+    expect(await caret()).toBe("и дальше".length);
+    expect(readComposerDraft(newSessionDraftKey("/project"))?.parts ?? []).toEqual([]);
+  });
+
+  focusTest("text typed during Connect and send of a read session stands in the field of the attached session", async () => {
+    writer = "none";
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Continue" }] });
+    const attached = deferred();
+    function Read() {
+      const [epoch, setEpoch] = useState(0);
+      const [attaching, setAttaching] = useState(false);
+      return (
+        <SessionChat
+          sessionId="codex:s1"
+          session={key}
+          scope={{ kind: "project", name: "Project", icon: null }}
+          epoch={epoch}
+          continuation={{
+            liveness: "unknown",
+            attaching,
+            refusal: null,
+            sessionValues: null,
+            attach: async () => {
+              setAttaching(true);
+              await attached.promise;
+              writer = "acp";
+              setEpoch((value) => value + 1);
+              setAttaching(false);
+              return { attached: true };
+            },
+            refresh: () => undefined,
+            refreshing: false,
+            onCopyResumeCommand: null,
+          }}
+        />
+      );
+    }
+    await mount(<Read />);
+    await focusField();
+    await pressEnter();
+    await typeKeys("next");
+    expect(fieldText()).toBe("Continue");
+    expect(prompts.length).toBe(0);
+    await act(async () => attached.resolve("attached"));
+    await settle();
+    expect(prompts).toEqual([[{ type: "text", text: "Continue" }]]);
+    expect(stored()).toBe("next");
+    expect(fieldText()).toBe("next");
+    expect(await fieldFocused()).toBe(true);
+  });
+
+  for (const close of ["Allow", "Reject", "stop"] as const) {
+    focusTest(`typing right after an accepted send keeps its order when the request card comes and closes by ${close}`, async () => {
+      writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Run it" }] });
+      await mount(chat());
+      await focusField();
+      const send = deferred();
+      promptAnswer = () => send.promise;
+      await pressEnter();
+      await typeKeys("че");
+      await act(async () => send.resolve("turn-1"));
+      await settle();
+      await act(async () => turnChange("running"));
+      await settle();
+      await typeKeys("рн");
+      expect(stored()).toBe("черн");
+      // The request card replaces the field in the middle of typing.
+      await act(async () => pendingChange("pending"));
+      await settle();
+      expect(document.querySelector(`[aria-label="${m.sessions_chat_composer_label()}"]`)).toBeNull();
+      expect(stored()).toBe("черн");
+      await typeKeys("овик");
+      expect(stored()).toBe("черн");
+      expect(answers.length).toBe(0);
+      if (close === "stop") {
+        await act(async () => button(m.sessions_chat_stop()).click());
+        await act(async () => {
+          pendingChange("cancelled");
+          turnChange("none", "cancelled");
+        });
+      } else {
+        await act(async () => button(close).click());
+        expect(answers.length).toBe(1);
+        await act(async () => pendingChange("answered"));
+      }
+      await settle();
+      expect(stored()).toBe("черн");
+      expect(fieldText()).toBe("черн");
+    });
+  }
 
   function snapshot(session: AgentSessionKeyDto) {
     return {

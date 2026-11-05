@@ -55,6 +55,7 @@ import { useComposerDictation } from "../hooks/use-composer-dictation";
 import {
   ComposerFieldContext,
   holdComposerFocus,
+  releaseComposerFocus,
   useComposerFocusReturn,
   useDraftComposerFocusRequest,
   type ComposerFieldHandle,
@@ -64,6 +65,7 @@ import {
   type ComposerDropReceiver,
 } from "../hooks/use-chat-drop";
 import { COMMAND_PLUGINS, SessionCommandsPlugin } from "./composer-commands";
+import { ComposerSendingPlugin, writeComposerField } from "./composer-sending";
 import {
   AttachMenu,
   AttachmentElementView,
@@ -79,6 +81,8 @@ const AttachmentPlugin = createPlatePlugin({
 }).withComponent(AttachmentElementView);
 
 const COMPOSER_PLUGINS = [
+  // First, so its handlers see input before the other plugins.
+  ComposerSendingPlugin,
   SingleBlockPlugin,
   AttachmentPlugin,
   MentionPlugin,
@@ -145,15 +149,38 @@ export function Composer({
   const partsKey = JSON.stringify(parts);
   const emittedRef = useRef(partsKey);
 
+  // While the text is sent the field keeps focus and takes no edits, and
+  // what is typed waits for the send's end (DF-199). Set before the effects
+  // below and before any input reaches the field.
+  useLayoutEffect(() => {
+    editor.setOption(ComposerSendingPlugin, "sending", sending);
+    editor.setOption(ComposerSendingPlugin, "draftKey", draftKey);
+  }, [draftKey, editor, sending]);
+
   // A draft changed outside the field — cleared after a send, restored
-  // after one that did not reach the agent — replaces its content.
+  // after one that did not reach the agent, with what was typed during the
+  // send after it — replaces its content.
   useEffect(() => {
     if (partsKey === emittedRef.current) return;
     emittedRef.current = partsKey;
     const next = JSON.parse(partsKey) as DraftPart[];
-    editor.tf.setValue(draftValue(next));
+    writeComposerField(editor, () => editor.tf.setValue(draftValue(next)));
     if (next.length > 0) editor.tf.select(editor.api.end([]));
   }, [partsKey, editor]);
+
+  // A send holds focus for a composer that takes this one's place, as the
+  // created session's after the first send of a new session draft or the
+  // attached session's (DF-197). This field keeps focus through the send,
+  // and once it is over the caret is at its end (DF-199).
+  const sendingRef = useRef(sending);
+  useEffect(() => {
+    const sent = sendingRef.current && !sending;
+    sendingRef.current = sending;
+    if (sending) holdComposerFocus(draftKey, rootRef.current);
+    if (!sent) return;
+    releaseComposerFocus(draftKey);
+    if (editor.api.isFocused()) editor.tf.select(editor.api.end([]));
+  }, [draftKey, editor, sending]);
 
   const { dictation, sendAfterRef } = useComposerDictation(editor, draftKey);
   useComposerDropReceiver(
@@ -210,11 +237,6 @@ export function Composer({
   );
 
   const sendDisabled = isDraftBlank(parts) || !canSend || sending;
-  // The field takes focus back after the send (DF-197).
-  const send = useCallback(() => {
-    holdComposerFocus(draftKey, rootRef.current);
-    onSend();
-  }, [draftKey, onSend]);
 
   /**
    * The hotkey starts or stops dictation as ■; Esc cancels a recording
@@ -255,7 +277,7 @@ export function Composer({
         const action = composerKeyAction(event.nativeEvent, running);
         if (action === "send") {
           event.preventDefault();
-          if (!running && !sendDisabled) send();
+          if (!running && !sendDisabled) onSend();
         } else if (action === "stop") {
           takeEscape(event.nativeEvent);
           onStop();
@@ -275,8 +297,8 @@ export function Composer({
   useEffect(() => {
     if (sendAfterRef.current === null || sendAfterRef.current !== partsKey) return;
     sendAfterRef.current = null;
-    if (!running && !sendDisabled) send();
-  }, [send, partsKey, running, sendAfterRef, sendDisabled]);
+    if (!running && !sendDisabled) onSend();
+  }, [onSend, partsKey, running, sendAfterRef, sendDisabled]);
 
   return (
     <InputGroup
@@ -328,7 +350,7 @@ export function Composer({
             cancelling={cancelling}
             sending={sending}
             disabled={sendDisabled}
-            onSend={send}
+            onSend={onSend}
             onStop={onStop}
           />
         </div>
@@ -373,7 +395,6 @@ const ComposerField = memo(function ComposerField({
   return (
     <Plate
       editor={editor}
-      readOnly={sending}
       onChange={({ value }) => events.onChange(value)}
     >
       <FocusReturn draftKey={draftKey} root={root} />

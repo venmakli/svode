@@ -130,6 +130,50 @@ export function appendComposerDraftText(
 }
 
 /**
+ * What was typed in the composer of a draft while its send was under way
+ * (DF-199), by draft key: the field keeps the text being sent, and this
+ * goes after the draft's text once the send is over. Kept for the window.
+ */
+const typedDuringSend = new Map<string, string>();
+
+/** A send of the draft of `key` starts: what is typed meanwhile waits for its end. */
+export function beginDraftSend(key: string) {
+  typedDuringSend.set(key, "");
+}
+
+/**
+ * Text typed in the composer of `key` while it shows a send: it waits for
+ * the send's end, or goes after the stored draft's text when the send is
+ * already over and the composer does not show it yet.
+ */
+export function typeDuringSend(key: string, text: string) {
+  const typed = typedDuringSend.get(key);
+  if (typed === undefined) appendComposerDraftText(key, () => text);
+  else typedDuringSend.set(key, typed + text);
+}
+
+/** The send of `key` is over: `draft` with what was typed meanwhile after its text. */
+export function endDraftSend(key: string, draft: ComposerDraft): ComposerDraft {
+  const typed = typedDuringSend.get(key);
+  typedDuringSend.delete(key);
+  if (!typed) return draft;
+  return {
+    ...draft,
+    parts: normalizeDraftParts([...draft.parts, { type: "text", text: typed }]),
+  };
+}
+
+/**
+ * The first send of the new session draft `from` created the session of
+ * draft `to`: what was typed during it goes to the stored draft of `to`.
+ */
+export function passDraftSend(from: string, to: string) {
+  const typed = typedDuringSend.get(from);
+  typedDuringSend.delete(from);
+  if (typed) appendComposerDraftText(to, () => typed);
+}
+
+/**
  * Puts a request Svode composed after the text of the stored draft of
  * `key`, separated by a blank line, and marks the draft with `mark`; the
  * shown composer of `key` follows. The user edits and sends it.

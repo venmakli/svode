@@ -5,9 +5,12 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { useEditorReadOnly, useEditorRef } from "platejs/react";
+import { useEditorRef } from "platejs/react";
 
-/** The draft whose composer takes focus back once its send is over. */
+/**
+ * The draft whose send holds focus for a composer taking its place, as the
+ * created session's does after the first send of a new session draft.
+ */
 let held: string | null = null;
 
 /**
@@ -22,11 +25,16 @@ function focusFree(root: Element | null): boolean {
 
 /**
  * The composer of `draftKey` sends while focus is in it or nowhere (Stage
- * 10 `04`, DF-197): the field takes no edits while sending and loses focus,
- * so it takes focus back when the send is over.
+ * 10 `04`, DF-197). The field keeps focus while it sends (DF-199); a
+ * composer that takes its place on a new surface takes the focus.
  */
 export function holdComposerFocus(draftKey: string, root: Element | null) {
   held = focusFree(root) ? draftKey : null;
+}
+
+/** The send of `draftKey` is over or its composer went: nothing to take. */
+export function releaseComposerFocus(draftKey: string) {
+  if (held === draftKey) held = null;
 }
 
 /**
@@ -38,32 +46,26 @@ export function passComposerFocus(from: string, to: string) {
 }
 
 /**
- * Inside the composer's Plate: once the field takes edits again, the
- * composer that held focus for its send — or the one that took its place
- * on a new surface — puts the caret at the end, unless the user moved
- * focus elsewhere meanwhile.
+ * Inside the composer's Plate: the composer that took the place of a
+ * sending one on a new surface takes the focus held for that send and puts
+ * the caret at the end, unless the user moved focus elsewhere meanwhile.
  */
 export function useComposerFocusReturn(
   draftKey: string,
   root: RefObject<HTMLElement | null>,
 ) {
   const editor = useEditorRef();
-  const readOnly = useEditorReadOnly();
   useEffect(() => {
-    if (readOnly || held !== draftKey) return;
+    if (held !== draftKey) return;
     held = null;
     if (!focusFree(root.current)) return;
     editor.tf.select(editor.api.end([]));
     // Once Slate applied the selection, so the page's caret is put there
     // at once rather than left to a later read of the stale one.
     queueMicrotask(() => {
-      if (!root.current) return;
-      // Slate ignores the blur of a read-only field and still counts it
-      // focused, so it would not focus it again.
-      editor.tf.blur();
-      editor.tf.focus();
+      if (root.current) editor.tf.focus();
     });
-  }, [draftKey, editor, readOnly, root]);
+  }, [draftKey, editor, root]);
 }
 
 /**

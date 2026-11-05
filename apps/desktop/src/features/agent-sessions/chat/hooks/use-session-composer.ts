@@ -17,7 +17,9 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import {
+  beginDraftSend,
   draftValues,
+  endDraftSend,
   reconcileUnknownSend,
   sessionDraftKey,
 } from "../model/composer";
@@ -110,19 +112,23 @@ export function useSessionComposer(
   const cancelling = snapshot?.turn.phase === "cancelling";
 
   // An unknown send, also one interrupted by a reload, settles by the
-  // session's own state: a new turn means the agent got the message.
+  // session's own state: a new turn means the agent got the message. What
+  // was typed during a send goes into the draft as the send ends (DF-199).
   const previousTurnId = draft.sending?.previousTurnId;
   const settle = useCallback(() => {
     const current = snapshotRef.current;
     if (!current) return;
     updateDraft((latest) => {
       if (!latest.sending) return latest;
-      return reconcileUnknownSend(latest.sending.previousTurnId, current) ===
-        "accepted"
-        ? { parts: [] }
-        : { ...latest, sending: null, notSent: true };
+      return endDraftSend(
+        draftKey,
+        reconcileUnknownSend(latest.sending.previousTurnId, current) ===
+          "accepted"
+          ? { parts: [] }
+          : { ...latest, sending: null, notSent: true },
+      );
     });
-  }, [updateDraft]);
+  }, [draftKey, updateDraft]);
   useEffect(() => {
     if (previousTurnId === undefined || !snapshot) return;
     if (reconcileUnknownSend(previousTurnId, snapshot) === "accepted") {
@@ -138,6 +144,7 @@ export function useSessionComposer(
     if (isDraftBlank(draft.parts) || sending || running) return;
     // Only the confirmation's own button sends, never a repeated Enter.
     if (confirmation && !confirmed) return;
+    beginDraftSend(draftKey);
     setRefusal(null);
     if (snapshotRef.current?.writer !== "acp" && attach) {
       setConfirmation(false);
@@ -146,18 +153,24 @@ export function useSessionComposer(
         if (outcome.confirm) setConfirmation(true);
         // A refused value goes back to what the session has; nothing was sent.
         const refused = outcome.refusedSetting;
-        if (refused) {
-          updateDraft((latest) => ({
-            ...latest,
-            settings: {
-              agent,
-              values: draftValues(latest, agent).filter(
-                (value) =>
-                  value.setting !== refused.setting || value.value !== refused.value,
-              ),
-            },
-          }));
-        }
+        updateDraft((latest) =>
+          endDraftSend(
+            draftKey,
+            refused
+              ? {
+                  ...latest,
+                  settings: {
+                    agent,
+                    values: draftValues(latest, agent).filter(
+                      (value) =>
+                        value.setting !== refused.setting ||
+                        value.value !== refused.value,
+                    ),
+                  },
+                }
+              : latest,
+          ),
+        );
         return;
       }
     }
@@ -172,11 +185,15 @@ export function useSessionComposer(
       );
       // The session may have shown the turn first and settled the send;
       // what was typed since stays.
-      updateDraft((latest) => (latest.sending ? { parts: [] } : latest));
+      updateDraft((latest) =>
+        latest.sending ? endDraftSend(draftKey, { parts: [] }) : latest,
+      );
     } catch (error) {
       const code = agentRuntimeErrorCode(error);
       if (code) {
-        updateDraft({ sending: null });
+        updateDraft((latest) =>
+          endDraftSend(draftKey, { ...latest, sending: null }),
+        );
         setRefusal({ code, message: errorMessage(error) });
         if (code === "file_unavailable") recheckAttachments();
       }
@@ -188,6 +205,7 @@ export function useSessionComposer(
     agent,
     attach,
     confirmation,
+    draftKey,
     draft.mark,
     draft.parts,
     plan,

@@ -15,7 +15,10 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import {
+  beginDraftSend,
+  endDraftSend,
   newSessionDraftKey,
+  passDraftSend,
   sessionDraftKey,
   type ComposerDraft,
 } from "../model/composer";
@@ -117,6 +120,7 @@ export function useNewSessionDraft(
     if (!ready) return;
     setRefusal(null);
     chosen.dismissRefusal();
+    beginDraftSend(draftKey);
     setSending(true);
     updateDraft({ sending: { previousTurnId: null }, notSent: false });
     try {
@@ -133,16 +137,26 @@ export function useNewSessionDraft(
         updateDraft(() => ({ parts: [] }));
         // The first send keeps the new session in Now (`01`, decision 16).
         signalSessionMessage(started.sessionId);
-        passComposerFocus(draftKey, sessionDraftKey(started.sessionId));
+        // What was typed during the send and the focus go to the composer
+        // of the created session (DF-199).
+        const sessionKey = sessionDraftKey(started.sessionId);
+        passDraftSend(draftKey, sessionKey);
+        passComposerFocus(draftKey, sessionKey);
         onStarted({ sessionId: started.sessionId, session: started.session });
         return;
       }
-      updateDraft({ sending: null });
+      updateDraft((latest) => endDraftSend(draftKey, { ...latest, sending: null }));
       setRefusal({ kind: "unavailable", reason: started.reason });
       reload();
     } catch (error) {
       const code = agentRuntimeErrorCode(error);
-      updateDraft(code ? { sending: null } : { sending: null, notSent: true });
+      updateDraft((latest) =>
+        endDraftSend(draftKey, {
+          ...latest,
+          sending: null,
+          notSent: code ? latest.notSent : true,
+        }),
+      );
       // A value the new session does not offer keeps the draft with its
       // reason; nothing was sent.
       const setting = agentSettingRefusal(error);
