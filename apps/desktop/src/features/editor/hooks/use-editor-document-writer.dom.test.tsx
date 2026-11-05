@@ -22,8 +22,9 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { createTestDom } from "@/shared/testing/dom";
 import {
   type AmbiguousConflictElement,
+  ambiguousConflictFieldText,
   type ConflictElement,
-  deserializeAmbiguousConflictEdit,
+  deserializeAmbiguousConflictText,
   isAmbiguousConflict,
 } from "../conflict/parse-conflicts";
 import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
@@ -551,7 +552,30 @@ test("a reloaded CRLF source parses blocks with the marker size of its path and 
   }
 });
 
-test("an ambiguous block blocks the save until Edit, and its marker lines reopen as text paragraphs", async () => {
+/** Applies the field of the ambiguous place of the editor as the block does. */
+function applyAmbiguous(
+  editor: PlateEditor,
+  edit: (text: string) => string = (text) => text,
+) {
+  const index = editor.children.findIndex(
+    (node) => (node as TElement).type === "conflict",
+  );
+  const conflict = editor.children[
+    index
+  ] as unknown as AmbiguousConflictElement;
+  expect(isAmbiguousConflict(conflict)).toBe(true);
+  editor.tf.removeNodes({ at: [index] });
+  editor.tf.insertNodes(
+    deserializeAmbiguousConflictText(
+      editor,
+      edit(ambiguousConflictFieldText(conflict.ambiguous)),
+      conflict.markerSize,
+    ) as never,
+    { at: [index] },
+  );
+}
+
+test("an ambiguous place is neither written nor resolved until Apply, and its marker lines reopen as text paragraphs", async () => {
   const path = "pages/ambiguous-conflict.md";
   const view = await harness(path, "Plain\n");
   try {
@@ -572,30 +596,29 @@ test("an ambiguous block blocks the save until Edit, and its marker lines reopen
     ].join("\n");
     view.disk.version = "v-merge";
     await view.reconcile();
-    const index = view.editor.children.findIndex(
-      (node) => (node as TElement).type === "conflict",
-    );
-    const conflict = view.editor.children[
-      index
-    ] as unknown as AmbiguousConflictElement;
-    expect(isAmbiguousConflict(conflict)).toBe(true);
+    await view.conflict([path, "pages/other.md"]);
 
+    // While the field is open the place stays in the Page: an autosave
+    // writes nothing and ⌘S names the unresolved conflict as before.
     await view.save();
+    const blocked = await toastsResolving(() => view.commitPage("notify"));
+    expect(blocked).toEqual([
+      {
+        type: "error",
+        title: m.git_sync_conflict({ count: "1" }),
+        description: undefined,
+      },
+    ]);
     expect(view.writes).toEqual([]);
+    expect(view.resolves).toEqual([]);
 
-    // Edit the way the ambiguous conflict block does.
-    view.editor.tf.removeNodes({ at: [index] });
-    view.editor.tf.insertNodes(
-      deserializeAmbiguousConflictEdit(
-        view.editor,
-        conflict.ambiguous.edit,
-      ) as never,
-      { at: [index] },
-    );
-    await view.save();
+    // Apply puts the text in the Page; the autosave writes it and resolves the path.
+    applyAmbiguous(view.editor);
+    await toastsResolving(() => view.save());
     const saved =
       "# Plan\n\nHeading\n\n\\=======\n\nlocal\n\n\\=======\n\nStatus: remote edit\n\nFooter\n";
     expect(view.writes.map((write) => write.content)).toEqual([saved]);
+    expect(view.resolves).toEqual([[path]]);
 
     // Reopened from the file: an outside edit after the save reloads it.
     view.disk.body = saved + "\nMore\n";
@@ -615,6 +638,51 @@ test("an ambiguous block blocks the save until Edit, and its marker lines reopen
       ["p", "Status: remote edit"],
       ["p", "Footer"],
       ["p", "More"],
+    ]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("Apply that leaves a marker line in a code block writes the Page and names the refused resolution", async () => {
+  const path = "pages/cheat-sheet.md";
+  const view = await harness(path, "Plain\n");
+  try {
+    view.disk.body = [
+      "# Шпаргалка",
+      "",
+      "```text",
+      "<<<<<<< HEAD",
+      "```",
+      "",
+      "<<<<<<< HEAD",
+      "Спорный абзац A.",
+      "=======",
+      "Спорный абзац B.",
+      ">>>>>>> other",
+      "",
+      "Конец",
+      "",
+    ].join("\n");
+    view.disk.version = "v-merge";
+    await view.reconcile();
+    await view.conflict([path]);
+    // Svode keeps the marker line of the code block; the backend refuses it.
+    view.disk.resolveError = markersRefusal(path);
+    applyAmbiguous(view.editor);
+    const shown = await toastsResolving(() => view.save());
+    expect(view.writes.map((write) => write.content)).toEqual([
+      "# Шпаргалка\n\n```text\n<<<<<<< HEAD\n```\n\n\\<\\<\\<\\<\\<\\<\\< HEAD\n\nСпорный абзац A.\n\n\\=======\n\nСпорный абзац B.\n\nКонец\n",
+    ]);
+    expect(view.resolves).toEqual([[path]]);
+    expect(view.disk.conflicted).toEqual([path]);
+    expect(view.writeBlocks).toEqual([]);
+    expect(shown).toEqual([
+      {
+        type: "error",
+        title: m.git_resolve_page_failed({ page: "Plan" }),
+        description: m.git_resolve_page_markers(),
+      },
     ]);
   } finally {
     await view.cleanup();

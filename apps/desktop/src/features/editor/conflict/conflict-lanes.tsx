@@ -1,6 +1,14 @@
-import { Fragment, type ComponentProps, type ReactNode } from "react";
+import {
+  Fragment,
+  type ComponentProps,
+  type ReactNode,
+  type Ref,
+  useLayoutEffect,
+  useRef,
+} from "react";
 
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
@@ -24,12 +32,14 @@ export interface ConflictAction {
  * the sides in the conflict colours of «Изменения».
  */
 export function ConflictLanes({
+  ref,
   heading,
   actions,
   disabled,
   note,
   children,
 }: {
+  ref?: Ref<HTMLDivElement>;
   /** What follows the mark in the action line, as the ambiguous block's title. */
   heading?: ReactNode;
   actions: readonly ConflictAction[];
@@ -38,7 +48,7 @@ export function ConflictLanes({
   children: ReactNode;
 }) {
   return (
-    <div data-conflict-lanes className="my-2">
+    <div ref={ref} data-conflict-lanes className="my-2">
       <div
         role="group"
         aria-label={m.changes_conflict_label()}
@@ -138,12 +148,47 @@ export function ConflictLane({
   );
 }
 
+const LINES_TEXT = "font-mono text-sm whitespace-pre-wrap break-words";
+
 /** Lines of a conflict side as the file holds them. */
 export function ConflictLines({ children }: { children: ReactNode }) {
+  return <pre className={LINES_TEXT}>{children}</pre>;
+}
+
+/**
+ * A field of lines in a lane, in the type of `ConflictLines` on the lane's
+ * background: no frame but the focus ring, as tall as its text.
+ */
+export function ConflictLinesField({
+  ref,
+  value,
+  ...props
+}: Omit<ComponentProps<typeof Textarea>, "value"> & {
+  ref?: Ref<HTMLTextAreaElement>;
+  value: string;
+}) {
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => {
+    const node = field.current;
+    if (!node) return;
+    node.style.height = "0px";
+    node.style.height = `${node.scrollHeight}px`;
+  }, [value]);
   return (
-    <pre className="font-mono text-sm whitespace-pre-wrap break-words">
-      {children}
-    </pre>
+    <Textarea
+      ref={(node) => {
+        field.current = node;
+        if (typeof ref === "function") return ref(node);
+        if (ref) ref.current = node;
+      }}
+      value={value}
+      spellCheck={false}
+      className={cn(
+        LINES_TEXT,
+        "block min-h-0 resize-none overflow-hidden rounded-sm border-0 bg-transparent p-0 md:text-sm dark:bg-transparent",
+      )}
+      {...props}
+    />
   );
 }
 

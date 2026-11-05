@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
 import type { Descendant, Value } from "platejs";
 import { act } from "react";
-import type { ConflictElement } from "./parse-conflicts";
+import type {
+  AmbiguousConflictElement,
+  ConflictElement,
+} from "./parse-conflicts";
 
 // Conflict files written by Git 2.55.0 for the same merge under each
 // `merge.conflictStyle`; `stashLabels` comes from `git stash pop`.
@@ -434,20 +437,153 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     }
   });
 
-  test("Edit of an ambiguous block resolves a reference link by a definition across a marker line", async () => {
-    const { deserializeAmbiguousConflictEdit } =
+  test("Apply of an ambiguous place resolves a reference link by a definition across a marker line", async () => {
+    const { deserializeAmbiguousConflictText } =
       await import("./parse-conflicts");
-    const nodes = deserializeAmbiguousConflictEdit(
+    const nodes = deserializeAmbiguousConflictText(
       createPlateEditor({ plugins: EditorKit }),
-      [
-        { text: "See [the doc][ref]", marker: false },
-        { text: "=======", marker: true },
-        { text: "\n[ref]: https://example.test/doc", marker: false },
-      ],
+      "See [the doc][ref]\n=======\n\n[ref]: https://example.test/doc",
+      DEFAULT_CONFLICT_MARKER_SIZE,
     );
     const link = JSON.stringify(nodes[0]);
     expect(link.includes('"url":"https://example.test/doc"')).toBe(true);
     expect(nodes[1]).toEqual({ type: "p", children: [{ text: "=======" }] });
+  });
+
+  test("Apply reads the text of an ambiguous place whole: code blocks keep their lines, marker lines outside code are text paragraphs that reopen as such", async () => {
+    const { MarkdownPlugin } = await import("@platejs/markdown");
+    const { NodeApi } = await import("platejs");
+    const {
+      ambiguousConflictFieldText,
+      deserializeAmbiguousConflictText,
+      hasUnresolvedConflicts,
+      isAmbiguousConflict,
+    } = await import("./parse-conflicts");
+    type Element = Parameters<typeof isAmbiguousConflict>[0];
+    // Opens `source`, applies the text of its ambiguous place as the field
+    // opens or as `edit` changes it, and gives what a write saves.
+    const apply = (source: string, edit = (text: string) => text) => {
+      const editor = createPlateEditor({ plugins: EditorKit });
+      const value = deserializeWithConflicts(
+        editor,
+        source,
+        DEFAULT_CONFLICT_MARKER_SIZE,
+      );
+      const at = value.findIndex(
+        (node) => (node as { type?: string }).type === "conflict",
+      );
+      const element = value[at] as unknown as Element;
+      expect(isAmbiguousConflict(element)).toBe(true);
+      if (!isAmbiguousConflict(element)) throw new Error("not ambiguous");
+      const field = ambiguousConflictFieldText(element.ambiguous);
+      const applied = [
+        ...value.slice(0, at),
+        ...deserializeAmbiguousConflictText(
+          editor,
+          edit(field),
+          element.markerSize,
+        ),
+        ...value.slice(at + 1),
+      ];
+      const saved = editor
+        .getApi(MarkdownPlugin)
+        .markdown.serialize({ value: applied as never });
+      const reopened = load(saved);
+      expect(hasUnresolvedConflicts(reopened)).toBe(false);
+      return { field, saved, reopened };
+    };
+    const lines = (...text: string[]) =>
+      text.map((line) => `${line}\n`).join("");
+    const kinds = (value: Descendant[]) =>
+      value.map((node) => (node as { type?: string }).type);
+
+    // «Код»: my version adds a code block with a separator line.
+    const code = lines(
+      "# Код",
+      "",
+      "<<<<<<< HEAD",
+      "Пример маркеров:",
+      "",
+      "```text",
+      "=======",
+      "```",
+      "=======",
+      "Строка спора в версии B.",
+      ">>>>>>> other",
+      "",
+      "Конец",
+    );
+    let applied = apply(code);
+    expect(applied.field).toBe(
+      "Пример маркеров:\n\n```text\n=======\n```\n=======\nСтрока спора в версии B.",
+    );
+    expect(applied.saved).toBe(
+      "# Код\n\nПример маркеров:\n\n```text\n=======\n```\n\n\\=======\n\nСтрока спора в версии B.\n\nКонец\n",
+    );
+    expect(kinds(applied.reopened)).toEqual([
+      "h1",
+      "p",
+      "code_block",
+      "p",
+      "p",
+      "p",
+    ]);
+    expect(NodeApi.string(applied.reopened[3])).toBe("=======");
+    // The same in CRLF: the field has LF lines and the result is the same.
+    expect(apply(code.replaceAll("\n", "\r\n")).field).toBe(applied.field);
+
+    // «Шпаргалка»: the code block of the common version above the block keeps
+    // its marker line; the one outside code is a paragraph.
+    const sheet = lines(
+      "# Шпаргалка",
+      "",
+      "Вступление.",
+      "",
+      "```text",
+      "<<<<<<< HEAD",
+      "```",
+      "",
+      "<<<<<<< HEAD",
+      "Спорный абзац A.",
+      "=======",
+      "Спорный абзац B.",
+      ">>>>>>> other",
+      "",
+      "Конец",
+    );
+    applied = apply(sheet);
+    expect(applied.saved).toBe(
+      "# Шпаргалка\n\nВступление.\n\n```text\n<<<<<<< HEAD\n```\n\n\\<\\<\\<\\<\\<\\<\\< HEAD\n\nСпорный абзац A.\n\n\\=======\n\nСпорный абзац B.\n\nКонец\n",
+    );
+    expect(kinds(applied.reopened)).toEqual([
+      "h1",
+      "p",
+      "code_block",
+      "p",
+      "p",
+      "p",
+      "p",
+      "p",
+    ]);
+    expect(
+      [3, 5].map((index) => NodeApi.string(applied.reopened[index])),
+    ).toEqual(["<<<<<<< HEAD", "======="]);
+
+    // «Маркеры»: a setext-like line of my paragraph stays a text paragraph.
+    applied = apply(ambiguousFixtures.setext7);
+    expect(applied.saved).toBe(ambiguousExpected.setext7.saved);
+
+    // The text edited by hand: marker lines removed, a code block kept.
+    applied = apply(code, (text) =>
+      text.replace("\n=======\nСтрока спора в версии B.", ""),
+    );
+    expect(applied.saved).toBe(
+      "# Код\n\nПример маркеров:\n\n```text\n=======\n```\n\nКонец\n",
+    );
+
+    // An empty field removes the place.
+    for (const empty of ["", " \n\n"])
+      expect(apply(code, () => empty).saved).toBe("# Код\n\nКонец\n");
   });
 
   test("conflict choice in an isolated DOM process", () => {
@@ -474,6 +610,7 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     "Range",
     "Selection",
     "KeyboardEvent",
+    "InputEvent",
     "MouseEvent",
     "DOMParser",
   ] as const;
@@ -494,7 +631,7 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
   const sideTexts = (root: ParentNode) =>
     sideViews(root).map((view) => textWithout(view, "del"));
 
-  test("an ambiguous block shows its whole text and only Edit, which leaves marker lines as text paragraphs", async () => {
+  test("an ambiguous block shows its whole text and Edit, which opens a field of its lines that Apply puts in the Page and Cancel or Esc leaves", async () => {
     const { createTestDom } = await import("@/shared/testing/dom");
     const dom = await createTestDom();
     for (const key of domGlobals)
@@ -511,6 +648,21 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     const { deserializeWithConflicts, hasUnresolvedConflicts } =
       await import("./parse-conflicts");
     const { DEFAULT_CONFLICT_MARKER_SIZE } = await import("./conflict-markers");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const locale = getLocale();
+    const { ambiguousConflictFieldText } = await import("./parse-conflicts");
+    const field = () =>
+      dom.document.querySelector<HTMLTextAreaElement>(
+        "[data-conflict-lanes] textarea",
+      );
+    const type = (area: HTMLTextAreaElement, value: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype,
+          "value",
+        )!.set!.call(area, value);
+        area.dispatchEvent(new window.Event("input", { bubbles: true }));
+      });
     const buttons = (label: string) =>
       [...dom.document.querySelectorAll("button")].filter(
         (button) => button.textContent === label,
@@ -570,10 +722,91 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
           m.changes_conflict_accept_both(),
         ])
           expect(buttons(accept)).toEqual([]);
-        const edit = buttons(m.git_conflict_edit());
-        expect(edit.length).toBe(1);
+        expect(buttons(m.git_conflict_edit()).length).toBe(1);
+        const original = editor.children;
+        const element = original.find(
+          (node) => (node as { type?: string }).type === "conflict",
+        ) as unknown as AmbiguousConflictElement;
 
-        await act(async () => edit[0].click());
+        // Edit turns the lane into a field of the lines of the place, focused
+        // at its start, with Apply and Cancel; the Page does not change.
+        await act(async () => buttons(m.git_conflict_edit())[0].click());
+        let area = field()!;
+        expect(area === null).toBe(false);
+        expect(area.value).toBe(ambiguousConflictFieldText(element.ambiguous));
+        expect(area.getAttribute("aria-label")).toBe(
+          m.git_conflict_ambiguous_title(),
+        );
+        expect(dom.document.activeElement).toBe(area);
+        expect([area.selectionStart, area.selectionEnd]).toEqual([0, 0]);
+        expect(block!.querySelector('[role="group"]')!.textContent).toBe(
+          `${m.changes_conflict_label()}${m.git_conflict_ambiguous_title()}|${m.git_conflict_apply()}|${m.git_conflict_cancel()}`,
+        );
+        expect(block!.querySelector("[data-conflict-note]")?.textContent).toBe(
+          m.git_conflict_ambiguous_editing(),
+        );
+        expect(block!.querySelectorAll("pre").length).toBe(0);
+        expect(buttons(m.git_conflict_edit())).toEqual([]);
+        expect(editor.children).toBe(original);
+        expect(hasUnresolvedConflicts(editor.children)).toBe(true);
+
+        // Typing, ⌘Z and its native undo and ⌘S stay with the field: the
+        // editor of the Page does not change, ⌘S reaches the save shortcut.
+        await type(area, "Changed text");
+        expect(area.value).toBe("Changed text");
+        const saveKeys: KeyboardEvent[] = [];
+        const onKey = (event: KeyboardEvent) => saveKeys.push(event);
+        window.addEventListener("keydown", onKey);
+        await act(async () => {
+          for (const key of ["z", "s"])
+            area.dispatchEvent(
+              new window.KeyboardEvent("keydown", {
+                key,
+                metaKey: true,
+                bubbles: true,
+              }),
+            );
+          area.dispatchEvent(
+            new window.InputEvent("input", {
+              inputType: "historyUndo",
+              bubbles: true,
+            }),
+          );
+        });
+        window.removeEventListener("keydown", onKey);
+        expect(saveKeys.map((event) => event.key)).toEqual(["z", "s"]);
+        expect(editor.children).toBe(original);
+
+        // Cancel shows the place again, with focus on Edit; the field is gone.
+        await act(async () => buttons(m.git_conflict_cancel())[0].click());
+        expect(field()).toBeNull();
+        expect(block!.querySelector("pre")?.textContent).toBe(
+          expected.lines.join("\n"),
+        );
+        expect(dom.document.activeElement).toBe(
+          buttons(m.git_conflict_edit())[0],
+        );
+        expect(editor.children).toBe(original);
+
+        // Esc in the field does the same; Edit opens the lines of the place again.
+        await act(async () => buttons(m.git_conflict_edit())[0].click());
+        area = field()!;
+        expect(area.value).toBe(ambiguousConflictFieldText(element.ambiguous));
+        await act(async () => {
+          area.dispatchEvent(
+            new window.KeyboardEvent("keydown", {
+              key: "Escape",
+              bubbles: true,
+            }),
+          );
+        });
+        expect(field()).toBeNull();
+        expect(buttons(m.git_conflict_edit()).length).toBe(1);
+        expect(editor.children).toBe(original);
+
+        // Apply puts the text of the field in place of the block.
+        await act(async () => buttons(m.git_conflict_edit())[0].click());
+        await act(async () => buttons(m.git_conflict_apply())[0].click());
         expect(hasUnresolvedConflicts(editor.children)).toBe(false);
         const saved = editor.getApi(MarkdownPlugin).markdown.serialize();
         expect(saved).toBe(expected.saved);
@@ -585,6 +818,112 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
         );
         expect(hasUnresolvedConflicts(reopened)).toBe(false);
         expect(reopened).toEqual(editor.children);
+
+        // ⌘Z after Apply brings the block back as it was shown.
+        await act(async () => editor.undo());
+        expect(editor.children).toEqual(original);
+        expect(field()).toBeNull();
+        expect(buttons(m.git_conflict_edit()).length).toBe(1);
+      }
+
+      // The native undo of the field leaves an earlier edit of the Page alone.
+      const edited = createPlateEditor({
+        plugins: EditorKit,
+        value: (instance) =>
+          deserializeWithConflicts(
+            instance,
+            ambiguousFixtures.setext7,
+            DEFAULT_CONFLICT_MARKER_SIZE,
+          ) as Value,
+      });
+      await dom.render(
+        <TooltipProvider>
+          <Plate key="edited" editor={edited}>
+            <PlateContent />
+          </Plate>
+        </TooltipProvider>,
+      );
+      await act(async () =>
+        edited.tf.insertText(" typed", { at: edited.api.end([0]) }),
+      );
+      const typed = edited.children;
+      await act(async () => buttons(m.git_conflict_edit())[0].click());
+      await type(field()!, "Changed text");
+      await act(async () => {
+        field()!.dispatchEvent(
+          new window.KeyboardEvent("keydown", {
+            key: "z",
+            metaKey: true,
+            bubbles: true,
+          }),
+        );
+        field()!.dispatchEvent(
+          new window.InputEvent("input", {
+            inputType: "historyUndo",
+            bubbles: true,
+          }),
+        );
+      });
+      expect(edited.children).toBe(typed);
+      expect(field()?.value).toBe("Changed text");
+      // An empty field applied removes the place.
+      await type(field()!, "");
+      await act(async () => buttons(m.git_conflict_apply())[0].click());
+      expect(edited.getApi(MarkdownPlugin).markdown.serialize()).toBe(
+        "# T typed\n\nEnd\n",
+      );
+
+      // A read-only Page offers no Edit, as the actions of a plain block.
+      const readOnlyEditor = createPlateEditor({
+        plugins: EditorKit,
+        value: (instance) =>
+          deserializeWithConflicts(
+            instance,
+            ambiguousFixtures.setext7,
+            DEFAULT_CONFLICT_MARKER_SIZE,
+          ) as Value,
+      });
+      await dom.render(
+        <TooltipProvider>
+          <Plate key="read-only" editor={readOnlyEditor} readOnly>
+            <PlateContent />
+          </Plate>
+        </TooltipProvider>,
+      );
+      expect(buttons(m.git_conflict_edit())[0].disabled).toBe(true);
+
+      // The field in Russian: its actions, hint and name.
+      await setLocale("ru", { reload: false });
+      try {
+        const ruEditor = createPlateEditor({
+          plugins: EditorKit,
+          value: (instance) =>
+            deserializeWithConflicts(
+              instance,
+              ambiguousFixtures.setext7,
+              DEFAULT_CONFLICT_MARKER_SIZE,
+            ) as Value,
+        });
+        await dom.render(
+          <TooltipProvider>
+            <Plate key="ru" editor={ruEditor}>
+              <PlateContent />
+            </Plate>
+          </TooltipProvider>,
+        );
+        await act(async () => buttons("Редактировать")[0].click());
+        const ru = dom.document.querySelector("[data-conflict-lanes]")!;
+        expect(ru.querySelector('[role="group"]')!.textContent).toBe(
+          "КонфликтВерсии не разделить автоматически|Применить|Отмена",
+        );
+        expect(ru.querySelector("[data-conflict-note]")?.textContent).toBe(
+          "Удалите лишние строки маркеров и отредактируйте текст, затем примените.",
+        );
+        expect(field()!.getAttribute("aria-label")).toBe(
+          "Версии не разделить автоматически",
+        );
+      } finally {
+        await setLocale(locale, { reload: false });
       }
 
       // A plain block of the same Page keeps its sides and Accept, without Edit.

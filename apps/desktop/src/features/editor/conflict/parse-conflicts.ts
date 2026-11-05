@@ -9,7 +9,10 @@ import {
   type LinkDefinitions,
   linkDefinitionsOf,
 } from "../model/markdown-references";
-import type { AmbiguousConflict, ConflictText } from "./conflict-markers";
+import {
+  type AmbiguousConflict,
+  isConflictMarkerLine,
+} from "./conflict-markers";
 import { findConflictPlaces } from "./conflict-places";
 
 /**
@@ -33,11 +36,14 @@ export interface ConflictElement extends TElement {
 
 /**
  * A conflict element of a block whose marker lines allow more than one split:
- * it shows the text of the block and offers only Edit.
+ * it shows the text of the block and offers only Edit, which turns its lane
+ * into a field of that text until Apply or Cancel.
  */
 export interface AmbiguousConflictElement extends TElement {
   type: "conflict";
   ambiguous: AmbiguousConflict;
+  /** The marker size of the path, which tells marker lines in the field. */
+  markerSize: number;
   children: [{ text: "" }];
 }
 
@@ -77,6 +83,7 @@ export function deserializeWithConflicts(
         ? {
             type: "conflict",
             ambiguous: place.ambiguous,
+            markerSize,
             children: [{ text: "" }],
           }
         : {
@@ -132,25 +139,62 @@ export function deserializeConflictBranches(
 }
 
 /**
- * Deserialize the Edit text of an ambiguous conflict block to replace its
- * conflict element. Marker lines become paragraphs of plain text; the runs of
- * text between them go through Markdown IO like a branch, and their reference
- * links resolve by the link definitions of all runs first, then by the
- * document's.
+ * The text the field of an ambiguous conflict place opens with: the lines of
+ * its Edit text, with LF line endings as a text field keeps them.
  */
-export function deserializeAmbiguousConflictEdit(
+export function ambiguousConflictFieldText(ambiguous: AmbiguousConflict) {
+  return ambiguous.edit
+    .map(({ text }) => text)
+    .join("\n")
+    .replaceAll("\r\n", "\n");
+}
+
+/**
+ * Deserialize the text of the field of an ambiguous conflict place to replace
+ * its conflict element on Apply (DF-303 R3). Markdown IO reads the text as
+ * whole blocks: a fenced code block keeps its lines, a marker line of
+ * `markerSize` inside it stays a line of code, and one outside fenced code
+ * becomes a paragraph of plain text. Reference links resolve by the link
+ * definitions of the whole text first, then by the document's. A blank text
+ * gives nothing, which removes the place.
+ */
+export function deserializeAmbiguousConflictText(
   editor: PlateEditor,
-  edit: ConflictText[],
+  text: string,
+  markerSize: number,
 ): Descendant[] {
-  const runs = edit
-    .filter(({ marker, text }) => !marker && text.trim().length > 0)
-    .map(({ text }) => text.trim() + "\n");
-  const nodes = deserializeConflictRuns(editor, runs);
-  let run = 0;
-  return edit.flatMap(({ marker, text }) => {
-    if (marker) return [{ type: "p", children: [{ text }] } as Descendant];
-    return text.trim().length > 0 ? nodes[run++] : [];
-  });
+  const markdown = text.replaceAll("\r\n", "\n");
+  const code = fencedCodeRanges(editor, markdown);
+  const parts: { text: string; marker: boolean }[] = [];
+  let run: string[] = [];
+  const endRun = () => {
+    const joined = run.join("\n");
+    if (joined.trim().length > 0)
+      parts.push({ text: joined.trimEnd() + "\n", marker: false });
+    run = [];
+  };
+  let offset = 0;
+  for (const line of markdown.split("\n")) {
+    const start = offset;
+    offset += line.length + 1;
+    const inCode = code.some(
+      (range) => range.start <= start && start < range.end,
+    );
+    if (!inCode && isConflictMarkerLine(line, markerSize)) {
+      endRun();
+      parts.push({ text: line, marker: true });
+    } else run.push(line);
+  }
+  endRun();
+
+  const nodes = deserializeConflictRuns(
+    editor,
+    parts.filter(({ marker }) => !marker).map(({ text }) => text),
+  );
+  let at = 0;
+  return parts.flatMap(({ text, marker }) =>
+    marker ? [{ type: "p", children: [{ text }] } as Descendant] : nodes[at++],
+  );
 }
 
 /**

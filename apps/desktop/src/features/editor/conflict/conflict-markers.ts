@@ -13,7 +13,7 @@ export interface AmbiguousConflict {
   /** Every line of the block or place as the file holds it, without line endings. */
   lines: ConflictText[];
   /**
-   * The text Edit puts in place of the block or place: its lines without the
+   * The text Edit opens the field of the block or place with: its lines without the
    * outer markers that are the only ones of their kind, with marker lines
    * apart from the runs of text between them.
    */
@@ -84,6 +84,11 @@ function markerKind(text: string, size: number): MarkerKind | null {
   if (marker === "=") return next === undefined ? marker : null;
   if (marker === "|") return next === undefined || next === " " ? marker : null;
   return next === " " ? marker : null;
+}
+
+/** Whether `line`, without its ending, is a marker line of any kind for markers of `size`. */
+export function isConflictMarkerLine(line: string, size: number): boolean {
+  return markerKind(line, size) !== null;
 }
 
 /** Lines as Git reads them: up to `\n`, with a `\r` before it in the ending. */
