@@ -11,6 +11,7 @@ import type {
   AgentSettingValueDto,
 } from "../api/chat";
 import {
+  endComposerHandover,
   useRequestedComposerFocus,
   type ComposerFocusRequest,
 } from "../hooks/use-composer-focus";
@@ -135,6 +136,12 @@ export function SessionChat({
     shown,
     shown && !snapshot.pending && !externalWriter,
   );
+  // Text typed after the first send of a new session draft waits for this
+  // chat's bottom only until it shows (DF-199).
+  const { draftKey } = composer;
+  useEffect(() => {
+    if (shown) endComposerHandover(draftKey);
+  }, [draftKey, shown]);
   const turnActive = composer.running || pendingId !== null;
   const { agent, namespace, sessionId: keyId } = session;
   useEffect(() => {

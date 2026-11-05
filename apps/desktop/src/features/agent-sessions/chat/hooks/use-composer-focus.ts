@@ -6,6 +6,7 @@ import {
   type RefObject,
 } from "react";
 import { useEditorRef } from "platejs/react";
+import { appendComposerDraftText } from "../model/composer";
 
 /**
  * The draft whose send holds focus for a composer taking its place, as the
@@ -29,6 +30,7 @@ function focusFree(root: Element | null): boolean {
  * composer that takes its place on a new surface takes the focus.
  */
 export function holdComposerFocus(draftKey: string, root: Element | null) {
+  closeHandover();
   held = focusFree(root) ? draftKey : null;
 }
 
@@ -39,10 +41,88 @@ export function releaseComposerFocus(draftKey: string) {
 
 /**
  * The first send of a new session draft created session `to`: its
- * composer, which takes the draft's place, takes the focus back.
+ * composer, which takes the draft's place, takes the focus back, and the
+ * text typed until it is shown goes into its draft (DF-199 R3).
  */
 export function passComposerFocus(from: string, to: string) {
-  if (held === from) held = to;
+  if (held !== from) return;
+  held = to;
+  openHandover(to);
+}
+
+/**
+ * Between the draft's surface going and the created session's composer
+ * showing, no field takes the keys. Text typed meanwhile on the page or on
+ * the surface taking the draft's place goes after the text of the
+ * session's draft, which that composer shows. Its composer taking the
+ * focus, focus going to a field or a control, a click or another send
+ * ends this.
+ */
+let handover: { to: string; end: () => void } | null = null;
+
+function openHandover(to: string) {
+  closeHandover();
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    const text = typedText(event);
+    if (text === null || !awaitsComposer(event.target)) return;
+    event.preventDefault();
+    appendComposerDraftText(to, () => text);
+  };
+  const onFocusIn = (event: FocusEvent) => {
+    if (!awaitsComposer(event.target)) closeHandover();
+  };
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("focusin", onFocusIn);
+  window.addEventListener("pointerdown", closeHandover, true);
+  handover = {
+    to,
+    end: () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("pointerdown", closeHandover, true);
+    },
+  };
+}
+
+function closeHandover() {
+  handover?.end();
+  handover = null;
+}
+
+/**
+ * The chat of the created session shows its bottom: the field takes the
+ * keys, or a request card stands in its place and takes none (`04`).
+ */
+export function endComposerHandover(draftKey: string) {
+  if (handover?.to === draftKey) closeHandover();
+}
+
+/**
+ * The text a key types in a field: one character, not a shortcut, outside
+ * an IME composition. Other keys take no effect in a field that sends.
+ */
+function typedText(event: KeyboardEvent): string | null {
+  if (event.isComposing || event.keyCode === 229) return null;
+  // Control with Alt is AltGr on Windows, which types characters.
+  if (event.metaKey || (event.ctrlKey && !event.altKey)) return null;
+  return Array.from(event.key).length === 1 ? event.key : null;
+}
+
+/**
+ * The key is pressed on the page or on a container taking the draft's
+ * place — a surface, a dialog — rather than in a field or on a control,
+ * such as a request card or a button focus went to.
+ */
+function awaitsComposer(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return true;
+  if (target === document.body) return true;
+  if (target.isContentEditable) return false;
+  if (target.closest("input, textarea, select, button, a[href], summary")) {
+    return false;
+  }
+  const role = target.getAttribute("role");
+  return role === null || role === "dialog";
 }
 
 /**
@@ -58,6 +138,8 @@ export function useComposerFocusReturn(
   useEffect(() => {
     if (held !== draftKey) return;
     held = null;
+    // Shown with the text typed until now, the field takes the keys.
+    endComposerHandover(draftKey);
     if (!focusFree(root.current)) return;
     editor.tf.select(editor.api.end([]));
     // Once Slate applied the selection, so the page's caret is put there

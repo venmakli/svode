@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, useState } from "react";
+import { act, useEffect, useRef, useState } from "react";
 import type { Root } from "react-dom/client";
 import type { AgentSessionKeyDto } from "@/platform/agent-runtime/agent-runtime-api";
 import { JSDOM } from "jsdom";
@@ -107,6 +107,8 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   /** What a prompt answers; a pending promise holds the send. */
   let promptAnswer: () => Promise<string> = async () => "turn-1";
   let writer = "acp";
+  /** The agent's request a session's first snapshot carries. */
+  let firstPending: unknown = null;
   const prompts: unknown[] = [];
   /** The request mark each prompt carried (Stage 11 1.10). */
   const marks: unknown[] = [];
@@ -191,6 +193,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     test(name, async () => {
       promptAnswer = async () => "turn-1";
       writer = "acp";
+      firstPending = null;
       prompts.length = 0;
       marks.length = 0;
       answers.length = 0;
@@ -273,6 +276,38 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   /** Typing one key after another, as `beforeinput` of each character. */
   async function typeKeys(text: string) {
     for (const character of text) await type(character);
+  }
+
+  /**
+   * Keys pressed one after another as the page gets them: `keydown` on
+   * whatever has focus, and the typed text as `beforeinput` only where
+   * focus is in an editable field.
+   */
+  async function pressKeys(text: string) {
+    for (const character of text) {
+      await act(async () => {
+        const target = document.activeElement ?? document.body;
+        const down = new window.KeyboardEvent("keydown", {
+          key: character,
+          bubbles: true,
+          cancelable: true,
+        });
+        if (!target.dispatchEvent(down)) return;
+        if (!(target as HTMLElement).isContentEditable) return;
+        target.dispatchEvent(
+          new window.InputEvent("beforeinput", {
+            inputType: "insertText",
+            data: character,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        target.dispatchEvent(
+          new window.InputEvent("input", { inputType: "insertText", data: character, bubbles: true }),
+        );
+      });
+      await settle();
+    }
   }
 
   /** The text of the field. */
@@ -877,6 +912,115 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(readComposerDraft(newSessionDraftKey("/project"))?.parts ?? []).toEqual([]);
   });
 
+  /**
+   * The main area showing a new session draft: its first send makes the
+   * created session the main area object at once, which takes focus as
+   * its surface does, and the chat shows its field only once the session
+   * is known and its snapshot came, here when `known` resolves.
+   */
+  function MainAreaHost({ known }: { known: Promise<unknown> }) {
+    const [started, setStarted] = useState<string | null>(null);
+    const [shown, setShown] = useState(false);
+    return started === null ? (
+      <NewSessionDraft
+        spacePath="/project"
+        onStarted={(session) => {
+          setStarted(session.sessionId);
+          void known.then(() => setShown(true));
+        }}
+        onOpenAgentSettings={() => undefined}
+      />
+    ) : (
+      <FocusedSurface>
+        {shown ? (
+          <SessionChat
+            sessionId={started}
+            session={{ ...key, sessionId: "s2" }}
+            scope={{ kind: "project", name: "Project", icon: null }}
+          />
+        ) : null}
+      </FocusedSurface>
+    );
+  }
+
+  function FocusedSurface({ children }: { children: React.ReactNode }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => ref.current?.focus({ preventScroll: true }), []);
+    return (
+      <div ref={ref} tabIndex={-1}>
+        {children}
+      </div>
+    );
+  }
+
+  focusTest("keys pressed during the first send of a new session draft and before the created session's field shows stand in that field in typing order", async () => {
+    const known = deferred();
+    await mount(<MainAreaHost known={known.promise} />);
+    await focusField();
+    await type("Start");
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await pressKeys("ab");
+    expect(fieldText()).toBe("Start");
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    // The created session is the main area object; its chat is not shown yet.
+    expect(document.querySelector(`[aria-label="${m.sessions_chat_composer_label()}"]`)).toBeNull();
+    await pressKeys("cd ч");
+    await act(async () => known.resolve("known"));
+    await settle();
+    expect(await fieldFocused()).toBe(true);
+    await pressKeys("ef");
+    expect(prompts).toEqual([[{ type: "text", text: "Start" }]]);
+    expect(fieldText()).toBe("abcd чef");
+    expect(stored(sessionDraftKey("codex:s2"))).toBe("abcd чef");
+    expect(await caret()).toBe("abcd чef".length);
+    expect(readComposerDraft(newSessionDraftKey("/project"))?.parts ?? []).toEqual([]);
+  });
+
+  focusTest("keys pressed after focus moved elsewhere before the created session's field shows stay out of it", async () => {
+    const known = deferred();
+    await mount(<MainAreaHost known={known.promise} />);
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    await focusField();
+    await type("Start");
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    await pressKeys("ab");
+    await act(async () => elsewhere.focus());
+    await pressKeys("xy");
+    await act(async () => known.resolve("known"));
+    await settle();
+    await pastFocusRetries();
+    expect(fieldText()).toBe("ab");
+    expect(stored(sessionDraftKey("codex:s2"))).toBe("ab");
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  focusTest("keys pressed after the created session's chat shows a request card instead of its field stay out of its draft", async () => {
+    const known = deferred();
+    await mount(<MainAreaHost known={known.promise} />);
+    await focusField();
+    await type("Start");
+    await pressEnter();
+    await pressKeys("ab");
+    firstPending = { ...REQUEST, state: "pending" };
+    await act(async () => known.resolve("known"));
+    await settle();
+    expect(document.querySelector(`[aria-label="${m.sessions_chat_composer_label()}"]`)).toBeNull();
+    await pressKeys("xy");
+    expect(stored(sessionDraftKey("codex:s2"))).toBe("ab");
+    expect(answers.length).toBe(0);
+    await act(async () => pendingChange("answered", "s2"));
+    await settle();
+    expect(fieldText()).toBe("ab");
+  });
+
   focusTest("text typed during Connect and send of a read session stands in the field of the attached session", async () => {
     writer = "none";
     writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Continue" }] });
@@ -976,7 +1120,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
         status: { state: "idle", stopReason: null, source: "svode_runtime", confidence: "exact" },
       },
       items: [],
-      pending: null,
+      pending: firstPending,
       history: { source: "live", available: true, truncatedItems: null },
       writer,
       settings: [],
