@@ -1,7 +1,14 @@
 import { AlertTriangle, LoaderCircle } from "lucide-react";
+import type { ReactElement } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
@@ -61,22 +68,49 @@ export function RoutineRunTool({
           {m.routines_open_session()}
         </Button>
       ) : manuallyRunnable || !item.definition ? (
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled}
-          title={disabledReason}
-          onClick={() => {
-            if (!disabled) void onRun(item).catch(() => undefined);
-          }}
-        >
-          {pending ? (
-            <LoaderCircle data-icon="inline-start" className="animate-spin" />
-          ) : null}
-          {pending ? m.routines_starting() : m.routines_run_now()}
-        </Button>
+        <WithDisabledReason reason={disabledReason}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled}
+            onClick={() => {
+              if (!disabled) void onRun(item).catch(() => undefined);
+            }}
+          >
+            {pending ? (
+              <LoaderCircle data-icon="inline-start" className="animate-spin" />
+            ) : null}
+            {pending ? m.routines_starting() : m.routines_run_now()}
+          </Button>
+        </WithDisabledReason>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Why a disabled "Run now" is disabled, as a tooltip on hover. A disabled
+ * button takes no pointer events, so the tooltip hangs on a wrapper around it.
+ */
+function WithDisabledReason({
+  children,
+  reason,
+}: {
+  children: ReactElement;
+  reason: string | undefined;
+}) {
+  if (!reason) return children;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex" data-routine-run-disabled-reason>
+            {children}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
