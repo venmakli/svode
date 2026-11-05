@@ -3,16 +3,14 @@ import type { PlateEditor } from "platejs/react";
 import {
   deserializeEditorMarkdownInsertion,
   deserializeEditorMarkdownSegment,
+  fencedCodeRanges,
 } from "../model/markdown-io";
 import {
   type LinkDefinitions,
   linkDefinitionsOf,
 } from "../model/markdown-references";
-import {
-  type AmbiguousConflict,
-  type ConflictText,
-  findConflictBlocks,
-} from "./conflict-markers";
+import type { AmbiguousConflict, ConflictText } from "./conflict-markers";
+import { findConflictPlaces } from "./conflict-places";
 
 /**
  * A conflict element in the Plate tree.
@@ -50,13 +48,15 @@ export function isAmbiguousConflict(
 }
 
 /**
- * Split raw markdown on the Git conflict blocks of markers of `markerSize` and
- * deserialize each non-conflict segment via the Plate Markdown plugin.
- * Conflict blocks become custom `conflict` elements with `ours` / `theirs`
- * stored as raw markdown strings with the base of the block, `bases[i]` for
- * the block `i` in document order, ambiguous blocks with their text. Text
- * keeps its line endings. Reference links of a segment resolve by the link
- * definitions of all segments.
+ * Split raw markdown on the conflict places of the Git blocks of markers of
+ * `markerSize` and deserialize each segment between them via the Plate
+ * Markdown plugin. A place takes in the fenced code blocks its blocks cut
+ * (DF-303 R1), so every segment and side reads whole Markdown blocks. Places
+ * become custom `conflict` elements with `ours` / `theirs` stored as raw
+ * markdown strings with the base of the place, from `bases[i]` for the block
+ * `i` in document order, ambiguous places with their lines. Text keeps its
+ * line endings. Reference links of a segment resolve by the link definitions
+ * of all segments.
  */
 export function deserializeWithConflicts(
   editor: PlateEditor,
@@ -67,24 +67,27 @@ export function deserializeWithConflicts(
   let cursor = 0;
   const parts: (string | ConflictElement | AmbiguousConflictElement)[] = [];
 
-  for (const [index, block] of findConflictBlocks(body, markerSize).entries()) {
+  const places = findConflictPlaces(body, markerSize, bases, (markdown) =>
+    fencedCodeRanges(editor, markdown),
+  );
+  for (const place of places) {
     parts.push(
-      body.slice(cursor, block.start),
-      block.ambiguous
+      body.slice(cursor, place.start),
+      place.ambiguous
         ? {
             type: "conflict",
-            ambiguous: block.ambiguous,
+            ambiguous: place.ambiguous,
             children: [{ text: "" }],
           }
         : {
             type: "conflict",
-            ours: block.ours,
-            theirs: block.theirs,
-            base: bases[index] ?? null,
+            ours: place.ours,
+            theirs: place.theirs,
+            base: place.base,
             children: [{ text: "" }],
           },
     );
-    cursor = block.end;
+    cursor = place.end;
   }
   parts.push(body.slice(cursor));
 

@@ -8,15 +8,22 @@ export interface ConflictText {
   marker: boolean;
 }
 
-/** A block whose marker lines allow more than one split. */
+/** A block, or a place of blocks, whose marker lines allow more than one split. */
 export interface AmbiguousConflict {
-  /** Every line of the block as the file holds it, without line endings. */
+  /** Every line of the block or place as the file holds it, without line endings. */
   lines: ConflictText[];
   /**
-   * The text Edit puts in place of the block: the lines between its outer
-   * markers, with marker lines apart from the runs of text between them.
+   * The text Edit puts in place of the block or place: its lines without the
+   * outer markers that are the only ones of their kind, with marker lines
+   * apart from the runs of text between them.
    */
   edit: ConflictText[];
+}
+
+/** Text of a body by offsets: `start` inclusive, `end` exclusive. */
+export interface TextRange {
+  start: number;
+  end: number;
 }
 
 /**
@@ -28,8 +35,17 @@ export type ConflictBlock = {
   start: number;
   /** Offset after the line ending of the last `>` marker line. */
   end: number;
+  /** Offset of the `=` marker line that separates the sides. */
+  separator: number;
 } & (
-  | { ours: string; theirs: string; ambiguous: null }
+  | {
+      ours: string;
+      theirs: string;
+      /** The lines of each side with their line endings. */
+      oursLines: TextRange;
+      theirsLines: TextRange;
+      ambiguous: null;
+    }
   | { ambiguous: AmbiguousConflict }
 );
 
@@ -152,42 +168,6 @@ export function findConflictBlocks(
     to - from > 1
       ? body.slice(lines[from + 1].start, lines[to - 1].contentEnd)
       : "";
-  const text = (line: Line) => body.slice(line.start, line.contentEnd);
-  const count = (kind: MarkerKind, from: number, to: number) =>
-    lines.slice(from, to).filter((line) => line.kind === kind).length;
-  const ambiguousConflict = (
-    lt: number,
-    eq: number,
-    last: number,
-  ): AmbiguousConflict => {
-    // An outer marker line stays out of Edit only when no other line of its
-    // kind could be that marker.
-    const from = count("<", lt, last + 1) === 1 ? lt + 1 : lt;
-    const to = count(">", eq + 1, last + 1) === 1 ? last : last + 1;
-    const edit: ConflictText[] = [];
-    let run = -1;
-    for (let index = from; index <= to; index++) {
-      if (index < to && lines[index].kind === null) {
-        if (run < 0) run = index;
-        continue;
-      }
-      if (run >= 0)
-        edit.push({
-          text: body.slice(lines[run].start, lines[index - 1].contentEnd),
-          marker: false,
-        });
-      run = -1;
-      if (index < to) edit.push({ text: text(lines[index]), marker: true });
-    }
-    return {
-      lines: lines.slice(lt, last + 1).map((line) => ({
-        text: text(line),
-        marker: line.kind !== null,
-      })),
-      edit,
-    };
-  };
-
   return splits.map((split, index): ConflictBlock => {
     const { lt, bar, eq, gt } = split;
     const limit = splits[index + 1]?.lt ?? lines.length;
@@ -204,8 +184,14 @@ export function findConflictBlocks(
       return {
         start: lines[lt].start,
         end: lines[gt].end,
+        separator: lines[eq].start,
         ours: side(lt, diff3 ? bar : eq),
         theirs: side(eq, gt),
+        oursLines: {
+          start: lines[lt].end,
+          end: lines[diff3 ? bar : eq].start,
+        },
+        theirsLines: { start: lines[eq].end, end: lines[gt].start },
         ambiguous: null,
       };
     let last = gt;
@@ -214,7 +200,80 @@ export function findConflictBlocks(
     return {
       start: lines[lt].start,
       end: lines[last].end,
-      ambiguous: ambiguousConflict(lt, eq, last),
+      separator: lines[eq].start,
+      ambiguous: ambiguousLines(body, lines, lt, eq, last),
     };
   });
+}
+
+/**
+ * The text of an ambiguous conflict place of `body` with markers of `size`:
+ * its whole lines from `range.start`, the start of a line, to `range.end`,
+ * after a line ending or at the end of `body`. `separator` is the offset of
+ * the `=` line of the first block of the place.
+ */
+export function ambiguousConflictText(
+  body: string,
+  size: number,
+  range: TextRange,
+  separator: number,
+): AmbiguousConflict {
+  const text = body.slice(range.start, range.end);
+  const lines = splitLines(text, size);
+  return ambiguousLines(
+    text,
+    lines,
+    0,
+    lines.findIndex((line) => line.start === separator - range.start),
+    lines.length - 1,
+  );
+}
+
+/**
+ * The text of the lines `first` to `last` of `body`, an ambiguous place whose
+ * first block separates its sides at the line `eq`. Its outer marker lines
+ * are the first `<` line and the last `>` line; Edit leaves one out only when
+ * no other line of its kind could be that marker: no other `<` line in the
+ * place, no other `>` line after `eq`.
+ */
+function ambiguousLines(
+  body: string,
+  lines: Line[],
+  first: number,
+  eq: number,
+  last: number,
+): AmbiguousConflict {
+  const text = (line: Line) => body.slice(line.start, line.contentEnd);
+  const place = lines.slice(first, last + 1);
+  const count = (kind: MarkerKind, from: number) =>
+    place.slice(from).filter((line) => line.kind === kind).length;
+  const outer = new Set<number>();
+  if (count("<", 0) === 1)
+    outer.add(place.findIndex((line) => line.kind === "<"));
+  if (count(">", eq - first + 1) === 1)
+    outer.add(place.map((line) => line.kind).lastIndexOf(">"));
+
+  const edit: ConflictText[] = [];
+  let run = -1;
+  for (let index = 0; index <= place.length; index++) {
+    if (index < place.length && place[index].kind === null) {
+      if (run < 0) run = index;
+      continue;
+    }
+    if (run >= 0)
+      edit.push({
+        text: body.slice(place[run].start, place[index - 1].contentEnd),
+        marker: false,
+      });
+    run = -1;
+    if (index < place.length && !outer.has(index))
+      edit.push({ text: text(place[index]), marker: true });
+  }
+  return {
+    lines: place.map((line) => ({
+      text: text(line),
+      marker: line.kind !== null,
+    })),
+    edit,
+  };
 }

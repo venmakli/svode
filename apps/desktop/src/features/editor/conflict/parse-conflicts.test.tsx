@@ -542,13 +542,15 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
         const block = dom.document.querySelector("[data-conflict-lanes]");
         expect(block === null).toBe(false);
         const line = block!.querySelector('[role="group"]')!;
-        expect(line.getAttribute("aria-label")).toBe(m.changes_conflict_label());
+        expect(line.getAttribute("aria-label")).toBe(
+          m.changes_conflict_label(),
+        );
         expect(line.textContent).toBe(
           `${m.changes_conflict_label()}${m.git_conflict_ambiguous_title()}|${m.git_conflict_edit()}`,
         );
-        expect(
-          block!.querySelector("[data-conflict-note]")?.textContent,
-        ).toBe(m.git_conflict_ambiguous_description());
+        expect(block!.querySelector("[data-conflict-note]")?.textContent).toBe(
+          m.git_conflict_ambiguous_description(),
+        );
         expect(
           [...block!.querySelectorAll("[data-conflict-lane]")].map((lane) =>
             lane.getAttribute("data-conflict-lane"),
@@ -603,9 +605,9 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
           </Plate>
         </TooltipProvider>,
       );
-      expect(dom.document.querySelectorAll("[data-conflict-lanes]").length).toBe(
-        2,
-      );
+      expect(
+        dom.document.querySelectorAll("[data-conflict-lanes]").length,
+      ).toBe(2);
       expect(buttons(m.changes_conflict_accept_ours()).length).toBe(1);
       expect(buttons(m.changes_conflict_accept_theirs()).length).toBe(1);
       expect(buttons(m.changes_conflict_accept_both()).length).toBe(1);
@@ -938,6 +940,210 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
         m.changes_conflict_accept_both(),
       ])
         expect(buttons(label)[0].disabled).toBe(true);
+    } finally {
+      await dom.dispose();
+    }
+  }, 30_000);
+
+  test("a place keeps the fenced code blocks of its versions whole, around it and in what is accepted", async () => {
+    const { createTestDom } = await import("@/shared/testing/dom");
+    const dom = await createTestDom();
+    for (const key of domGlobals)
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        value: window[key],
+      });
+    const { MarkdownPlugin } = await import("@platejs/markdown");
+    const { Plate, PlateContent, createPlateEditor } =
+      await import("platejs/react");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const m = await import("@/paraglide/messages.js");
+    const { EditorKit } = await import("../plate/editor-kit");
+    const { deserializeWithConflicts, hasUnresolvedConflicts } =
+      await import("./parse-conflicts");
+    const { DEFAULT_CONFLICT_MARKER_SIZE } = await import("./conflict-markers");
+    const lines = (...text: string[]) =>
+      text.map((line) => `${line}\n`).join("");
+    const buttons = (label: string) =>
+      [...dom.document.querySelectorAll("button")].filter(
+        (button) => button.textContent === label,
+      );
+    let run = 0;
+    const open = async (source: string, bases: (string | null)[] = []) => {
+      const editor = createPlateEditor({
+        plugins: EditorKit,
+        value: (instance) =>
+          deserializeWithConflicts(
+            instance,
+            source,
+            DEFAULT_CONFLICT_MARKER_SIZE,
+            bases,
+          ) as Value,
+      });
+      await dom.render(
+        <TooltipProvider>
+          <Plate key={run++} editor={editor}>
+            <PlateContent />
+          </Plate>
+        </TooltipProvider>,
+      );
+      return editor;
+    };
+    // The Markdown of the text around the places, as a write would give it.
+    const around = (editor: ReturnType<typeof createPlateEditor>) =>
+      editor.getApi(MarkdownPlugin).markdown.serialize({
+        value: editor.children.filter(
+          (node) => (node as { type?: string }).type !== "conflict",
+        ) as Value,
+      });
+    const inCode = {
+      merge: lines(
+        "# T",
+        "",
+        "Intro",
+        "",
+        "```js",
+        "line1",
+        "<<<<<<< HEAD",
+        "line2a",
+        "=======",
+        "line2b",
+        ">>>>>>> other",
+        "line3",
+        "```",
+        "",
+        "End",
+      ),
+      diff3: lines(
+        "# T",
+        "",
+        "Intro",
+        "",
+        "```js",
+        "line1",
+        "<<<<<<< HEAD",
+        "line2a",
+        "||||||| base",
+        "line2",
+        "=======",
+        "line2b",
+        ">>>>>>> other",
+        "line3",
+        "```",
+        "",
+        "End",
+      ),
+    };
+    try {
+      for (const source of Object.values(inCode)) {
+        for (const [label, written] of [
+          [
+            m.changes_conflict_accept_ours(),
+            lines("```js", "line1", "line2a", "line3", "```"),
+          ],
+          [
+            m.changes_conflict_accept_theirs(),
+            lines("```js", "line1", "line2b", "line3", "```"),
+          ],
+          [
+            m.changes_conflict_accept_both(),
+            lines(
+              "```js",
+              "line1",
+              "line2a",
+              "line3",
+              "```",
+              "",
+              "```js",
+              "line1",
+              "line2b",
+              "line3",
+              "```",
+            ),
+          ],
+        ] as const) {
+          const editor = await open(source, ["line2"]);
+          // The text around the place reads as it stands, without code.
+          expect(
+            editor.children.map((node) => (node as { type?: string }).type),
+          ).toEqual(["h1", "p", "conflict", "p"]);
+          expect(around(editor)).toBe("# T\n\nIntro\n\nEnd\n");
+          // Each side is the code block with the side of the block.
+          const lanes = [
+            ...dom.document.querySelectorAll(
+              '[data-conflict-lane="ours"], [data-conflict-lane="theirs"]',
+            ),
+          ];
+          expect(
+            lanes.map((lane) => lane.querySelectorAll("pre").length),
+          ).toEqual([1, 1]);
+          await act(async () => buttons(label)[0].click());
+          expect(hasUnresolvedConflicts(editor.children)).toBe(false);
+          expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
+            `# T\n\nIntro\n\n${written}\nEnd\n`,
+          );
+        }
+      }
+
+      // The code block of the common version above an ambiguous block opens
+      // whole in its place; the text around it is untouched.
+      const sheet = lines(
+        "# Шпаргалка",
+        "",
+        "Вступление.",
+        "",
+        "```text",
+        "<<<<<<< HEAD",
+        "```",
+        "",
+        "<<<<<<< HEAD",
+        "Спорный абзац A.",
+        "=======",
+        "Спорный абзац B.",
+        ">>>>>>> other",
+        "",
+        "Конец",
+      );
+      let editor = await open(sheet);
+      expect(
+        editor.children.map((node) => (node as { type?: string }).type),
+      ).toEqual(["h1", "p", "conflict", "p"]);
+      expect(around(editor)).toBe("# Шпаргалка\n\nВступление.\n\nКонец\n");
+      const panels = [
+        ...dom.document.querySelectorAll('[data-conflict-lane="neutral"] pre'),
+      ];
+      expect(panels.map((panel) => panel.textContent)).toEqual([
+        sheet.split("\n").slice(4, 13).join("\n"),
+      ]);
+      expect(buttons(m.git_conflict_edit()).length).toBe(1);
+
+      // A code block outside the block keeps the block as its place.
+      editor = await open(
+        lines(
+          "# Справка",
+          "",
+          "```text",
+          "=======",
+          "```",
+          "",
+          "<<<<<<< HEAD",
+          "Моё.",
+          "=======",
+          "Входящее.",
+          ">>>>>>> other",
+          "",
+          "Конец",
+        ),
+      );
+      expect(around(editor)).toBe(
+        "# Справка\n\n```text\n=======\n```\n\nКонец\n",
+      );
+      await act(async () =>
+        buttons(m.changes_conflict_accept_ours())[0].click(),
+      );
+      expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
+        "# Справка\n\n```text\n=======\n```\n\nМоё.\n\nКонец\n",
+      );
     } finally {
       await dom.dispose();
     }

@@ -1,5 +1,5 @@
 import type { Descendant } from "platejs";
-import { MarkdownPlugin } from "@platejs/markdown";
+import { MarkdownPlugin, markdownToAstProcessor } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
 
 import {
@@ -18,7 +18,10 @@ import {
 import {
   applyTextEdits,
   composeMappedText,
+  mapHtmlToJsx,
   type MappedText,
+  type MarkdownSourceRange,
+  type MdastNode,
   markdownSourcePlugin,
   type TextEdit,
 } from "./markdown-source";
@@ -233,4 +236,66 @@ export function deserializeEditorMarkdownInsertion(
   return fallbackText
     ? ([{ type: "p", children: [{ text: fallbackText }] }] as Descendant[])
     : [emptyParagraph()];
+}
+
+/**
+ * The fenced code blocks of `markdown` as Markdown IO reads it, by offsets in
+ * `markdown`: from the opening fence to the end of the closing one, or to the
+ * end of the text for a block without one.
+ */
+export function fencedCodeRanges(
+  editor: PlateEditor,
+  markdown: string,
+): MarkdownSourceRange[] {
+  const lf = applyTextEdits(
+    markdown,
+    [...markdown.matchAll(CRLF_RE)].map((match) => ({
+      start: match.index,
+      end: match.index + 1,
+      text: "",
+    })),
+  );
+  const plateInput = plateInputFor(
+    editor,
+    lf.text,
+    escapedOpenerEdits(lf.text),
+  );
+  const parse = (): { tree: MdastNode; parsed: MappedText } => {
+    const jsx = mapHtmlToJsx(plateInput.text);
+    if (jsx) {
+      try {
+        return {
+          tree: markdownToAstProcessor(editor, jsx.text) as MdastNode,
+          parsed: composeMappedText(lf, plateInput, jsx),
+        };
+      } catch {
+        // Plate reads text MDX rejects without MDX as well.
+      }
+    }
+    return {
+      tree: markdownToAstProcessor(editor, plateInput.text, {
+        withoutMdx: true,
+      }) as MdastNode,
+      parsed: composeMappedText(lf, plateInput),
+    };
+  };
+  const { tree, parsed } = parse();
+
+  const ranges: MarkdownSourceRange[] = [];
+  const visit = (node: MdastNode) => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (
+      node.type === "code" &&
+      start !== undefined &&
+      end !== undefined &&
+      (parsed.text.startsWith("```", start) ||
+        parsed.text.startsWith("~~~", start))
+    ) {
+      ranges.push({ start: parsed.toInput(start), end: parsed.toInput(end) });
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+  return ranges;
 }
