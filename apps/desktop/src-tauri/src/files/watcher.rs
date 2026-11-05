@@ -511,32 +511,67 @@ fn process_published_events(
         } else {
             CollectionEventOrigin::watcher()
         };
-        if matches!(kind, EventKind::Remove(_)) && vanished_directories.contains(&path) {
-            sync_index_for_vanished_directory(space_root, &path, app, event_origin);
+        let vanished_sources = if matches!(kind, EventKind::Remove(_))
+            && vanished_directories.contains(&path)
+        {
+            sync_index_for_vanished_directory(space_root, &path, app, event_origin)
         } else {
             sync_index_for_watched_path(space_root, &path, classification.kind, app, event_origin);
-        }
+            Vec::new()
+        };
 
         // Only `file:changed` exposes writeNonce to the frontend. Metadata is
         // still consumed for creates so Collection events retain managed origin.
         let nonce = matches!(kind, EventKind::Modify(_))
             .then(|| write_metadata.map(|metadata| metadata.nonce))
             .flatten();
-        let mut payload = serde_json::json!({
-            "space": space,
-            "path": classification.rel_path,
-            "kind": classification.kind.as_payload_str(),
-            "isDir": classification.is_dir,
-            "parentPath": classification.parent_path,
-            "affectsTree": classification.affects_tree,
-            "affectsMetadata": classification.affects_metadata,
-        });
-        if let Some(nonce) = nonce {
-            payload["writeNonce"] = serde_json::json!(nonce);
+        let _ = app.emit(
+            event_name,
+            file_event_payload(space, &classification, nonce),
+        );
+        for removal in vanished_source_removals(space_root, &policy, &skip_dirs, &vanished_sources)
+        {
+            let _ = app.emit("file:deleted", file_event_payload(space, &removal, None));
         }
-
-        let _ = app.emit(event_name, payload);
     }
+}
+
+fn file_event_payload(
+    space: &str,
+    classification: &ContentTreeEventClassification,
+    nonce: Option<String>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "space": space,
+        "path": classification.rel_path,
+        "kind": classification.kind.as_payload_str(),
+        "isDir": classification.is_dir,
+        "parentPath": classification.parent_path,
+        "affectsTree": classification.affects_tree,
+        "affectsMetadata": classification.affects_metadata,
+    });
+    if let Some(nonce) = nonce {
+        payload["writeNonce"] = serde_json::json!(nonce);
+    }
+    payload
+}
+
+/// The removal of each indexed Markdown source of a directory that left at
+/// once, as `rm -r` reports it file by file: consumers that follow the
+/// sources, such as a Collection table, see them go (DF-258 R3).
+fn vanished_source_removals(
+    space_root: &Path,
+    policy: &TreeIgnorePolicy,
+    skip_dirs: &HashSet<String>,
+    sources: &[PathBuf],
+) -> Vec<ContentTreeEventClassification> {
+    let removed = EventKind::Remove(RemoveKind::File);
+    sources
+        .iter()
+        .filter_map(|source| {
+            classify_content_tree_event(space_root, policy, skip_dirs, source, &removed)
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -786,13 +821,13 @@ fn sync_index_for_watched_path(
 }
 
 /// Indexed sources under a directory that left at once report no removal of
-/// their own, so the directory publishes it for them.
+/// their own, so the directory publishes it for them. Returns those sources.
 fn sync_index_for_vanished_directory(
     space_root: &Path,
     path: &Path,
     app: &AppHandle,
     origin: CollectionEventOrigin,
-) {
+) -> Vec<PathBuf> {
     tauri::async_runtime::block_on(async {
         let state = app.state::<IndexState>();
         let updates = app.state::<IndexUpdateState>();
@@ -800,7 +835,7 @@ fn sync_index_for_vanished_directory(
             .key_for_space_dir(space_root)
             .await
             .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
-        if let Err(e) = crate::index::update::publish_removed_directory_with_origin(
+        crate::index::update::publish_removed_directory_with_origin(
             &state,
             &updates,
             key.project(),
@@ -808,13 +843,14 @@ fn sync_index_for_vanished_directory(
             origin,
         )
         .await
-        {
+        .unwrap_or_else(|e| {
             tracing::warn!(
                 "watcher index update failed for removed directory {}: {e}",
                 path.display()
             );
-        }
-    });
+            Vec::new()
+        })
+    })
 }
 
 fn sync_index_for_visibility_change(
@@ -2248,6 +2284,61 @@ mod tests {
                 assert!(classify(&tmp, &path, path_kind).is_none(), "{relative}");
             }
         }
+    }
+
+    #[test]
+    fn df_258_b_the_indexed_sources_of_a_gone_directory_are_removed_pages() {
+        let tmp = TempDir::new().unwrap();
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Root".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: Some(vec![crate::space::types::SpaceRef {
+                    id: "child".to_string(),
+                    path: "child".to_string(),
+                    repo: None,
+                    extensions: Default::default(),
+                }]),
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: None,
+                extensions: Default::default(),
+            },
+        )
+        .expect("write config");
+        let sources = [
+            "projects/zeta/README.md",
+            "projects/zeta/item.md",
+            "child/page.md",
+        ]
+        .map(|relative| tmp.path().join(relative));
+
+        let removals = vanished_source_removals(
+            tmp.path(),
+            &TreeIgnorePolicy::from_space_root(tmp.path()),
+            &child_folder_names(tmp.path()),
+            &sources,
+        );
+
+        let published = removals
+            .iter()
+            .map(|removal| {
+                assert_eq!(removal.kind, ContentTreeEventKind::Page);
+                assert!(!removal.is_dir);
+                (removal.rel_path.as_str(), removal.parent_path.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            published,
+            vec![
+                ("projects/zeta/README.md", "projects/zeta"),
+                ("projects/zeta/item.md", "projects/zeta"),
+            ]
+        );
     }
 
     #[test]

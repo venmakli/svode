@@ -1,5 +1,5 @@
 use sqlx::SqlitePool;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::error::AppError;
@@ -127,7 +127,7 @@ pub(crate) async fn publish_removed_directory_with_origin(
     project: &Path,
     abs_dir: &Path,
     origin: CollectionEventOrigin,
-) -> Result<(), AppError> {
+) -> Result<Vec<PathBuf>, AppError> {
     let cli = crate::git::dates::detected_cli();
     Ok(
         svode_core::index::update::publish_removed_directory_with_origin(

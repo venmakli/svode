@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -226,7 +226,7 @@ mod tests {
                 outside.path().join(relative.replace('/', "-")),
             )
             .unwrap();
-            publish_removed_directory_with_origin(
+            let mut sources = publish_removed_directory_with_origin(
                 &state,
                 update_state(),
                 None::<&SystemGitDateExecutor>,
@@ -235,7 +235,18 @@ mod tests {
                 CollectionEventOrigin::watcher(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|source| {
+                source
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+            sources.sort();
+            sources
         };
         assert_eq!(found(&pool, "Doc").await.len(), 3);
         assert_eq!(
@@ -243,17 +254,24 @@ mod tests {
             vec!["tasks/a.md", "tasks/b/README.md"]
         );
 
-        remove("docs").await;
+        assert_eq!(
+            remove("docs").await,
+            vec!["docs/one.md", "docs/sub/README.md", "docs/sub/two.md"]
+        );
         assert!(found(&pool, "Doc").await.is_empty());
         assert_eq!(found(&pool, "Beta Note").await, vec!["tasks/b/note.md"]);
 
-        remove("tasks/b").await;
+        assert_eq!(
+            remove("tasks/b").await,
+            vec!["tasks/b/README.md", "tasks/b/note.md"]
+        );
         assert_eq!(items(&pool, root).await, vec!["tasks/a.md"]);
         assert!(found(&pool, "Beta").await.is_empty());
         assert_eq!(found(&pool, "Task Alpha").await, vec!["tasks/a.md"]);
 
-        // The schema of the Collection is gone with it: the Space is repaired.
-        remove("tasks").await;
+        // The schema of the Collection is gone with it: the Space is repaired,
+        // and its Markdown sources are still reported as removed.
+        assert_eq!(remove("tasks").await, vec!["tasks/README.md", "tasks/a.md"]);
         assert!(found(&pool, "Task").await.is_empty());
         let schemas: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM knowledge_source_manifest WHERE source_kind = 'collection_schema'",
@@ -555,7 +573,9 @@ pub async fn publish_path_with_origin<E: GitDateExecutor>(
 /// Publish a directory that left the disk without events for its sources,
 /// such as one moved out of the Space: each indexed Markdown source under it
 /// is published like its own removal. A Collection schema under it repairs
-/// the Space, as the removal of that schema does.
+/// the Space, as the removal of that schema does. Returns the absolute paths
+/// of those Markdown sources, so a host reports their removal as it does for
+/// a directory removed file by file.
 pub async fn publish_removed_directory_with_origin<E: GitDateExecutor>(
     state: &IndexRuntimeState,
     updates: &IndexUpdateState,
@@ -563,20 +583,10 @@ pub async fn publish_removed_directory_with_origin<E: GitDateExecutor>(
     project: &Path,
     abs_dir: &Path,
     origin: CollectionEventOrigin,
-) -> Result<(), IndexUpdateError> {
+) -> Result<Vec<PathBuf>, IndexUpdateError> {
     let (key, rel_dir) = state.resolve(project, abs_dir).await?;
     let prefix = format!("{}/", normalize_rel(&rel_dir)?);
     let pool = state.get_or_create(&key).await?;
-    let removes_collection: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM knowledge_source_manifest \
-         WHERE source_kind = 'collection_schema' AND substr(source_path, 1, length(?1)) = ?1)",
-    )
-    .bind(&prefix)
-    .fetch_one(&pool)
-    .await?;
-    if removes_collection {
-        return updates.repair_space(state, &key, git_dates).await;
-    }
     let sources: Vec<String> = sqlx::query_scalar(
         "SELECT file_path FROM pages WHERE substr(file_path, 1, length(?1)) = ?1 \
          UNION SELECT source_path FROM knowledge_source_manifest \
@@ -586,18 +596,23 @@ pub async fn publish_removed_directory_with_origin<E: GitDateExecutor>(
     .fetch_all(&pool)
     .await?;
     let dir = state.dir_for_key(&key).await?;
-    for source in sources {
-        publish_path_with_origin(
-            state,
-            updates,
-            git_dates,
-            project,
-            &dir.join(source),
-            origin.clone(),
-        )
-        .await?;
+    let sources: Vec<PathBuf> = sources.into_iter().map(|source| dir.join(source)).collect();
+    let removes_collection: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM knowledge_source_manifest \
+         WHERE source_kind = 'collection_schema' AND substr(source_path, 1, length(?1)) = ?1)",
+    )
+    .bind(&prefix)
+    .fetch_one(&pool)
+    .await?;
+    if removes_collection {
+        updates.repair_space(state, &key, git_dates).await?;
+        return Ok(sources);
     }
-    Ok(())
+    for source in &sources {
+        publish_path_with_origin(state, updates, git_dates, project, source, origin.clone())
+            .await?;
+    }
+    Ok(sources)
 }
 
 /// Incrementally update the index for a single absolute path.
