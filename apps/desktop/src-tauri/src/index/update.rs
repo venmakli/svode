@@ -121,6 +121,27 @@ pub(crate) async fn publish_path_with_origin(
     .await?)
 }
 
+pub(crate) async fn publish_removed_directory_with_origin(
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    project: &Path,
+    abs_dir: &Path,
+    origin: CollectionEventOrigin,
+) -> Result<(), AppError> {
+    let cli = crate::git::dates::detected_cli();
+    Ok(
+        svode_core::index::update::publish_removed_directory_with_origin(
+            &state.core,
+            &updates.core,
+            cli.as_ref(),
+            project,
+            abs_dir,
+            origin,
+        )
+        .await?,
+    )
+}
+
 /// Publish managed paths in the Project runtime, repairing the owning Space
 /// pool when there is no Project or a targeted update fails.
 pub(crate) async fn publish_paths_or_repair(

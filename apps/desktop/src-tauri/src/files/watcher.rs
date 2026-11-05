@@ -256,6 +256,7 @@ fn process_published_events(
         BTreeMap::<String, BTreeMap<String, AttachmentInvalidationKind>>::new();
     // Sources that a Svode write of any process replaced in place.
     let mut replaced_in_place = BTreeSet::new();
+    let mut vanished_directories = HashSet::new();
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
@@ -271,10 +272,16 @@ fn process_published_events(
     let mut changed_documents = BTreeSet::new();
     for event in events.iter().filter(|event| changes_files(event)) {
         for (path_index, path) in event.paths.iter().enumerate() {
-            let event_kind = event_kind_for_path(event, path_index);
+            let (event_kind, vanished_directory) =
+                path_event_kind(space_root, &policy, &skip_dirs, event, path_index);
+            if vanished_directory {
+                vanished_directories.insert(path.clone());
+            }
             if let Some(canonical_space_root) = &canonical_space_root {
                 let canonical_path = canonical_event_path(space_root, canonical_space_root, path);
-                let removed_directory = event_kind_is_folder(&event_kind);
+                // The files of a removed folder report their own removal; a
+                // directory that left at once is itself the change of its files.
+                let removed_directory = event_kind_is_folder(&event_kind) && !vanished_directory;
                 changed_app_sources
                     .extend(app_sources.sources_changed_by(&canonical_path, removed_directory));
                 changed_documents
@@ -490,11 +497,8 @@ fn process_published_events(
             continue;
         };
 
-        let event_name = match kind {
-            EventKind::Create(_) => "file:created",
-            EventKind::Modify(_) => "file:changed",
-            EventKind::Remove(_) => "file:deleted",
-            _ => continue,
+        let Some(event_name) = file_event_name(&kind) else {
+            continue;
         };
 
         let write_metadata = nonces.take_metadata(&path);
@@ -507,7 +511,11 @@ fn process_published_events(
         } else {
             CollectionEventOrigin::watcher()
         };
-        sync_index_for_watched_path(space_root, &path, classification.kind, app, event_origin);
+        if matches!(kind, EventKind::Remove(_)) && vanished_directories.contains(&path) {
+            sync_index_for_vanished_directory(space_root, &path, app, event_origin);
+        } else {
+            sync_index_for_watched_path(space_root, &path, classification.kind, app, event_origin);
+        }
 
         // Only `file:changed` exposes writeNonce to the frontend. Metadata is
         // still consumed for creates so Collection events retain managed origin.
@@ -773,6 +781,38 @@ fn sync_index_for_watched_path(
                 .await
         {
             tracing::warn!("watcher index update failed for {}: {e}", path.display());
+        }
+    });
+}
+
+/// Indexed sources under a directory that left at once report no removal of
+/// their own, so the directory publishes it for them.
+fn sync_index_for_vanished_directory(
+    space_root: &Path,
+    path: &Path,
+    app: &AppHandle,
+    origin: CollectionEventOrigin,
+) {
+    tauri::async_runtime::block_on(async {
+        let state = app.state::<IndexState>();
+        let updates = app.state::<IndexUpdateState>();
+        let key = state
+            .key_for_space_dir(space_root)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
+        if let Err(e) = crate::index::update::publish_removed_directory_with_origin(
+            &state,
+            &updates,
+            key.project(),
+            path,
+            origin,
+        )
+        .await
+        {
+            tracing::warn!(
+                "watcher index update failed for removed directory {}: {e}",
+                path.display()
+            );
         }
     });
 }
@@ -1081,6 +1121,62 @@ fn queue_root_schema_transition(
             }
         });
     (current, true)
+}
+
+fn file_event_name(kind: &EventKind) -> Option<&'static str> {
+    match kind {
+        EventKind::Create(_) => Some("file:created"),
+        EventKind::Modify(_) => Some("file:changed"),
+        EventKind::Remove(_) => Some("file:deleted"),
+        _ => None,
+    }
+}
+
+/// The kind of one path of `event` for every consumer of the watcher, and
+/// whether the path is a directory that left at once. Such a directory of
+/// Space content is a folder removal, as with `rm -r` (DF-258).
+fn path_event_kind(
+    space_root: &Path,
+    policy: &TreeIgnorePolicy,
+    skip_dirs: &HashSet<String>,
+    event: &Event,
+    path_index: usize,
+) -> (EventKind, bool) {
+    if is_vanished_directory(space_root, policy, skip_dirs, event, path_index) {
+        (EventKind::Remove(RemoveKind::Folder), true)
+    } else {
+        (event_kind_for_path(event, path_index), false)
+    }
+}
+
+/// A path that left the disk by a rename of any mode, or by a removal
+/// without a kind (Windows), and is not a document, a marker, hidden from
+/// the content tree or under a child Space: a directory moved or renamed
+/// away, put in the Trash or deleted through a tombstone. A file outside the
+/// tree may also match; its folder removal only re-reads the parent.
+fn is_vanished_directory(
+    space_root: &Path,
+    policy: &TreeIgnorePolicy,
+    skip_dirs: &HashSet<String>,
+    event: &Event,
+    path_index: usize,
+) -> bool {
+    let path = &event.paths[path_index];
+    let left = match event.kind {
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+            path_index == 0 && event.paths.len() >= 2
+        }
+        EventKind::Modify(ModifyKind::Name(
+            RenameMode::From | RenameMode::Any | RenameMode::Other,
+        ))
+        | EventKind::Remove(RemoveKind::Any | RemoveKind::Other) => true,
+        _ => false,
+    };
+    left && !is_document_or_schema(path)
+        && std::fs::symlink_metadata(path).is_err()
+        && relative_watched_path(space_root, path)
+            .is_some_and(|relative| !is_under_child_space(&relative, skip_dirs))
+        && !policy.is_ignored_abs(path, TreePathKind::Directory)
 }
 
 fn event_kind_for_path(event: &Event, path_index: usize) -> EventKind {
@@ -1957,5 +2053,272 @@ mod tests {
 
         assert!(classify(&tmp, &child_doc, EventKind::Create(CreateKind::File)).is_none());
         assert!(classify(&tmp, &sibling_doc, EventKind::Create(CreateKind::File)).is_some());
+    }
+
+    /// What the debounce loop publishes for a batch: the merged kind of each
+    /// content tree path with its classification.
+    fn published(
+        space: &Path,
+        events: &[Event],
+    ) -> HashMap<PathBuf, (EventKind, ContentTreeEventClassification)> {
+        let policy = TreeIgnorePolicy::from_space_root(space);
+        let skip_dirs = child_folder_names(space);
+        let mut seen: HashMap<PathBuf, EventKind> = HashMap::new();
+        for event in events.iter().filter(|event| changes_files(event)) {
+            for (index, path) in event.paths.iter().enumerate() {
+                let (kind, _) = path_event_kind(space, &policy, &skip_dirs, event, index);
+                if classify_content_tree_event(space, &policy, &skip_dirs, path, &kind).is_some() {
+                    seen.entry(path.clone())
+                        .and_modify(|current| *current = merge_event_kind(*current, kind))
+                        .or_insert(kind);
+                }
+            }
+        }
+        seen.into_iter()
+            .filter_map(|(path, kind)| {
+                classify_content_tree_event(space, &policy, &skip_dirs, &path, &kind)
+                    .map(|classification| (path, (kind, classification)))
+            })
+            .collect()
+    }
+
+    fn kind_of(tmp: &TempDir, event: &Event, index: usize) -> (EventKind, bool) {
+        path_event_kind(
+            tmp.path(),
+            &TreeIgnorePolicy::from_space_root(tmp.path()),
+            &child_folder_names(tmp.path()),
+            event,
+            index,
+        )
+    }
+
+    fn event_of(kind: EventKind, paths: &[&Path]) -> Event {
+        paths.iter().fold(Event::new(kind), |event, path| {
+            event.add_path(path.to_path_buf())
+        })
+    }
+
+    #[test]
+    fn df_258_a_directory_gone_by_any_rename_or_kindless_removal_is_a_folder_removal() {
+        let tmp = TempDir::new().unwrap();
+        let renamed = tmp.path().join("renamed");
+        std::fs::create_dir_all(&renamed).unwrap();
+        for gone in [
+            tmp.path().join("notebook"),
+            tmp.path().join("docs/notebook"),
+        ] {
+            for event in [
+                event_of(
+                    EventKind::Modify(ModifyKind::Name(RenameMode::Any)),
+                    &[&gone],
+                ),
+                event_of(
+                    EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+                    &[&gone],
+                ),
+                event_of(
+                    EventKind::Modify(ModifyKind::Name(RenameMode::Other)),
+                    &[&gone],
+                ),
+                event_of(
+                    EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                    &[&gone, &renamed],
+                ),
+                event_of(EventKind::Remove(RemoveKind::Any), &[&gone]),
+                event_of(EventKind::Remove(RemoveKind::Other), &[&gone]),
+            ] {
+                let (kind, vanished) = kind_of(&tmp, &event, 0);
+                assert_eq!(kind, EventKind::Remove(RemoveKind::Folder), "{event:?}");
+                assert!(vanished, "{event:?}");
+                assert_eq!(file_event_name(&kind), Some("file:deleted"));
+                let classification = classify(&tmp, &gone, kind).unwrap();
+                let relative = relative_watched_path(tmp.path(), &gone).unwrap();
+                assert_eq!(classification.rel_path, relative);
+                assert_eq!(classification.kind, ContentTreeEventKind::Folder);
+                assert!(classification.is_dir);
+                assert!(classification.affects_tree);
+                assert_eq!(classification.parent_path, parent_path_for_rel(&relative));
+                let owner = if classification.parent_path.is_empty() {
+                    ".".to_string()
+                } else {
+                    classification.parent_path.clone()
+                };
+                assert_eq!(
+                    classify_attachment_invalidations(tmp.path(), &gone, &kind),
+                    vec![AttachmentInvalidation {
+                        owner_path: owner,
+                        path: relative,
+                        kind: AttachmentInvalidationKind::Boundary,
+                    }]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn df_258_present_documents_markers_hidden_and_child_space_paths_keep_their_events() {
+        let tmp = TempDir::new().unwrap();
+        write_space_config(
+            tmp.path(),
+            &SpaceConfig {
+                name: "Root".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: Some(vec![crate::space::types::SpaceRef {
+                    id: "child".to_string(),
+                    path: "child".to_string(),
+                    repo: None,
+                    extensions: Default::default(),
+                }]),
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: Some(TreeSpaceConfig {
+                    exclude: vec!["node_modules".to_string()],
+                    include: Vec::new(),
+                    show_ignored_placeholders: false,
+                    extensions: Default::default(),
+                }),
+                extensions: Default::default(),
+            },
+        )
+        .expect("write config");
+        let existing = tmp.path().join("existing");
+        std::fs::create_dir_all(&existing).unwrap();
+        let rename_any = EventKind::Modify(ModifyKind::Name(RenameMode::Any));
+
+        // An existing directory keeps its rename event.
+        let event = event_of(rename_any, &[&existing]);
+        assert_eq!(kind_of(&tmp, &event, 0), (rename_any, false));
+        let classification = classify(&tmp, &existing, rename_any).unwrap();
+        assert_eq!(classification.kind, ContentTreeEventKind::Folder);
+        assert_eq!(file_event_name(&rename_any), Some("file:changed"));
+
+        // The new path of a paired rename and a rename into place.
+        let gone = tmp.path().join("notebook");
+        let both = EventKind::Modify(ModifyKind::Name(RenameMode::Both));
+        let event = event_of(both, &[&gone, &existing]);
+        assert_eq!(kind_of(&tmp, &event, 1), (both, false));
+        let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        assert_eq!(kind_of(&tmp, &event_of(to, &[&gone]), 0), (to, false));
+
+        // Kinded removals keep their kind.
+        for kind in [
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Remove(RemoveKind::Folder),
+        ] {
+            assert_eq!(kind_of(&tmp, &event_of(kind, &[&gone]), 0), (kind, false));
+        }
+
+        // Documents and markers keep their own rules.
+        let note = tmp.path().join("notes/note.md");
+        assert_eq!(
+            kind_of(&tmp, &event_of(rename_any, &[&note]), 0),
+            (rename_any, false)
+        );
+        assert_eq!(
+            classify(&tmp, &note, rename_any).unwrap().kind,
+            ContentTreeEventKind::Page
+        );
+        for marker in ["tasks/schema.yaml", "dashboard/app.yaml"] {
+            let marker = tmp.path().join(marker);
+            for kind in [rename_any, EventKind::Remove(RemoveKind::Any)] {
+                let (marker_kind, vanished) = kind_of(&tmp, &event_of(kind, &[&marker]), 0);
+                assert!(!vanished, "{marker:?}");
+                assert_eq!(
+                    marker_kind,
+                    event_kind_for_path(&event_of(kind, &[&marker]), 0)
+                );
+            }
+        }
+
+        // Hidden, excluded and child Space paths publish nothing new.
+        for relative in [
+            ".svode-delete-01jz",
+            "notes/.svode-delete-01jz",
+            ".git/refs",
+            "node_modules",
+            "child/notebook",
+        ] {
+            let path = tmp.path().join(relative);
+            for kind in [rename_any, EventKind::Remove(RemoveKind::Any)] {
+                let (path_kind, vanished) = kind_of(&tmp, &event_of(kind, &[&path]), 0);
+                assert_eq!((path_kind, vanished), (kind, false), "{relative}");
+                assert!(classify(&tmp, &path, path_kind).is_none(), "{relative}");
+            }
+        }
+    }
+
+    #[test]
+    fn df_258_a_gone_file_outside_the_tree_only_rereads_its_parent() {
+        let tmp = TempDir::new().unwrap();
+        let image = tmp.path().join("docs/image.png");
+        let event = event_of(
+            EventKind::Modify(ModifyKind::Name(RenameMode::Any)),
+            &[&image],
+        );
+
+        let (kind, vanished) = kind_of(&tmp, &event, 0);
+
+        assert!(vanished);
+        let classification = classify(&tmp, &image, kind).unwrap();
+        assert_eq!(classification.rel_path, "docs/image.png");
+        assert_eq!(classification.parent_path, "docs");
+        assert_eq!(
+            classify_attachment_invalidations(tmp.path(), &image, &kind),
+            vec![AttachmentInvalidation {
+                owner_path: "docs".into(),
+                path: "docs/image.png".into(),
+                kind: AttachmentInvalidationKind::Boundary,
+            }]
+        );
+    }
+
+    /// A real move of a directory with Pages out of the watched root reaches
+    /// the tree as `file:deleted` of the folder, like `rm -r`.
+    #[test]
+    fn df_258_a_directory_moved_out_of_the_space_publishes_a_folder_removal() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let space = tmp.path().canonicalize().unwrap();
+        let notebook = space.join("notebook");
+        std::fs::create_dir_all(notebook.join("sub")).unwrap();
+        std::fs::write(notebook.join("README.md"), "---\ntitle: Notebook\n---\n").unwrap();
+        std::fs::write(notebook.join("page.md"), "page").unwrap();
+        std::fs::write(notebook.join("sub/deep.md"), "deep").unwrap();
+
+        let (tx, rx) = mpsc::channel::<Event>();
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            if let Ok(event) = res {
+                let _ = tx.send(event);
+            }
+        })
+        .unwrap();
+        watcher.watch(&space, RecursiveMode::Recursive).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        while rx.try_recv().is_ok() {}
+
+        std::fs::rename(&notebook, outside.path().join("notebook")).unwrap();
+        let mut events = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match rx.recv_timeout(left.min(std::time::Duration::from_millis(500))) {
+                Ok(event) => events.push(event),
+                Err(_) if events.iter().any(|event| event.paths.contains(&notebook)) => break,
+                Err(_) => {}
+            }
+        }
+        drop(watcher);
+
+        let published = published(&space, &events);
+        let (kind, classification) = published
+            .get(&notebook)
+            .unwrap_or_else(|| panic!("{events:?}"));
+        assert_eq!(file_event_name(kind), Some("file:deleted"), "{events:?}");
+        assert_eq!(classification.kind, ContentTreeEventKind::Folder);
+        assert!(classification.is_dir);
+        assert_eq!(classification.rel_path, "notebook");
+        assert_eq!(classification.parent_path, "");
     }
 }

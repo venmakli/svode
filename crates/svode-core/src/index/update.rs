@@ -162,6 +162,107 @@ mod tests {
         stores.close_key(&key).await;
         index.close_key(&key).await;
     }
+
+    /// DF-258: a directory that left the Space without events for its
+    /// sources stops serving its Pages at depth 1 and 2 to search and
+    /// Collection queries; a Collection under it repairs the Space.
+    #[tokio::test]
+    async fn a_removed_directory_publishes_the_removal_of_its_sources() {
+        use crate::collections::{engine, query::query_item_rows};
+        use crate::index::search::search_by_title;
+        use crate::page::dates::SystemGitDateExecutor;
+        use crate::page::test_support::{scaffold_space, update_state};
+
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        scaffold_space(root, "Test");
+        for (path, content) in [
+            (
+                "tasks/schema.yaml",
+                "columns:\n  - { name: Status, type: text }\nviews: []\n",
+            ),
+            ("tasks/README.md", "---\ntitle: Tasks\n---\n"),
+            ("tasks/a.md", "---\ntitle: Task Alpha\n---\n"),
+            ("tasks/b/README.md", "---\ntitle: Task Beta\n---\n"),
+            ("tasks/b/note.md", "---\ntitle: Beta Note\n---\n"),
+            ("docs/one.md", "---\ntitle: Doc One\n---\n"),
+            ("docs/sub/README.md", "---\ntitle: Doc Sub\n---\n"),
+            ("docs/sub/two.md", "---\ntitle: Doc Two\n---\n"),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+        let state = IndexRuntimeState::default();
+        let key = IndexKey::Root(root.to_path_buf());
+        update_state()
+            .repair_space(&state, &key, None::<&SystemGitDateExecutor>)
+            .await
+            .unwrap();
+        let pool = state.get_or_create(&key).await.unwrap();
+        async fn found(pool: &SqlitePool, query: &str) -> Vec<String> {
+            search_by_title(pool, query, 20)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.path)
+                .collect()
+        }
+        async fn items(pool: &SqlitePool, root: &Path) -> Vec<String> {
+            let schema = engine::read_collection_schema(root.to_str().unwrap(), "tasks").unwrap();
+            let mut paths = query_item_rows(pool, &schema, "tasks", &[], &[], None, None)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|row| row.file_path)
+                .collect::<Vec<_>>();
+            paths.sort();
+            paths
+        }
+        let remove = async |relative: &str| {
+            std::fs::rename(
+                root.join(relative),
+                outside.path().join(relative.replace('/', "-")),
+            )
+            .unwrap();
+            publish_removed_directory_with_origin(
+                &state,
+                update_state(),
+                None::<&SystemGitDateExecutor>,
+                root,
+                &root.join(relative),
+                CollectionEventOrigin::watcher(),
+            )
+            .await
+            .unwrap();
+        };
+        assert_eq!(found(&pool, "Doc").await.len(), 3);
+        assert_eq!(
+            items(&pool, root).await,
+            vec!["tasks/a.md", "tasks/b/README.md"]
+        );
+
+        remove("docs").await;
+        assert!(found(&pool, "Doc").await.is_empty());
+        assert_eq!(found(&pool, "Beta Note").await, vec!["tasks/b/note.md"]);
+
+        remove("tasks/b").await;
+        assert_eq!(items(&pool, root).await, vec!["tasks/a.md"]);
+        assert!(found(&pool, "Beta").await.is_empty());
+        assert_eq!(found(&pool, "Task Alpha").await, vec!["tasks/a.md"]);
+
+        // The schema of the Collection is gone with it: the Space is repaired.
+        remove("tasks").await;
+        assert!(found(&pool, "Task").await.is_empty());
+        let schemas: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_source_manifest WHERE source_kind = 'collection_schema'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(schemas, 0);
+    }
 }
 
 pub async fn apply_targeted_change(
@@ -447,6 +548,54 @@ pub async fn publish_path_with_origin<E: GitDateExecutor>(
         state
             .remove_file_backlinks(project, space_id.as_deref(), &relative)
             .await?;
+    }
+    Ok(())
+}
+
+/// Publish a directory that left the disk without events for its sources,
+/// such as one moved out of the Space: each indexed Markdown source under it
+/// is published like its own removal. A Collection schema under it repairs
+/// the Space, as the removal of that schema does.
+pub async fn publish_removed_directory_with_origin<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    project: &Path,
+    abs_dir: &Path,
+    origin: CollectionEventOrigin,
+) -> Result<(), IndexUpdateError> {
+    let (key, rel_dir) = state.resolve(project, abs_dir).await?;
+    let prefix = format!("{}/", normalize_rel(&rel_dir)?);
+    let pool = state.get_or_create(&key).await?;
+    let removes_collection: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM knowledge_source_manifest \
+         WHERE source_kind = 'collection_schema' AND substr(source_path, 1, length(?1)) = ?1)",
+    )
+    .bind(&prefix)
+    .fetch_one(&pool)
+    .await?;
+    if removes_collection {
+        return updates.repair_space(state, &key, git_dates).await;
+    }
+    let sources: Vec<String> = sqlx::query_scalar(
+        "SELECT file_path FROM pages WHERE substr(file_path, 1, length(?1)) = ?1 \
+         UNION SELECT source_path FROM knowledge_source_manifest \
+         WHERE source_kind = 'markdown' AND substr(source_path, 1, length(?1)) = ?1",
+    )
+    .bind(&prefix)
+    .fetch_all(&pool)
+    .await?;
+    let dir = state.dir_for_key(&key).await?;
+    for source in sources {
+        publish_path_with_origin(
+            state,
+            updates,
+            git_dates,
+            project,
+            &dir.join(source),
+            origin.clone(),
+        )
+        .await?;
     }
     Ok(())
 }
