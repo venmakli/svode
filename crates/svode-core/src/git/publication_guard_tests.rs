@@ -118,9 +118,10 @@ async fn setext_heading_underlined_by_a_side_separator_publishes() {
 
 #[tokio::test]
 async fn lone_opening_closing_or_base_marker_line_is_not_published() {
+    // Git writes an opening marker with its label; since Git 2.56 a bare
+    // `<<<<<<<` line is not a marker to `git diff --check` either.
     let lines = [
         "<<<<<<< ours\n",
-        "<<<<<<<\n",
         ">>>>>>> theirs\n",
         "|||||||\n",
         "||||||| base\n",

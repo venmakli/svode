@@ -23,6 +23,9 @@ fn config(name: &str) -> String {
     format!("{{\"name\":\"{name}\"}}\n")
 }
 
+/// The tests rewrite an order to one of another length: a rewrite of the
+/// same size within one tick of a coarse file clock (Linux) leaves the stat
+/// Git keeps in the index matching, and the change goes unseen.
 fn order(entry: &str) -> String {
     format!("{{\"\":[\"{entry}\"]}}\n")
 }
@@ -138,7 +141,7 @@ async fn commit_all_names_the_project_and_its_spaces_by_their_names_not_their_di
     let indie = named_root("Indie").await;
 
     for space in [root, &root.join("docs"), &team, indie.path()] {
-        write(space, ".svode/order.json", &order("b"));
+        write(space, ".svode/order.json", &order("second"));
         write(space, ".gitignore", "*.log\n*.tmp\n");
     }
 
@@ -203,7 +206,7 @@ async fn folders_are_named_by_their_readme_or_name_and_an_unnamed_root_by_nothin
     write(root, "plain/.svode/order.json", &order("a"));
     commit_all(root).await;
     for dir in ["", "inline/", "Guide/", "plain/"] {
-        write(root, &format!("{dir}.svode/order.json"), &order("b"));
+        write(root, &format!("{dir}.svode/order.json"), &order("second"));
     }
     write(root, ".gitignore", "*.log\n");
 
@@ -241,8 +244,8 @@ async fn a_registered_reorder_names_its_folder_and_an_untitled_page_its_file() {
     write(root, "Untitled note.md", &page("\"\"", "Old\n"));
     write(root, "README.md", &page("\"\"", "Home\n"));
     commit_all(root).await;
-    write(root, "Guide/.svode/order.json", &order("b"));
-    write(root, ".svode/order.json", &order("b"));
+    write(root, "Guide/.svode/order.json", &order("second"));
+    write(root, ".svode/order.json", &order("second"));
     write(root, "Untitled note.md", &page("\"\"", "New\n"));
     write(root, "README.md", &page("\"\"", "Home 2\n"));
     git(&cli, root, &["add", "--all"]).await;
@@ -285,7 +288,7 @@ async fn an_automatic_version_names_the_project() {
     let tmp = named_root("QA Project").await;
     let root = tmp.path();
     content_on(root);
-    write(root, ".svode/order.json", &order("b"));
+    write(root, ".svode/order.json", &order("second"));
     let fixture = (GitRuntime::with_cli(cli()), TestHost::default());
 
     let closed = close(&fixture.0, &fixture.1, root, &Closing::all(PAUSE), EN)
@@ -307,7 +310,7 @@ async fn a_turn_version_names_the_project() {
     let runtime = GitRuntime::with_cli(cli());
     let host = TestHost::default();
     turns::begin(&runtime, &host, root, "df283:turn", TurnWrap::Version, EN).await;
-    write(root, ".svode/order.json", &order("b"));
+    write(root, ".svode/order.json", &order("second"));
 
     turns::end(&runtime, &host, "df283:turn", EN).await;
 
@@ -318,7 +321,7 @@ async fn a_turn_version_names_the_project() {
 async fn the_commit_with_agent_context_names_the_project() {
     let tmp = named_root("QA Project").await;
     let root = tmp.path();
-    write(root, ".svode/order.json", &order("b"));
+    write(root, ".svode/order.json", &order("second"));
     let runtime = GitRuntime::with_cli(cli());
 
     let found = uncommitted(&runtime, root, &[".svode/order.json".to_string()], EN)

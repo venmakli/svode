@@ -158,14 +158,14 @@ fn rules() -> impl Iterator<Item = &'static dyn ServiceRule> {
     RULES.iter().copied().chain(test_rules())
 }
 
-#[cfg(not(test))]
+#[cfg(not(all(test, unix)))]
 fn test_rules() -> impl Iterator<Item = &'static dyn ServiceRule> {
     std::iter::empty()
 }
 
 /// A rule that exists only in the set: the tests prove that each caller
 /// applies whatever the set holds.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn test_rules() -> impl Iterator<Item = &'static dyn ServiceRule> {
     std::iter::once(&tests::ProbeRule as &dyn ServiceRule)
 }

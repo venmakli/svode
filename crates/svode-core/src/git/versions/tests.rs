@@ -562,6 +562,8 @@ async fn after_a_restart_groups_come_back_by_owner() {
     );
 }
 
+// The refusing hook is a shell script, as svode-testkit writes it on Unix.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_failed_group_keeps_the_landed_ones_and_returns_the_rest_to_pending() {
     let cli = cli();
