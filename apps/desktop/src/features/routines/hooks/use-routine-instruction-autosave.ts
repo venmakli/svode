@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useSignalUserEdit } from "@/features/navigation";
 import * as m from "@/paraglide/messages.js";
 
 /** How long the instruction waits after the last change before it is saved. */
@@ -17,6 +18,11 @@ export type RoutineInstructionFlush = () => Promise<boolean>;
  * Routine at a time. A refused write puts the saved instruction back with
  * the reason. An update of the Routine from disk leaves an instruction that
  * is still being saved as it is. Leaving writes what was typed.
+ *
+ * A change the user types keeps the Routine the main area shows in Now, as
+ * typing in a page's content does; showing the instruction, drawing it again
+ * after a change on disk and the write on leaving do not, since the main area
+ * may already show the next object by then.
  */
 export function useRoutineInstructionAutosave({
   body,
@@ -113,8 +119,12 @@ export function useRoutineInstructionAutosave({
     };
   }, [flush, registerFlush]);
 
+  const signalUserEdit = useSignalUserEdit();
+  // The editor reports only changes of its content, never the instruction
+  // it was drawn with.
   const change = useCallback(
     (next: string) => {
+      signalUserEdit();
       draftRef.current = next;
       setDirty(true);
       setMessage(null);
@@ -124,7 +134,7 @@ export function useRoutineInstructionAutosave({
         void flush();
       }, ROUTINE_INSTRUCTION_SAVE_DELAY_MS);
     },
-    [flush],
+    [flush, signalUserEdit],
   );
 
   return { change, message, shown };

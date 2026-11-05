@@ -46,18 +46,39 @@ if (process.env.SVODE_ROUTINE_INSTRUCTION_DOM !== "1") {
     await import("./routine-instruction-editor");
   const { ROUTINE_INSTRUCTION_SAVE_DELAY_MS } =
     await import("../hooks/use-routine-instruction-autosave");
+  const { subscribeUserEdits, UserEditScope } =
+    await import("@/features/navigation");
 
-  async function mount(save: (body: string) => Promise<void>) {
+  async function mount(
+    save: (body: string) => Promise<void>,
+    { mainArea = false }: { mainArea?: boolean } = {},
+  ) {
     const dom = await createTestDom();
     const handle: {
       flush: RoutineInstructionFlush | null;
       setBody: ((body: string) => void) | null;
-    } = { flush: null, setBody: null };
+      setShown: ((shown: boolean) => void) | null;
+    } = { flush: null, setBody: null, setShown: null };
     function Harness() {
       const [body, setBody] = useState("Summarize.");
+      const [shown, setShown] = useState(true);
       useEffect(() => {
         handle.setBody = setBody;
+        handle.setShown = setShown;
       }, []);
+      return (
+        <UserEditScope mainArea={mainArea}>
+          {shown ? <Instruction body={body} setBody={setBody} /> : null}
+        </UserEditScope>
+      );
+    }
+    function Instruction({
+      body,
+      setBody,
+    }: {
+      body: string;
+      setBody(body: string): void;
+    }) {
       return (
         <RoutineInstructionEditor
           body={body}
@@ -155,6 +176,54 @@ if (process.env.SVODE_ROUTINE_INSTRUCTION_DOM !== "1") {
       await act(async () => handle.setBody!("Changed again."));
       expect(editor().value).toBe("Typing over it");
     } finally {
+      await dom.dispose();
+    }
+  });
+
+  test("a change the user types keeps the Routine the main area shows; showing it, a redraw from disk and the write on leaving do not", async () => {
+    const saves: string[] = [];
+    const edits: string[] = [];
+    const unsubscribe = subscribeUserEdits((edit) => edits.push(edit.kind));
+    const { dom, editor, handle, type } = await mount(
+      async (body) => {
+        saves.push(body);
+      },
+      { mainArea: true },
+    );
+    try {
+      expect(edits).toEqual([]);
+      await act(async () => handle.setBody!("Changed on disk."));
+      expect(editor().value).toBe("Changed on disk.");
+      expect(edits).toEqual([]);
+
+      await type("Summarize the day.");
+      expect(edits).toEqual(["edit"]);
+
+      // Leaving writes what was typed without another edit signal.
+      await type("Summarize the week.");
+      expect(edits).toEqual(["edit", "edit"]);
+      await act(async () => handle.setShown!(false));
+      await wait(50);
+      expect(saves).toEqual(["Summarize the week."]);
+      expect(edits).toEqual(["edit", "edit"]);
+    } finally {
+      unsubscribe();
+      await dom.dispose();
+    }
+  });
+
+  test("a change typed outside the main area keeps nothing", async () => {
+    const edits: string[] = [];
+    const unsubscribe = subscribeUserEdits((edit) => edits.push(edit.kind));
+    const { dom, handle, type } = await mount(async () => undefined);
+    try {
+      await type("Summarize the day.");
+      await act(async () => {
+        await handle.flush!();
+      });
+      expect(edits).toEqual([]);
+    } finally {
+      unsubscribe();
       await dom.dispose();
     }
   });

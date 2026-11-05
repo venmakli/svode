@@ -9,6 +9,7 @@ import {
 } from "react";
 import { LoaderCircle } from "lucide-react";
 
+import { useSignalUserEdit } from "@/features/navigation";
 import * as m from "@/paraglide/messages.js";
 
 /**
@@ -17,7 +18,8 @@ import * as m from "@/paraglide/messages.js";
  * loses focus, the description likewise — through the owner, which rejects
  * with the reason a value was not saved. A refused value shows the saved one
  * and the reason under it; an empty name is not saved. Escape puts the saved
- * value back.
+ * value back. A saved name or description keeps the object the main area
+ * shows in Now, as a saved property does; a refused one does not.
  */
 export interface ObjectContentHeaderEdit {
   /** The saved description to edit; `description` of the header shows it otherwise. */
@@ -88,15 +90,19 @@ function EditableObjectContentHeader({
   const titleErrorId = useId();
   const descriptionErrorId = useId();
   const [editingDescription, setEditingDescription] = useState(false);
+  // A saved edit of the object the main area shows keeps it in Now.
+  const signalUserEdit = useSignalUserEdit();
   const titleField = useInlineField({
     saved: title,
     required: true,
     commit: edit.onTitleCommit,
+    onSaved: signalUserEdit,
   });
   const descriptionField = useInlineField({
     saved: edit.description,
     required: false,
     commit: edit.onDescriptionCommit,
+    onSaved: signalUserEdit,
   });
 
   const handledFocusRequestRef = useRef(0);
@@ -258,14 +264,16 @@ function SavingIndicator() {
 /**
  * The draft of one inline field: it follows the saved value while the field
  * is not edited, and on leaving the field saves a changed draft through the
- * owner, which may refuse it.
+ * owner, which may refuse it. `onSaved` follows only a value the owner saved.
  */
 function useInlineField({
   commit,
+  onSaved,
   required,
   saved,
 }: {
   commit(value: string): Promise<void>;
+  onSaved(): void;
   required: boolean;
   saved: string;
 }) {
@@ -300,6 +308,7 @@ function useInlineField({
       try {
         await commit(next);
         setDraft(next);
+        onSaved();
       } catch (error) {
         setDraft(saved);
         setMessage(
@@ -312,7 +321,7 @@ function useInlineField({
         setPending(false);
       }
     },
-    [commit, required, saved],
+    [commit, onSaved, required, saved],
   );
 
   return {
