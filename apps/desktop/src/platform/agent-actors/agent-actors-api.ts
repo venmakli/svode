@@ -38,6 +38,20 @@ export interface AgentActorAgentLabelDto {
   displayName: string;
 }
 
+/** What happened to an Agent Actor catalog that cannot be read. */
+export type AgentActorCatalogUnavailableReasonDto =
+  | "newer_format"
+  | "damaged"
+  | "unreadable";
+
+export interface AgentActorCatalogDiagnosticDto {
+  ownerPath: string;
+  code: string;
+  /** Present on a `catalog_unavailable` diagnostic whose cause has a class. */
+  reason?: AgentActorCatalogUnavailableReasonDto;
+  message: string;
+}
+
 export interface AgentActorsReadResultDto {
   resolution: {
     actors: {
@@ -47,7 +61,7 @@ export interface AgentActorsReadResultDto {
       /** The version a write of the Actor expects: its definition and mode. */
       version: string;
     }[];
-    diagnostics: { ownerPath: string; code: string; message: string }[];
+    diagnostics: AgentActorCatalogDiagnosticDto[];
   };
   ownerFingerprints: Record<string, string>;
   bindableAgents: AgentActorAgentLabelDto[];

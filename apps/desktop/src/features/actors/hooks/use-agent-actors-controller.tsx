@@ -14,6 +14,7 @@ import * as m from "@/paraglide/messages.js";
 import type { ActorPeekTarget } from "../model/actor-peek";
 import type {
   AgentActorAgentOption,
+  AgentActorCatalogSnapshot,
   AgentActorItem,
 } from "../model/agent-actor-types";
 import {
@@ -29,12 +30,19 @@ import {
   type AgentActorAccessDenial,
 } from "./use-agent-actor-mutations";
 import { AgentActorBindingPopover } from "../ui/agent-actor-binding-popover";
+import { agentActorCatalogDiagnosticText } from "../ui/agent-actor-copy";
 import { AgentActorDeleteDialog } from "../ui/agent-actor-delete-dialog";
 import { AgentActorSaveDialog } from "../ui/agent-actor-save-dialog";
 import type { AgentActorsPresentationEditing } from "../ui/agent-actors-presentation";
 import { CatalogRetryButton } from "../ui/catalog-retry-button";
 
 const NO_AGENTS: readonly AgentActorAgentOption[] = [];
+
+function diagnosticTexts(snapshot: AgentActorCatalogSnapshot): string[] {
+  return snapshot.diagnostics.map((diagnostic) =>
+    agentActorCatalogDiagnosticText(diagnostic, snapshot.launchSpacePath),
+  );
+}
 
 export function useAgentActorsController({
   owner,
@@ -271,7 +279,7 @@ export function useAgentActorsController({
           }
         : {
             diagnostics: [
-              ...catalog.state.snapshot.diagnostics.map((item) => item.message),
+              ...diagnosticTexts(catalog.state.snapshot),
               ...(catalog.state.refreshError
                 ? [
                     <span

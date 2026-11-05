@@ -3608,6 +3608,17 @@ async fn agent_actor_diagnostics_keep_readable_agents_and_name_no_device_path() 
     assert_eq!(diagnostic["code"], "catalog_unavailable");
     assert_eq!(diagnostic["ownerSpaceId"], "child");
     assert_eq!(diagnostic["reference"], Value::Null);
+    // The wire keeps its fields; the message reads as a phrase.
+    let mut fields = diagnostic
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    fields.sort();
+    assert_eq!(fields, ["code", "message", "ownerSpaceId", "reference"]);
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.starts_with("Invalid agent catalog: "), "{message}");
     assert!(!unreadable.to_string().contains(&project_path));
 
     // An id of both the own and the root catalog is left out and refused.

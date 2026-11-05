@@ -5,7 +5,10 @@ import type {
   AgentActorFacts,
   AgentActorReadiness,
 } from "../model/agent-actor-facts";
-import type { AgentActorBinding } from "../model/agent-actor-types";
+import type {
+  AgentActorBinding,
+  AgentActorCatalogDiagnostic,
+} from "../model/agent-actor-types";
 
 /**
  * The "Agent" of an Agent: the binding's agent with its model, or the
@@ -52,3 +55,35 @@ export const AGENT_ACTOR_READINESS: readonly AgentActorReadiness[] = [
   "default_agent_missing",
   "value_not_declared",
 ];
+
+/**
+ * The text of a catalog diagnostic of the Agents collection of
+ * `launchSpacePath`. A catalog that cannot be read reads by the class of its
+ * cause and names an inherited root catalog the project's; its message is
+ * not user copy. Any other diagnostic keeps its message.
+ */
+export function agentActorCatalogDiagnosticText(
+  diagnostic: AgentActorCatalogDiagnostic,
+  launchSpacePath: string,
+): string {
+  if (diagnostic.code !== "catalog_unavailable") return diagnostic.message;
+  const project = diagnostic.ownerPath !== launchSpacePath;
+  switch (diagnostic.reason) {
+    case "newer_format":
+      return project
+        ? m.agent_actors_catalog_newer_format_project()
+        : m.agent_actors_catalog_newer_format();
+    case "damaged":
+      return project
+        ? m.agent_actors_catalog_damaged_project()
+        : m.agent_actors_catalog_damaged();
+    case "unreadable":
+      return project
+        ? m.agent_actors_catalog_unreadable_project()
+        : m.agent_actors_catalog_unreadable();
+    default:
+      return project
+        ? m.agent_actors_catalog_unavailable_project()
+        : m.agent_actors_catalog_unavailable();
+  }
+}

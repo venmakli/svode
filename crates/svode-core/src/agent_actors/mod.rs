@@ -149,12 +149,62 @@ pub enum CatalogError {
     Io(String),
 }
 
+impl CatalogError {
+    /// Why a catalog that failed to read is unavailable, in the terms of what
+    /// its reader can do about it; `None` for a failure that is not about the
+    /// file itself.
+    pub fn unavailable_reason(&self) -> Option<CatalogUnavailableReason> {
+        match self {
+            Self::UnknownSchema(version) if *version > CATALOG_SCHEMA_VERSION => {
+                Some(CatalogUnavailableReason::NewerFormat)
+            }
+            Self::Compatibility(_) => Some(CatalogUnavailableReason::NewerFormat),
+            Self::UnknownSchema(_) | Self::Invalid(_) | Self::Unsafe(_) => {
+                Some(CatalogUnavailableReason::Damaged)
+            }
+            Self::Io(_) => Some(CatalogUnavailableReason::Unreadable),
+            Self::Stale => None,
+        }
+    }
+}
+
 impl std::fmt::Display for CatalogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::Unsafe(detail) => write!(f, "Agent catalog rejected: {detail}"),
+            Self::Invalid(detail) => write!(f, "Invalid agent catalog: {detail}"),
+            Self::UnknownSchema(version) if *version > CATALOG_SCHEMA_VERSION => write!(
+                f,
+                "Agent catalog schema version {version} is newer than this version of Svode \
+                 supports ({CATALOG_SCHEMA_VERSION})"
+            ),
+            Self::UnknownSchema(version) => {
+                write!(f, "Unsupported agent catalog schema version {version}")
+            }
+            Self::Compatibility(detail) => write!(
+                f,
+                "Agent catalog written by a newer version of Svode: {detail}"
+            ),
+            Self::Stale => write!(f, "The agent catalog changed since it was read"),
+            Self::Io(detail) => write!(f, "Could not access the agent catalog: {detail}"),
+        }
     }
 }
 impl std::error::Error for CatalogError {}
+
+/// The class of a `catalog_unavailable` diagnostic: what happened to the
+/// catalog file, so a reader can say what to do without parsing the message.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogUnavailableReason {
+    /// Written by a newer version of Svode: a newer schema or a field or
+    /// agent id this version does not know.
+    NewerFormat,
+    /// Not a catalog this or an older version wrote.
+    Damaged,
+    /// The file could not be read.
+    Unreadable,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +218,9 @@ pub struct ResolvedAgentActor {
 pub struct AgentActorCatalogDiagnostic {
     pub owner_path: String,
     pub code: String,
+    /// Class of a `catalog_unavailable` diagnostic, when its cause has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<CatalogUnavailableReason>,
     pub message: String,
     /// Id an `ambiguous_actor_id` diagnostic is about; the message names it
     /// for the window, so it is not serialized.
@@ -207,6 +260,7 @@ pub fn resolve_catalogs(own: &Path, inherited_root: Option<&Path>) -> AgentActor
             Err(error) => diagnostics.push(AgentActorCatalogDiagnostic {
                 owner_path: owner.to_string_lossy().to_string(),
                 code: "catalog_unavailable".into(),
+                reason: error.unavailable_reason(),
                 message: error.to_string(),
                 actor_id: None,
             }),
@@ -225,6 +279,7 @@ pub fn resolve_catalogs(own: &Path, inherited_root: Option<&Path>) -> AgentActor
                 diagnostics.push(AgentActorCatalogDiagnostic {
                     owner_path: owner.to_string_lossy().to_string(),
                     code: "ambiguous_actor_id".into(),
+                    reason: None,
                     message: format!(
                         "agent:{} is defined by multiple effective catalogs",
                         actor.id
@@ -841,6 +896,156 @@ mod tests {
             read_catalog(unversioned.path()),
             Err(CatalogError::Invalid(_))
         ));
+    }
+
+    /// The one diagnostic of an own catalog that cannot be read.
+    fn unavailable(owner: &Path) -> AgentActorCatalogDiagnostic {
+        let resolution = resolve_catalogs(owner, None);
+        let [diagnostic] = resolution.diagnostics.as_slice() else {
+            panic!("one diagnostic: {:?}", resolution.diagnostics);
+        };
+        assert_eq!(diagnostic.code, "catalog_unavailable");
+        diagnostic.clone()
+    }
+
+    #[test]
+    fn an_unreadable_catalog_is_classed_by_what_its_reader_can_do() {
+        use CatalogUnavailableReason::{Damaged, NewerFormat};
+
+        let raw = |value: serde_json::Value| {
+            let d = tempdir().unwrap();
+            write_raw(d.path(), value);
+            d
+        };
+        let text = |text: &str| {
+            let d = tempdir().unwrap();
+            let path = catalog_path(d.path());
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, text).unwrap();
+            d
+        };
+        let non_regular = tempdir().unwrap();
+        fs::create_dir_all(catalog_path(non_regular.path())).unwrap();
+        for (owner, reason) in [
+            (
+                raw(serde_json::json!({"schemaVersion": 9, "actors": []})),
+                NewerFormat,
+            ),
+            (
+                raw(serde_json::json!({"schemaVersion": 2, "actors": [], "futureField": true})),
+                NewerFormat,
+            ),
+            (text("{ not json"), Damaged),
+            (raw(serde_json::json!({"actors": []})), Damaged),
+            (
+                raw(serde_json::json!({"schemaVersion": 0, "actors": []})),
+                Damaged,
+            ),
+            (non_regular, Damaged),
+        ] {
+            let diagnostic = unavailable(owner.path());
+            assert_eq!(diagnostic.reason, Some(reason), "{}", diagnostic.message);
+        }
+
+        let newer = unavailable(raw(serde_json::json!({"schemaVersion": 9, "actors": []})).path());
+        assert_eq!(
+            newer.message,
+            "Agent catalog schema version 9 is newer than this version of Svode supports (2)"
+        );
+        let wire = serde_json::to_value(&newer).unwrap();
+        assert_eq!(wire["code"], "catalog_unavailable");
+        assert_eq!(wire["reason"], "newer_format");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_catalog_the_device_cannot_read_is_unreadable() {
+        // `.svode` is a file, so the catalog path under it fails with an
+        // error other than not found.
+        let d = tempdir().unwrap();
+        fs::write(d.path().join(".svode"), "").unwrap();
+        let diagnostic = unavailable(d.path());
+        assert_eq!(
+            diagnostic.reason,
+            Some(CatalogUnavailableReason::Unreadable)
+        );
+        assert!(
+            diagnostic
+                .message
+                .starts_with("Could not access the agent catalog: "),
+            "{}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_id_has_no_unavailable_reason() {
+        let root = tempdir().unwrap();
+        let child = tempdir().unwrap();
+        write_actor(root.path(), "01arz3ndektsv4rrffq69g5fav");
+        write_actor(child.path(), "01arz3ndektsv4rrffq69g5fav");
+        let resolution = resolve_catalogs(child.path(), Some(root.path()));
+        assert!(!resolution.diagnostics.is_empty());
+        for diagnostic in &resolution.diagnostics {
+            assert_eq!(diagnostic.code, "ambiguous_actor_id");
+            assert_eq!(diagnostic.reason, None);
+            assert_eq!(
+                diagnostic.message,
+                "agent:01arz3ndektsv4rrffq69g5fav is defined by multiple effective catalogs"
+            );
+            assert!(
+                serde_json::to_value(diagnostic)
+                    .unwrap()
+                    .get("reason")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_catalog_error_reads_as_a_phrase_with_its_detail() {
+        for (error, detail, reason) in [
+            (
+                CatalogError::Unsafe("catalog is not UTF-8".into()),
+                "catalog is not UTF-8",
+                Some(CatalogUnavailableReason::Damaged),
+            ),
+            (
+                CatalogError::Invalid("missing schemaVersion".into()),
+                "missing schemaVersion",
+                Some(CatalogUnavailableReason::Damaged),
+            ),
+            (
+                CatalogError::UnknownSchema(9),
+                "9",
+                Some(CatalogUnavailableReason::NewerFormat),
+            ),
+            (
+                CatalogError::UnknownSchema(0),
+                "0",
+                Some(CatalogUnavailableReason::Damaged),
+            ),
+            (
+                CatalogError::Compatibility("unsupported field catalog.futureField".into()),
+                "unsupported field catalog.futureField",
+                Some(CatalogUnavailableReason::NewerFormat),
+            ),
+            (CatalogError::Stale, "changed", None),
+            (
+                CatalogError::Io("Permission denied (os error 13)".into()),
+                "Permission denied (os error 13)",
+                Some(CatalogUnavailableReason::Unreadable),
+            ),
+        ] {
+            let text = error.to_string();
+            let debug = format!("{error:?}");
+            let variant = debug.split('(').next().unwrap();
+            assert!(!text.contains(&debug), "{text}");
+            assert!(!text.contains(&format!("{variant}(")), "{text}");
+            assert_ne!(text, variant);
+            assert!(text.contains(detail), "{text}");
+            assert_eq!(error.unavailable_reason(), reason, "{text}");
+        }
     }
 
     #[cfg(unix)]

@@ -40,7 +40,12 @@ if (process.env.SVODE_AGENT_ACTOR_SCREEN_DOM !== "1") {
     version: string;
   }
   let actors: ActorRead[] = [];
-  let diagnostics: { ownerPath: string; code: string; message: string }[] = [];
+  let diagnostics: {
+    ownerPath: string;
+    code: string;
+    reason?: string;
+    message: string;
+  }[] = [];
   let fingerprints: Record<string, string> = {};
   const writes: Record<string, unknown>[] = [];
 
@@ -243,6 +248,46 @@ if (process.env.SVODE_AGENT_ACTOR_SCREEN_DOM !== "1") {
       ]);
       expect(title()?.value).toBe("New agent 2");
       expect(document.activeElement).toBe(title());
+    },
+  );
+
+  screenTest(
+    "an unreadable catalog shows the text of its cause, never its raw message, and the inherited one as the project's",
+    async () => {
+      actors = [{ ...reviewer(), ownerPath: "/project" }];
+      fingerprints = {};
+      diagnostics = [
+        {
+          code: "catalog_unavailable",
+          message:
+            "Agent catalog schema version 9 is newer than this version of Svode supports (2)",
+          ownerPath: "/repo",
+          reason: "newer_format",
+        },
+        {
+          code: "catalog_unavailable",
+          message: "Invalid agent catalog: expected value at line 1 column 3",
+          ownerPath: "/project",
+          reason: "damaged",
+        },
+      ];
+      await mount("");
+      const banner =
+        document.querySelector("[data-collection-diagnostics]")?.textContent ??
+        "";
+      expect(banner.includes(m.agent_actors_catalog_newer_format())).toBe(true);
+      expect(banner.includes(m.agent_actors_catalog_damaged_project())).toBe(
+        true,
+      );
+      expect(banner.includes("schema version 9")).toBe(false);
+      expect(banner.includes("Invalid agent catalog")).toBe(false);
+      // The agents of the readable root stay; adding one to the Space does not.
+      expect(document.body.textContent?.includes("Reviewer")).toBe(true);
+      expect(
+        document.querySelector<HTMLButtonElement>(
+          '[data-collection-create="add-agent"]',
+        )?.disabled,
+      ).toBe(true);
     },
   );
 

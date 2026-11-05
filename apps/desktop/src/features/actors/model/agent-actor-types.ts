@@ -42,8 +42,20 @@ export interface AgentActorItem {
   version: string;
 }
 
+/**
+ * What happened to a catalog that cannot be read: written by a newer
+ * version of Svode, damaged, or not readable on this device.
+ */
+export type AgentActorCatalogUnavailableReason =
+  | "newer_format"
+  | "damaged"
+  | "unreadable";
+
 export interface AgentActorCatalogDiagnostic {
   code: string;
+  /** The class of a `catalog_unavailable` diagnostic, when its cause has one. */
+  reason?: AgentActorCatalogUnavailableReason;
+  /** Not user copy for `catalog_unavailable`: the banner builds its text from `reason`. */
   message: string;
   ownerPath: string;
 }
