@@ -8,14 +8,19 @@
       "commit": "2cbf01e59567a40e293d2912e72669f8e8fd6b80",
       "sourceRef": "2cbf01e59567a40e293d2912e72669f8e8fd6b80",
       "runId": 41993820927,
-      "publishedAt": "2026-11-05T08:44:02.609Z",
-      "expiresAt": "2026-11-08T08:44:02.609Z",
+      "publishedAt": "2026-11-05T09:06:40.568Z",
+      "expiresAt": "2026-11-08T09:06:40.568Z",
       "reason": "Перенос строки и чат",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/41993820927/artifacts/13399853724",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/41993820927",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/41993820927/artifacts/13401577747",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/41993820927",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     },
