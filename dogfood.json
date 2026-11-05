@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.10",
+      "commit": "2cbf01e59567a40e293d2912e72669f8e8fd6b80",
+      "sourceRef": "2cbf01e59567a40e293d2912e72669f8e8fd6b80",
+      "runId": 41993820927,
+      "publishedAt": "2026-11-05T08:44:02.609Z",
+      "expiresAt": "2026-11-08T08:44:02.609Z",
+      "reason": "Перенос строки и чат",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/41993820927/artifacts/13399853724",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/41993820927",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.10",
       "commit": "120dd17937641e2e5127218f904497310961187a",
       "sourceRef": "main",
       "runId": 41841442998,
