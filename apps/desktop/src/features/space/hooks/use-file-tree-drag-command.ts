@@ -1,5 +1,8 @@
 import { useCallback } from "react";
-import { retargetActiveContent } from "@/features/artifact";
+import {
+  retargetActiveContent,
+  retargetActiveOwnerInside,
+} from "@/features/artifact";
 import { followContentRelocation } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
 import {
@@ -83,13 +86,15 @@ export function useFileTreeDragCommand({
         newPath = moved.newPath;
         if (newPath) {
           editorSync.suppressPaths([newPath]);
-          // A Page open inside a moved folder goes with it.
+          // A Page, App or Collection open inside a moved folder goes with it.
           followContentRelocation(
             space.path,
             spaceId,
             movePlan.movePath,
             newPath,
+            { homes: true },
           );
+          retargetActiveOwnerInside(movePlan.movePath, newPath, spaceId);
         }
 
         if (newPath && movePlan.isBareFolder) {

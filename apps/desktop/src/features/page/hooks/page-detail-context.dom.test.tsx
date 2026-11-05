@@ -167,7 +167,8 @@ async function harness(
       />
     );
   }
-  async function render(ownerPath = "app-only") {
+  // The shell keys the session by its opening, which a moved owner keeps.
+  async function render(ownerPath = "app-only", sessionKey = ownerPath) {
     await act(async () => {
       root.render(
         <ThemeProvider theme="light" setTheme={() => {}}>
@@ -176,7 +177,7 @@ async function harness(
               displayName={ownerPath}
               displayPath={`${ownerPath}/README.md`}
               spacePath={spacePath}
-              targetKey={ownerPath}
+              targetKey={sessionKey}
             >
               <PageDetailProvider
                 spacePath={spacePath}
@@ -1049,6 +1050,74 @@ test("an own deletion of the parent closes the Page silently and leaves a README
       toasts.restore();
       await view.cleanup();
     }
+  }
+});
+
+test("the README of a home page inside a folder the sidebar moves saves its draft first and goes on at the new path; one an agent moves stays", async () => {
+  const view = await harness({ target: "readme" });
+  try {
+    const from = "docs/kit/README.md";
+    const to = "notes/kit/README.md";
+    view.pages.set(from, { ...readmePage(), path: from });
+    await view.render("docs/kit");
+    await act(async () => {
+      await turn();
+      await turn();
+    });
+    expect(view.context().page?.path).toBe(from);
+    // Typed before the move, its save still waits for the delay.
+    await act(async () => {
+      void view.context().updateField("description", "Typed");
+      await turn();
+    });
+    expect(view.pages.get(from)?.meta.description).toBe("Before");
+
+    const { trackOwnContentRelocation } = await import("../page-api");
+    const { followContentRelocation } = await import("../navigation");
+    // An agent's move reports no draft to save and leaves the home page.
+    await act(async () => {
+      followContentRelocation(view.spacePath, "root", "docs", "elsewhere");
+      await turn();
+    });
+    expect(view.context().page?.path).toBe(from);
+
+    let savedBeforeMove = "";
+    await act(async () => {
+      await trackOwnContentRelocation(
+        { spacePath: view.spacePath, path: "docs" },
+        async () => {
+          savedBeforeMove = String(view.pages.get(from)?.meta.description);
+          const moved = view.pages.get(from)!;
+          view.pages.delete(from);
+          view.pages.set(to, { ...moved, path: to });
+        },
+      );
+      followContentRelocation(view.spacePath, "root", "docs", "notes", {
+        homes: true,
+      });
+      await turn();
+    });
+    expect(savedBeforeMove).toBe("Typed");
+    expect(view.context().page?.path).toBe(to);
+    expect(view.context().pathHandoff).toEqual({
+      previousPath: from,
+      path: to,
+    });
+    // The owner resolves its new path; the README is not read again there.
+    const reads = view.calls.filter((call) => call === "read_page").length;
+    await view.render("notes/kit", "docs/kit");
+    await act(async () => {
+      await turn();
+      await turn();
+    });
+    expect(view.calls.filter((call) => call === "read_page").length).toBe(
+      reads,
+    );
+    expect(view.context().status).toBe("ready");
+    expect(view.pages.has(from)).toBe(false);
+    expect(view.pages.get(to)?.meta.description).toBe("Typed");
+  } finally {
+    await view.cleanup();
   }
 });
 

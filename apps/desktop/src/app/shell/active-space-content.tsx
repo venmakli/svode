@@ -105,8 +105,13 @@ export function ActiveSpaceContent() {
           path: ownerTargetPath,
         }
       : null;
+  // An App or Collection opened as its README keeps the session of that
+  // opening when it moves, as one opened as an owner does.
+  const artifactSessionKey = artifactRequest
+    ? `artifact:${artifactRequest.sessionKey}`
+    : undefined;
   const collectionSessionKey =
-    scopeOwnerRequest?.key ?? selectedPath ?? "collection";
+    scopeOwnerRequest?.key ?? artifactSessionKey ?? "collection";
   const isArtifactPathRetarget = Boolean(
     activePathRetarget &&
     activePathRetarget.path === selectedPath &&
@@ -124,7 +129,7 @@ export function ActiveSpaceContent() {
   const previousAppOwnerKey = retargetedOwnerPath
     ? (`app:${selectionSpaceId}:${retargetedOwnerPath}` as ScopeOwnerKey)
     : undefined;
-  const appSessionKey = scopeOwnerRequest?.key ?? selectedPath ?? "app";
+  const appSessionKey = scopeOwnerRequest?.key ?? artifactSessionKey ?? "app";
   const {
     owner,
     error: ownerError,

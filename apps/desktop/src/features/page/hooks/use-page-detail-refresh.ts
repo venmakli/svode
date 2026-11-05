@@ -40,6 +40,8 @@ interface PageDetailRefreshOptions {
   relocation?: {
     prepare: () => Promise<unknown>;
     follow: (path: string) => void;
+    /** The README of an App or Collection home page, see `OwnRelocationFollower`. */
+    home?: boolean;
   };
 }
 
@@ -82,6 +84,9 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
           // The Page goes on at its new path, so nothing tells this one gone.
           active = false;
           relocation.follow(next);
+        },
+        get home() {
+          return optionsRef.current.relocation?.home === true;
         },
       },
     });

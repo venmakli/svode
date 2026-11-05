@@ -142,7 +142,7 @@ test("renaming the folder of an open App or Collection without README keeps it o
   }
 });
 
-test("renaming another folder, an ancestor or failing leaves the open content as it is", async () => {
+test("renaming another folder or failing leaves the open content as it is; renaming an ancestor takes it along", async () => {
   let fail = false;
   const env = await environment((command) => {
     if (command === "rename_content") {
@@ -159,13 +159,13 @@ test("renaming another folder, an ancestor or failing leaves the open content as
     });
     await renameFolder(env, "assets", "media");
     expect(env.shown()).toBe("apps/tool");
-    // The owner under a renamed ancestor is gone; it does not follow.
+    // The owner under a renamed ancestor goes along with it.
     await renameFolder(env, "apps", "programs");
-    expect(env.shown()).toBe("apps/tool");
+    expect(env.shown()).toBe("programs/tool");
 
     fail = true;
-    await renameFolder(env, "apps/tool", "toolbox");
-    expect(env.shown()).toBe("apps/tool");
+    await renameFolder(env, "programs/tool", "toolbox");
+    expect(env.shown()).toBe("programs/tool");
   } finally {
     await env.cleanup();
   }

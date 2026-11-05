@@ -8,6 +8,7 @@ export {
   openScopeOwner,
   retargetActiveContent,
   retargetActiveContentInside,
+  retargetActiveOwnerInside,
   setActiveContentShown,
 } from "./api/selection-actions";
 export {

@@ -64,15 +64,18 @@ export function publishPageTitleOutcome(
  * `fromPath` to `toPath` to the same place under its new path; called when
  * the change succeeded, before it counts as finished. A shown Page keeps its
  * session and draft, and the selection follows otherwise. A README path
- * stands for its folder.
+ * stands for its folder. With `homes`, for a rename or move made in the
+ * sidebar, the README of an open App or Collection home page inside follows
+ * with its session and draft too.
  */
 export function followContentRelocation(
   scopePath: string,
   spaceId: string,
   fromPath: string,
   toPath: string,
+  options: { homes?: boolean } = {},
 ) {
-  followOwnContentRelocation(scopePath, fromPath, toPath);
+  followOwnContentRelocation(scopePath, fromPath, toPath, options.homes);
   retargetActiveContentInside(
     ownChangeRoot(fromPath),
     ownChangeRoot(toPath),

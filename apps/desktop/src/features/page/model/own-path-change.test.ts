@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   followOwnContentRelocation,
+  followReportedContentRelocation,
   trackOwnContentDeletion,
   trackOwnContentRelocation,
   watchOwnPathChange,
@@ -128,13 +129,19 @@ test("a title rename leaves the Pages under its README only when the path change
   }
 });
 
-function follower(spacePath: string, path: string, log: string[]) {
+function follower(
+  spacePath: string,
+  path: string,
+  log: string[],
+  home = false,
+) {
   return watchOwnPathChange(spacePath, path, {
     follower: {
       prepare: async () => {
         log.push(`save ${path}`);
       },
       follow: (next) => log.push(`${path} -> ${next}`),
+      home,
     },
   });
 }
@@ -191,6 +198,30 @@ test("the moved item itself is handed over by its own rename or move, not follow
     expect(log).toEqual(["save docs/a.md", "docs/a.md -> notes/a.md"]);
   } finally {
     for (const watch of watches) watch.stop();
+  }
+});
+
+test("the README of a home page inside a moved folder saves first and follows only a sidebar move", async () => {
+  const log: string[] = [];
+  const home = follower("/space", "docs/kit/README.md", log, true);
+  try {
+    await trackOwnContentRelocation(
+      { spacePath: "/space", path: "docs" },
+      async () => {
+        log.push("rename");
+      },
+    );
+    // A move an agent ran, own or reported, leaves it.
+    followOwnContentRelocation("/space", "docs", "notes");
+    followReportedContentRelocation("/space", () => "notes/kit/README.md");
+    followOwnContentRelocation("/space", "docs", "notes", true);
+    expect(log).toEqual([
+      "save docs/kit/README.md",
+      "rename",
+      "docs/kit/README.md -> notes/kit/README.md",
+    ]);
+  } finally {
+    home.stop();
   }
 });
 

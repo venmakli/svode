@@ -399,14 +399,13 @@ export function PageDetailProvider({
       setStatus("missing");
     },
     // A Page stays open at its new path when a folder above it moves here,
-    // with the work typed before saved into the file that moves.
-    relocation:
-      target === "page"
-        ? {
-            prepare: async () => pageSurface?.prepareForNavigation(),
-            follow: adoptPath,
-          }
-        : undefined,
+    // with the work typed before saved into the file that moves; so does the
+    // README of an App or Collection home page when the sidebar moves it.
+    relocation: {
+      prepare: async () => pageSurface?.prepareForNavigation(),
+      follow: adoptPath,
+      home: target === "readme",
+    },
   });
   // The failure detail stays in the write session; the surface names it in
   // user terms like the rest of the Page save feedback.

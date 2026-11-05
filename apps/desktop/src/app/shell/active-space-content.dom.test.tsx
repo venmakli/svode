@@ -127,6 +127,8 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     closeActiveContent,
     getActiveContentSelection,
     retargetActiveContent,
+    retargetActiveContentInside,
+    retargetActiveOwnerInside,
   } = await import("@/features/artifact");
 
   async function fixture(
@@ -523,6 +525,81 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
         expect(scope()?.getAttribute("data-previous-owner-key")).toBe(
           `${kind === "collection" ? "collection" : "app"}:root:${from}`,
         );
+        expect(scope()?.getAttribute("data-session-key")).toBe(sessionKey!);
+        expect(scopeMounts).toBe(mounts);
+      }
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("an App or Collection inside a folder moved here keeps its mounted session and hands over its owner key, opened as an owner or as its README", async () => {
+    const f = await fixture((path) => {
+      const ownerPath = path.replace(/\/README\.md$/, "");
+      return {
+        identity: ownerPath.endsWith("kit")
+          ? "appDirectory"
+          : "collectionDirectory",
+        ownerPath,
+        contentPath: `${ownerPath}/README.md`,
+        hasApp: ownerPath.endsWith("kit"),
+      };
+    });
+    const scope = () => f.query("[data-scope-owner]");
+    try {
+      for (const [open, from, to, owner, previous] of [
+        [
+          () =>
+            openScopeOwner({
+              kind: "app-directory",
+              path: "docs/kit",
+              spaceId: "root",
+            }),
+          "docs",
+          "notes",
+          "app-directory:notes/kit/README.md:app",
+          "app:root:docs/kit",
+        ],
+        [
+          () =>
+            openScopeOwner({
+              kind: "collection",
+              path: "docs/sub/tasks/README.md",
+              spaceId: "root",
+            }),
+          "docs/README.md",
+          "archive/docs/README.md",
+          "collection-directory:archive/docs/sub/tasks/README.md:collection",
+          "collection:root:docs/sub/tasks",
+        ],
+        [
+          // An App with README opens from the sidebar as its README.
+          () => openPage("docs/kit/README.md"),
+          "docs",
+          "notes",
+          "app-directory:notes/kit/README.md:app",
+          "app:root:docs/kit",
+        ],
+      ] as const) {
+        open();
+        await f.render();
+        await f.settle();
+        const sessionKey = scope()?.getAttribute("data-session-key");
+        const mounts = scopeMounts;
+
+        await act(async () => {
+          // A README of an owner opened as a Page moves as a Page does.
+          retargetActiveOwnerInside(from, to, "root");
+          retargetActiveContentInside(
+            from.replace(/\/README\.md$/, ""),
+            to.replace(/\/README\.md$/, ""),
+            "root",
+          );
+        });
+        await f.render();
+        await f.settle();
+        expect(scope()?.getAttribute("data-scope-owner")).toBe(owner);
+        expect(scope()?.getAttribute("data-previous-owner-key")).toBe(previous);
         expect(scope()?.getAttribute("data-session-key")).toBe(sessionKey!);
         expect(scopeMounts).toBe(mounts);
       }

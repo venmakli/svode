@@ -16,6 +16,11 @@ export interface OwnRelocationFollower {
   prepare: () => Promise<unknown>;
   /** Takes the Page to its path under the folder's new path. */
   follow: (path: string) => void;
+  /**
+   * The README of the home page of an App or Collection: it follows only a
+   * folder above it that the sidebar of this Desktop renames or moves.
+   */
+  readonly home?: boolean;
 }
 
 interface PathWatch {
@@ -105,12 +110,14 @@ export function trackOwnContentRelocation<T>(
 
 /**
  * Takes the open Pages inside the folder this Desktop renamed or moved from
- * `from` to `to` to the same place under `to`, once that change finished.
+ * `from` to `to` to the same place under `to`, once that change finished;
+ * with `homes`, the READMEs of open App and Collection home pages too.
  */
 export function followOwnContentRelocation(
   spacePath: string,
   from: string,
   to: string,
+  homes = false,
 ) {
   const change: OwnPathChange = {
     kind: "relocation",
@@ -120,7 +127,11 @@ export function followOwnContentRelocation(
   const root = ownChangeRoot(to);
   if (root === change.root) return;
   for (const watch of [...watches])
-    if (watch.follower && follows(change, watch))
+    if (
+      watch.follower &&
+      (homes || !watch.follower.home) &&
+      follows(change, watch)
+    )
       watch.follower.follow(
         `${root}${normalizePath(watch.path).slice(change.root.length)}`,
       );
@@ -137,7 +148,12 @@ export function followReportedContentRelocation(
 ) {
   const space = normalizePath(spacePath);
   for (const watch of [...watches]) {
-    if (!watch.follower || normalizePath(watch.spacePath) !== space) continue;
+    if (
+      !watch.follower ||
+      watch.follower.home ||
+      normalizePath(watch.spacePath) !== space
+    )
+      continue;
     const next = relocate(normalizePath(watch.path));
     if (next) watch.follower.follow(next);
   }

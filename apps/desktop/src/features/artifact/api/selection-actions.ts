@@ -79,6 +79,34 @@ export function retargetActiveContentInside(
   retarget(path, `${toFolder}/${inside}`, spaceId);
 }
 
+/**
+ * Moves an open App or Collection inside the folder this Desktop renamed or
+ * moved from `from` to `to` to the same place under `to`; a README path
+ * stands for its folder. The folder itself goes with its own rename or move.
+ */
+export function retargetActiveOwnerInside(
+  from: string,
+  to: string,
+  spaceId?: string | null,
+) {
+  const { selection, retarget } = useArtifactSelectionStore.getState();
+  if (
+    selection?.kind !== "scope-owner" ||
+    selection.request.owner.kind === "space"
+  )
+    return;
+  const fromFolder = readmeFolder(from);
+  const path = selection.request.owner.path;
+  if (!path.startsWith(`${fromFolder}/`)) return;
+  const inside = path.slice(fromFolder.length + 1);
+  if (/^readme\.md$/i.test(inside)) return;
+  retarget(path, `${readmeFolder(to)}/${inside}`, spaceId);
+}
+
+function readmeFolder(path: string) {
+  return /^(.+)\/readme\.md$/i.exec(path)?.[1] ?? path;
+}
+
 /** Whether the main area shows the selection, which is then highlighted. */
 export function setActiveContentShown(shown: boolean) {
   useArtifactSelectionStore.getState().setContentShown(shown);
