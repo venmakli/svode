@@ -2,7 +2,7 @@ import {
   declaredSettings,
   type AgentDeclaration,
   type AgentSetting,
-  type ChatAgent,
+  type ChatAgents,
   type DefaultAgent,
 } from "@/features/agent-sessions/agent-settings-popover";
 
@@ -41,8 +41,8 @@ export interface AgentActorFacts {
 export interface AgentActorFactsSources {
   /** The bindable agents of this version. */
   known: ReadonlySet<string>;
-  /** How the chat offers each agent; null while they are read. */
-  offers: readonly ChatAgent[] | null;
+  /** How the chat offers each agent and why it leaves the others out; null while they are read. */
+  offers: ChatAgents | null;
   /** The device's default agent; undefined while it is read. */
   defaultAgent: DefaultAgent | null | undefined;
   /** What each agent declared last on this device, by agent id. */
@@ -122,11 +122,21 @@ export function agentActorFacts(
 
 function offerReadiness(
   agent: string,
-  offers: readonly ChatAgent[] | null,
+  offers: ChatAgents | null,
 ): AgentActorReadiness | null {
   if (!offers) return null;
-  const offer = offers.find((candidate) => candidate.agent === agent)?.offer;
-  switch (offer?.state) {
+  const offer = offers.agents.find(
+    (candidate) => candidate.agent === agent,
+  )?.offer;
+  if (!offer) {
+    const left = offers.unoffered.find(
+      (candidate) => candidate.agent === agent,
+    );
+    return left && NOT_INSTALLED.has(left.reason.code)
+      ? "not_installed"
+      : "unavailable";
+  }
+  switch (offer.state) {
     case "available":
       return "ready";
     case "sign_in_required":

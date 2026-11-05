@@ -63,7 +63,7 @@ export function useAgentActorFacts({
     () => new Set(agents.map((agent) => agent.id)),
     [agents],
   );
-  const offers = chat.agents?.agents ?? null;
+  const offers = chat.agents;
   const facts = useCallback(
     (item: AgentActorItem) =>
       agentActorFacts(item, {

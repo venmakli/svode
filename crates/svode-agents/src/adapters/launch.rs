@@ -88,6 +88,22 @@ pub fn chat_offer<T>(
     }
 }
 
+/// Why a new session leaves out an agent that `chat_offer` does not offer
+/// although it is not deferred: disabled, not on this device, unsupported
+/// or without its adapter. `None` for an offered or a deferred agent. The
+/// Agents collection names its readiness by it (Stage 11 DF-308).
+pub fn chat_unoffered<T>(
+    deferred: bool,
+    plan: &Result<T, LaunchUnavailable>,
+) -> Option<LaunchUnavailable> {
+    match plan {
+        Err(reason) if !deferred && chat_offer(deferred, plan, None).is_none() => {
+            Some(reason.clone())
+        }
+        _ => None,
+    }
+}
+
 /// Where and with what a host starts an agent.
 #[derive(Debug, Clone)]
 pub struct LaunchContext {
@@ -571,7 +587,7 @@ mod chat_offer_tests {
     use super::*;
 
     #[test]
-    fn a_new_session_offers_enabled_agents_on_this_device_and_names_a_missing_sign_in() {
+    fn a_new_session_offers_agents_on_this_device_and_names_why_it_leaves_out_the_others() {
         let available: Result<(), LaunchUnavailable> = Ok(());
         assert_eq!(
             chat_offer(false, &available, None),
@@ -594,14 +610,26 @@ mod chat_offer_tests {
             LaunchUnavailable::NotSupported,
             LaunchUnavailable::AdapterNotInstalled,
         ] {
-            assert_eq!(chat_offer::<()>(false, &Err(hidden), Some(false)), None);
+            assert_eq!(
+                chat_offer::<()>(false, &Err(hidden.clone()), Some(false)),
+                None
+            );
+            assert_eq!(
+                chat_unoffered::<()>(false, &Err(hidden.clone())),
+                Some(hidden.clone())
+            );
+            assert_eq!(chat_unoffered::<()>(true, &Err(hidden)), None);
         }
+        assert_eq!(chat_unoffered(false, &available), None);
         let outdated = LaunchUnavailable::AdapterNeedsUpdate {
             installed_version: "0.1.0".into(),
         };
         assert_eq!(
             chat_offer::<()>(false, &Err(outdated.clone()), Some(false)),
-            Some(ChatOffer::Unavailable { reason: outdated })
+            Some(ChatOffer::Unavailable {
+                reason: outdated.clone()
+            })
         );
+        assert_eq!(chat_unoffered::<()>(false, &Err(outdated)), None);
     }
 }

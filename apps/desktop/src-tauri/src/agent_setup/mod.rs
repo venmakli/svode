@@ -123,12 +123,13 @@ impl AgentSetupState {
     /// terminal; `03` A1/A5/A8): the one rule of whether the chat is
     /// available to an agent, for a new session draft and for a Routine
     /// launch. Resolves the launch plan and runs the agent's bounded sign-in
-    /// check in `target`; starts no ACP process.
+    /// check in `target`; starts no ACP process. `Err` names why the chat
+    /// leaves the agent out (DF-308); `None` for a deferred agent.
     pub(crate) async fn chat_offer(
         &self,
         agent: &str,
         target: &AdapterTarget,
-    ) -> Option<ChatOffer> {
+    ) -> Option<Result<ChatOffer, LaunchUnavailable>> {
         let builtin = AgentAdapterKind::from_id(agent);
         let deferred = builtin.is_some_and(deferred);
         let plan = self.plan(agent).await;
@@ -141,7 +142,10 @@ impl AgentSetupState {
             }
             _ => None,
         };
-        svode_agents::adapters::chat_offer(deferred, &plan, authenticated)
+        match svode_agents::adapters::chat_offer(deferred, &plan, authenticated) {
+            Some(offer) => Some(Ok(offer)),
+            None => svode_agents::adapters::chat_unoffered(deferred, &plan).map(Err),
+        }
     }
 
     /// The ACP launch plan of a Routine launch of `agent` in `space` with
@@ -887,6 +891,37 @@ mod tests {
             setup.plan("custom-removed").await,
             Err(LaunchUnavailable::NotSupported)
         );
+    }
+
+    #[tokio::test]
+    async fn the_chat_names_why_it_leaves_out_a_disabled_or_missing_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = AgentSetupState::new(dir.path(), dir.path().to_path_buf());
+        setup.set_choice("codex", false).unwrap();
+        let (missing, _) = setup
+            .add_custom_agent(
+                CustomAgentDefinition {
+                    command: "svode-df308-missing-agent".into(),
+                    ..definition("Missing")
+                },
+                false,
+            )
+            .unwrap();
+        let target = AdapterTarget {
+            cwd: dir.path().to_path_buf(),
+            search_path: Some(std::ffi::OsString::new()),
+        };
+
+        assert_eq!(
+            setup.chat_offer("codex", &target).await,
+            Some(Err(LaunchUnavailable::Disabled))
+        );
+        assert!(matches!(
+            setup
+                .chat_offer(missing.id.agent_id().as_str(), &target)
+                .await,
+            Some(Err(LaunchUnavailable::ExecutableMissing { .. }))
+        ));
     }
 
     /// Live acceptance of slice 3.4 with the user's `hermes acp` as a custom

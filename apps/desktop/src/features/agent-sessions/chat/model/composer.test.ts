@@ -9,8 +9,16 @@ import {
 } from "./agents";
 
 const key = (
-  init: Partial<Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing" | "keyCode">>,
-) => ({ key: "Enter", shiftKey: false, isComposing: false, keyCode: 13, ...init });
+  init: Partial<
+    Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing" | "keyCode">
+  >,
+) => ({
+  key: "Enter",
+  shiftKey: false,
+  isComposing: false,
+  keyCode: 13,
+  ...init,
+});
 
 test("Enter sends, Shift+Enter breaks the line and Enter during IME only commits", () => {
   expect(composerKeyAction(key({}), false)).toBe("send");
@@ -43,6 +51,7 @@ const outdated = {
 
 test("a draft starts with the default agent while the chat offers it, else the first available", () => {
   const agents = {
+    unoffered: [],
     agents: [
       { agent: "codex", name: "Codex", offer: available },
       { agent: "claude-code", name: "Claude Code", offer: available },
@@ -59,6 +68,7 @@ test("a draft starts with the default agent while the chat offers it, else the f
   expect(canOpenChatDraft(agents)).toBe(true);
   expect(
     canOpenChatDraft({
+      unoffered: [],
       agents: [{ agent: "pi", name: "pi", offer: outdated }],
     }),
   ).toBe(false);
@@ -67,6 +77,7 @@ test("a draft starts with the default agent while the chat offers it, else the f
 test("an agent that needs sign-in opens a draft, is chosen without an available one and as the default agent", () => {
   const signIn = { state: "sign_in_required" } as const;
   const onlySignIn = {
+    unoffered: [],
     agents: [
       { agent: "pi", name: "pi", offer: outdated },
       { agent: "claude-code", name: "Claude Code", offer: signIn },
@@ -75,6 +86,7 @@ test("an agent that needs sign-in opens a draft, is chosen without an available 
   expect(canOpenChatDraft(onlySignIn)).toBe(true);
   expect(defaultChatAgent(onlySignIn, null)).toBe("claude-code");
   const both = {
+    unoffered: [],
     agents: [
       { agent: "claude-code", name: "Claude Code", offer: signIn },
       { agent: "codex", name: "Codex", offer: available },

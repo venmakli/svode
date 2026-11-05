@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import type {
   AgentDeclaration,
   ChatAgent,
+  ChatAgents,
 } from "@/features/agent-sessions/agent-settings-popover";
 
 import {
@@ -68,6 +69,13 @@ function offer(agent: string, value: ChatAgent["offer"]): ChatAgent {
   return { agent, name: agent, offer: value };
 }
 
+function offered(
+  agents: ChatAgent[],
+  unoffered: ChatAgents["unoffered"] = [],
+): ChatAgents {
+  return { agents, unoffered };
+}
+
 function sources(
   patch: Partial<AgentActorFactsSources> = {},
 ): AgentActorFactsSources {
@@ -75,7 +83,7 @@ function sources(
     declarations: new Map([["codex", [declaration]]]),
     defaultAgent: null,
     known: new Set(["codex", "claude-code"]),
-    offers: [offer("codex", { state: "available" })],
+    offers: offered([offer("codex", { state: "available" })]),
     ...patch,
   };
 }
@@ -125,7 +133,7 @@ test("readiness follows the chat's offer of the agent", () => {
   const readiness = (value: ChatAgent["offer"] | null) =>
     agentActorFacts(
       codex,
-      sources({ offers: value ? [offer("codex", value)] : [] }),
+      sources({ offers: offered(value ? [offer("codex", value)] : []) }),
     ).readiness;
   expect(readiness({ state: "sign_in_required" })).toBe("sign_in_required");
   expect(
@@ -138,6 +146,20 @@ test("readiness follows the chat's offer of the agent", () => {
     readiness({ state: "unavailable", reason: { code: "disabled" } }),
   ).toBe("unavailable");
   expect(readiness(null)).toBe("unavailable");
+  // The chat leaves out an agent that is not on this device or is turned
+  // off, and names why (DF-308).
+  const left = (reason: ChatAgents["unoffered"][number]["reason"]) =>
+    agentActorFacts(
+      codex,
+      sources({ offers: offered([], [{ agent: "codex", reason }]) }),
+    ).readiness;
+  expect(left({ code: "executable_missing", executable: "codex" })).toBe(
+    "not_installed",
+  );
+  expect(left({ code: "adapter_not_installed" })).toBe("not_installed");
+  expect(left({ code: "node_missing", required: 22 })).toBe("not_installed");
+  expect(left({ code: "disabled" })).toBe("unavailable");
+  expect(left({ code: "not_supported" })).toBe("unavailable");
   expect(agentActorFacts(codex, sources({ offers: null })).readiness).toBe(
     null,
   );
@@ -195,7 +217,9 @@ test("a kept value the agent no longer declares, or one of its mode's setting in
           settings: [{ setting: "model", value: "gpt-4-old" }],
         },
       },
-      sources({ offers: [offer("codex", { state: "sign_in_required" })] }),
+      sources({
+        offers: offered([offer("codex", { state: "sign_in_required" })]),
+      }),
     ).readiness,
   ).toBe("sign_in_required");
 });
@@ -219,7 +243,7 @@ test("the participant's agent is ready with the device's default agent", () => {
       participant,
       sources({
         defaultAgent: { agent: "claude-code", settings: [] },
-        offers: [offer("claude-code", { state: "sign_in_required" })],
+        offers: offered([offer("claude-code", { state: "sign_in_required" })]),
       }),
     ).readiness,
   ).toBe("sign_in_required");

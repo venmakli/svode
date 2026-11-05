@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use svode_agents::AgentCheck;
-use svode_agents::adapters::{AgentSetup, ChatOffer};
+use svode_agents::adapters::{AgentSetup, ChatOffer, LaunchUnavailable};
 use svode_agents::custom::{
     CustomAgent, CustomAgentDefinition, CustomAgentSetup, custom_agent_setup,
 };
@@ -92,6 +92,17 @@ pub struct ChatAgents {
     /// In the order of the agent settings: registry agents, then custom
     /// agents in the order the user added them.
     pub agents: Vec<ChatAgent>,
+    /// The agents the chat leaves out, in the same order, with why: only
+    /// the Agents collection reads them, for its readiness (DF-308).
+    pub unoffered: Vec<UnofferedChatAgent>,
+}
+
+/// An agent a new session does not offer, and why.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnofferedChatAgent {
+    pub agent: String,
+    pub reason: LaunchUnavailable,
 }
 
 /// The agents a new session draft offers (Stage 10 `04`, `03` A1/A5/A8).
@@ -119,14 +130,21 @@ pub async fn agent_setup_chat_agents(
         let target = target.clone();
         reads.spawn(async move {
             let offer = state.chat_offer(&agent, &target).await;
-            (order, offer.map(|offer| ChatAgent { agent, name, offer }))
+            (order, agent, name, offer)
         });
     }
-    let mut offered = reads.join_all().await;
-    offered.sort_by_key(|(order, _)| *order);
-    Ok(ChatAgents {
-        agents: offered.into_iter().filter_map(|(_, agent)| agent).collect(),
-    })
+    let mut read = reads.join_all().await;
+    read.sort_by_key(|(order, ..)| *order);
+    let mut agents = Vec::new();
+    let mut unoffered = Vec::new();
+    for (_, agent, name, offer) in read {
+        match offer {
+            Some(Ok(offer)) => agents.push(ChatAgent { agent, name, offer }),
+            Some(Err(reason)) => unoffered.push(UnofferedChatAgent { agent, reason }),
+            None => {}
+        }
+    }
+    Ok(ChatAgents { agents, unoffered })
 }
 
 /// The default agent of this device: the agent and the values of its

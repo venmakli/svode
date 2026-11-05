@@ -242,9 +242,17 @@ export interface ChatAgentDto {
     | { state: "unavailable"; reason: AgentLaunchUnavailableDto };
 }
 
+/** An agent a new session does not offer, and why (DF-308). */
+export interface UnofferedChatAgentDto {
+  agent: string;
+  reason: AgentLaunchUnavailableDto;
+}
+
 export interface ChatAgentsDto {
   /** In the order of the agent settings. */
   agents: ChatAgentDto[];
+  /** The agents the chat leaves out; only the Agents collection reads them. */
+  unoffered: UnofferedChatAgentDto[];
 }
 
 /** The agents a new session draft offers; starts no agent process. */
