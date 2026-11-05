@@ -346,7 +346,9 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
             "--shared",
             "--no-checkout",
             "--",
-            &repo.to_string_lossy(),
+            // Git for Windows reads no verbatim `\\?\` path that a canonical
+            // repository path may carry.
+            &crate::system_path::user_facing_path(repo),
             &proof.to_string_lossy(),
         ],
     )
@@ -358,9 +360,7 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
     // This is the URL a fresh clone uses, never a local submodule override.
     let destination =
         if !snapshot.destination.contains(':') && Path::new(&snapshot.destination).is_relative() {
-            repo.join(&snapshot.destination)
-                .to_string_lossy()
-                .into_owned()
+            crate::system_path::user_facing_path(&repo.join(&snapshot.destination))
         } else {
             snapshot.destination.clone()
         };
@@ -737,7 +737,7 @@ pub async fn head_is_published(
     }
     let url = urls.stdout.trim();
     let url = if !url.contains(':') && Path::new(url).is_relative() {
-        repo.join(url).to_string_lossy().into_owned()
+        crate::system_path::user_facing_path(&repo.join(url))
     } else {
         url.to_owned()
     };
@@ -751,7 +751,7 @@ pub async fn head_is_published(
             "--shared",
             "--no-checkout",
             "--",
-            &repo.to_string_lossy(),
+            &crate::system_path::user_facing_path(repo),
             &proof.to_string_lossy(),
         ],
     )
