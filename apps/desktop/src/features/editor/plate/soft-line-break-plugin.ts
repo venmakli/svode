@@ -1,4 +1,5 @@
-import { createSlatePlugin, NodeApi, RangeApi, TextApi } from "platejs";
+import { Hotkeys, NodeApi, RangeApi, TextApi } from "platejs";
+import { createPlatePlugin } from "platejs/react";
 
 import {
   isSoftLineBreak,
@@ -11,9 +12,26 @@ const NOT_LINE_BREAK_RE = /[^\n]/;
  * A soft line break of the file stays a text of line endings only: text
  * typed next to it, Shift+Enter included, does not take its mark, and text
  * that reaches it another way is split off.
+ *
+ * Shift+Enter inserts a hard line break on every engine. WebKit reports it
+ * as `beforeinput` `insertParagraph`, which Slate turns into a new block,
+ * while Chromium reports `insertLineBreak`; taking the key before the
+ * browser gives both the one break of `insertSoftBreak`.
  */
-export const SoftLineBreakPlugin = createSlatePlugin({
+export const SoftLineBreakPlugin = createPlatePlugin({
   key: "markdownSoftLineBreak",
+  editOnly: true,
+  handlers: {
+    onKeyDown: ({ editor, event }) => {
+      const native = event.nativeEvent;
+      // Safari reports the Enter that commits a composition as keyCode 229.
+      if (native.isComposing || native.keyCode === 229) return false;
+      if (!Hotkeys.isSoftBreak(native)) return false;
+      event.preventDefault();
+      editor.tf.insertSoftBreak();
+      return true;
+    },
+  },
 }).overrideEditor(({ editor, tf: { insertText, normalizeNode } }) => ({
   transforms: {
     insertText(text, options) {
