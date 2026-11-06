@@ -1,4 +1,5 @@
 import { ControlledMarkdownEditor } from "@/features/editor";
+import { detailPageFramedBodyClassName } from "@/shared/ui/page-layout";
 
 import {
   useRoutineInstructionAutosave,
@@ -6,8 +7,9 @@ import {
 } from "../hooks/use-routine-instruction-autosave";
 
 /**
- * The instruction of a Routine in the editor of a page's content, saved by
- * itself as a page's content is, see `useRoutineInstructionAutosave`.
+ * The instruction of a Routine as the body of a page, saved by itself as a
+ * page's content is, see `useRoutineInstructionAutosave`. It shows no label:
+ * `label` names the body for assistive technologies.
  */
 export function RoutineInstructionEditor({
   body,
@@ -34,12 +36,12 @@ export function RoutineInstructionEditor({
   });
 
   return (
-    <section className="flex min-w-0 flex-col gap-1.5">
-      <h3 className="text-xs font-medium text-muted-foreground">{label}</h3>
-      <div data-routine-instruction>
+    <div className="flex min-w-0 flex-col">
+      <div className={detailPageFramedBodyClassName} data-routine-instruction>
         <ControlledMarkdownEditor
           key={shown.revision}
           disabled={disabled}
+          label={label}
           value={shown.body}
           placeholder={placeholder}
           onChange={change}
@@ -54,6 +56,6 @@ export function RoutineInstructionEditor({
           {message}
         </span>
       ) : null}
-    </section>
+    </div>
   );
 }

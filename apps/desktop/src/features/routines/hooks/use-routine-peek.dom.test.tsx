@@ -525,4 +525,47 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     expect(peekOpen() === null).toBe(false);
     await act(async () => root.unmount());
   }, 30000);
+
+  test("the instruction is the body of a page, named by its action and without a label or a field around it", async () => {
+    const { controls, root } = await setup();
+    const body = () =>
+      doc.querySelector<HTMLElement>(
+        "[data-routine-instruction] [data-slate-editor]",
+      );
+    await run(() => controls.peek!.open(routine.id));
+    expect(body()?.getAttribute("aria-label")).toBe("Instruction");
+    expect(body()?.textContent?.includes("Review changes.")).toBe(true);
+    expect(doc.querySelector("[data-collection-item-peek] h3")).toBeNull();
+    const instruction = doc.querySelector("[data-routine-instruction]")!;
+    expect(instruction.querySelector(".border-input")).toBeNull();
+    expect(instruction.querySelector(".rounded-md.border")).toBeNull();
+    expect(body()?.classList.contains("px-3")).toBe(false);
+
+    await run(() =>
+      controls.setItems!([
+        {
+          ...routine,
+          definition: {
+            ...routine.definition!,
+            action: {
+              set: { status: "Done" },
+              target: "trigger.entry",
+              type: "update_properties",
+            },
+            body: "",
+          },
+          fingerprint: "fingerprint:rule",
+        },
+      ]),
+    );
+    expect(body()?.getAttribute("aria-label")).toBe("Rule description");
+    expect(
+      [...doc.querySelectorAll("[data-collection-item-peek] *")].some(
+        (element) =>
+          element.childElementCount === 0 &&
+          element.textContent === "Rule description",
+      ),
+    ).toBe(false);
+    await act(async () => root.unmount());
+  }, 30000);
 }

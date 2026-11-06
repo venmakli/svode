@@ -26,14 +26,17 @@ if (process.env.SVODE_ROUTINE_INSTRUCTION_DOM !== "1") {
   // The page editor stands in as a text field holding its Markdown.
   mock.module("@/features/editor", () => ({
     ControlledMarkdownEditor: ({
+      label,
       value,
       onChange,
     }: {
+      label: string;
       value: string;
       onChange(value: string): void;
     }) => (
       <textarea
         data-editor
+        aria-label={label}
         defaultValue={value}
         onChange={(event) => onChange(event.target.value)}
       />
@@ -118,6 +121,19 @@ if (process.env.SVODE_ROUTINE_INSTRUCTION_DOM !== "1") {
       await new Promise((resolve) => setTimeout(resolve, ms));
     });
   }
+
+  test("the instruction shows no label above it and names its body with it", async () => {
+    const { dom, editor } = await mount(async () => undefined);
+    try {
+      expect(editor().getAttribute("aria-label")).toBe("Instruction");
+      expect(dom.document.querySelector("h3")).toBeNull();
+      expect(dom.document.body.textContent?.includes("Instruction")).toBe(
+        false,
+      );
+    } finally {
+      await dom.dispose();
+    }
+  });
 
   test("changes are saved once shortly after the last one, and the leave guard writes what is left at once", async () => {
     const saves: string[] = [];

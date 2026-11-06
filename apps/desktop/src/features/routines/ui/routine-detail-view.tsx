@@ -41,30 +41,34 @@ export function RoutineDetailView({
     [itemId, registerInstructionFlush],
   );
 
+  // The instruction follows the properties as a page's body does, with
+  // the body's own top padding.
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <RoutineNameConflictNotice item={item} />
-      <CollectionItemProperties
-        factGroups={
-          definition && !problems
-            ? []
-            : [
-                {
-                  facts: [
-                    {
-                      key: "definition-path",
-                      label: m.routines_definition_path_label(),
-                      value: { kind: "path", path: item.definitionPath },
-                    },
-                  ],
-                  key: "definition",
-                  label: "",
-                },
-              ]
-        }
-        item={item}
-        presentation={presentation}
-      />
+    <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-5">
+        <RoutineNameConflictNotice item={item} />
+        <CollectionItemProperties
+          factGroups={
+            definition && !problems
+              ? []
+              : [
+                  {
+                    facts: [
+                      {
+                        key: "definition-path",
+                        label: m.routines_definition_path_label(),
+                        value: { kind: "path", path: item.definitionPath },
+                      },
+                    ],
+                    key: "definition",
+                    label: "",
+                  },
+                ]
+          }
+          item={item}
+          presentation={presentation}
+        />
+      </div>
       {definition ? (
         <RoutineInstructionEditor
           body={definition.body}
