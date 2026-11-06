@@ -162,6 +162,39 @@ export function CollectionItemActionButton(props: CollectionItemActionProps) {
   );
 }
 
+/**
+ * The icon and label of an action in a menu. Its message, the owner's reason
+ * or error or a refused run, is a second muted line under the label, as menu
+ * items cannot show a tooltip.
+ */
+function CollectionItemActionMenuContent({
+  icon,
+  label,
+  state,
+}: {
+  icon: CollectionItemActionDescriptor<unknown>["icon"];
+  label: string;
+  state: EffectiveActionState;
+}) {
+  return (
+    <>
+      {state.pending ? (
+        <LoaderCircle data-icon="inline-start" className="animate-spin" />
+      ) : (
+        icon
+      )}
+      {state.message ? (
+        <span className="flex min-w-0 flex-col">
+          {label}
+          <span className="text-xs text-muted-foreground">{state.message}</span>
+        </span>
+      ) : (
+        <span>{label}</span>
+      )}
+    </>
+  );
+}
+
 function CollectionItemActionDropdownItem(
   props: CollectionItemActionProps & {
     onSuccess(): void;
@@ -176,7 +209,6 @@ function CollectionItemActionDropdownItem(
       disabled={state.disabled}
       data-collection-action={action.id}
       data-collection-action-state={state.status}
-      title={state.message}
       onSelect={(event) => {
         event.preventDefault();
         void run().then((ok) => {
@@ -186,15 +218,11 @@ function CollectionItemActionDropdownItem(
         });
       }}
     >
-      {state.pending ? (
-        <LoaderCircle data-icon="inline-start" className="animate-spin" />
-      ) : (
-        action.icon
-      )}
-      <span>{label}</span>
-      {state.message ? (
-        <span className="sr-only"> — {state.message}</span>
-      ) : null}
+      <CollectionItemActionMenuContent
+        icon={action.icon}
+        label={label}
+        state={state}
+      />
     </DropdownMenuItem>
   );
 }
@@ -209,21 +237,15 @@ function CollectionItemActionContextItem(props: CollectionItemActionProps) {
       disabled={state.disabled}
       data-collection-action={action.id}
       data-collection-action-state={state.status}
-      title={state.message}
-      aria-description={state.message}
       onSelect={() => {
         void run();
       }}
     >
-      {state.pending ? (
-        <LoaderCircle data-icon="inline-start" className="animate-spin" />
-      ) : (
-        action.icon
-      )}
-      <span>{label}</span>
-      {state.message ? (
-        <span className="sr-only"> — {state.message}</span>
-      ) : null}
+      <CollectionItemActionMenuContent
+        icon={action.icon}
+        label={label}
+        state={state}
+      />
     </ContextMenuItem>
   );
 }
