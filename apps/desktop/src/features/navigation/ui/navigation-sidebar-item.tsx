@@ -24,9 +24,14 @@ interface NavigationSidebarItemProps {
   /**
    * Status of the object, e.g. of a session: its marker, like the pinned
    * mark, takes the place of the row buttons until the row is hovered or
-   * focused.
+   * focused. `tooltipSuffix` is read each time the tooltip opens and follows
+   * the label in the tooltip only, after " · ", when not empty.
    */
-  status?: { marker: ReactNode; label: string };
+  status?: {
+    marker: ReactNode;
+    label: string;
+    tooltipSuffix?: () => string;
+  };
   /** Where the object lives: its Space, and the agent of a session. */
   tooltip: ReactNode;
   /** The object is the main area object. */
@@ -119,7 +124,12 @@ export function NavigationSidebarItem({
           className="flex max-w-80 flex-col items-start gap-1 text-left"
         >
           <span className="font-medium">{title}</span>
-          {status && <span>{status.label}</span>}
+          {status && (
+            <TooltipStatusLine
+              label={status.label}
+              suffix={status.tooltipSuffix}
+            />
+          )}
           {tooltip}
           {pinned && <span>{m.navigation_pinned_item()}</span>}
           {unavailable && <span>{m.navigation_unavailable()}</span>}
@@ -156,6 +166,21 @@ export function NavigationSidebarItem({
       )}
     </SidebarMenuItem>
   );
+}
+
+/**
+ * The status line of the row's tooltip. The tooltip mounts its content only
+ * while open, so the suffix is read as the tooltip opens.
+ */
+function TooltipStatusLine({
+  label,
+  suffix,
+}: {
+  label: string;
+  suffix?: () => string;
+}) {
+  const value = suffix?.();
+  return <span>{value ? `${label} · ${value}` : label}</span>;
 }
 
 function CloseAction({

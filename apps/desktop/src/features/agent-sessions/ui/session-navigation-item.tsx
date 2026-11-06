@@ -7,6 +7,7 @@ import {
   type NavigationKey,
 } from "@/features/navigation";
 import { useAgentSessionCatalog, useAgentSessionSpace } from "../hooks";
+import { sessionTimeLabel } from "../lib";
 import {
   agentSessionForNavigationKey,
   type AgentSession,
@@ -48,8 +49,9 @@ interface AgentSessionNavigationItemProps {
 
 /**
  * A session row of a sidebar navigation section: the session sign with its
- * status marker, and its agent and Space in the tooltip. A session the
- * catalog does not list is unavailable.
+ * status marker, and in the tooltip the time of its status, as the session
+ * header shows it, and its agent and Space. A session the catalog does not
+ * list is unavailable.
  */
 export function AgentSessionNavigationItem({
   navigationKey,
@@ -94,6 +96,7 @@ export function AgentSessionNavigationItem({
           ? {
               marker: <SessionStatusMarker session={session} />,
               label: statusMarkerLabel(session),
+              tooltipSuffix: () => sessionTimeLabel(session),
             }
           : undefined
       }
