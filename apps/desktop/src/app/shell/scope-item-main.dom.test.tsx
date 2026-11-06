@@ -130,7 +130,7 @@ if (process.env.SVODE_SCOPE_ITEM_MAIN_DOM !== "1") {
     return { useShellStore };
   });
 
-  const { CollectionItemMain } =
+  const { CollectionItemMain, COLLECTION_ITEM_UNREAD } =
     await import("@/features/collection/app-shell");
   const { ScopeItemMain } = await import("./scope-item-main");
   const { ListChecks } = await import("lucide-react");
@@ -147,14 +147,21 @@ if (process.env.SVODE_SCOPE_ITEM_MAIN_DOM !== "1") {
     readmePath: "README.md",
     capabilities: ["space"],
   };
-  const source: { set?: (items: string[] | null) => void } = {};
+  interface Read {
+    items: string[];
+    complete: boolean;
+  }
+  const source: { set?: (read: Read | null) => void } = {};
   function Routines({
     mainItem,
     onExpandItem,
   }: Parameters<NonNullable<Contribution>["render"]>[0]) {
-    const [items, setItems] = useState<string[] | null>(["daily"]);
+    const [read, setRead] = useState<Read | null>({
+      items: ["daily"],
+      complete: true,
+    });
     useEffect(() => {
-      source.set = setItems;
+      source.set = setRead;
     }, []);
     if (!mainItem) return null;
     return (
@@ -162,9 +169,11 @@ if (process.env.SVODE_SCOPE_ITEM_MAIN_DOM !== "1") {
         <CollectionItemMain
           main={mainItem}
           target={mainItem.item.itemId}
-          find={(id: string) =>
-            items ? items.find((item) => item === id) : null
-          }
+          find={(id: string) => {
+            if (!read) return null;
+            if (read.items.includes(id)) return id;
+            return read.complete ? undefined : COLLECTION_ITEM_UNREAD;
+          }}
           render={(item: string) => ({
             content: <p>{item}</p>,
             identity: { icon: <span>◷</span>, name: "Daily" },
@@ -272,8 +281,36 @@ if (process.env.SVODE_SCOPE_ITEM_MAIN_DOM !== "1") {
     ]);
   });
 
-  test("an item the ready source no longer has leaves navigation and the main area", async () => {
-    await act(async () => source.set!([]));
+  test("an item an incomplete read lacks keeps its row; its empty state opens the owner on the tab", async () => {
+    calls.opened = [];
+    await act(async () => source.set!({ items: [], complete: false }));
+    await settle();
+    expect(calls.forgotten).toEqual([]);
+    expect(calls.closed).toBe(0);
+    const button = document.querySelector<HTMLButtonElement>(
+      "[data-collection-item-unread] button",
+    )!;
+    expect(button.textContent?.includes("Routines")).toBe(true);
+    await act(async () => button.click());
+    await settle();
+    expect(calls.opened).toEqual([
+      [
+        { kind: "space", spaceId: "child" },
+        { scopeOpenIntent: { kind: "target", surfaceId: "routines" } },
+      ],
+    ]);
+    // A complete read with the item shows it again without reopening.
+    await act(async () => source.set!({ items: ["daily"], complete: true }));
+    await settle();
+    expect(
+      document.querySelector("[data-main-header] [data-current]")?.textContent,
+    ).toBe("◷Daily");
+    expect(calls.forgotten).toEqual([]);
+    expect(calls.closed).toBe(0);
+  });
+
+  test("an item a complete read no longer has leaves navigation and the main area", async () => {
+    await act(async () => source.set!({ items: [], complete: true }));
     await settle();
     expect(calls.forgotten).toEqual([routineKey]);
     expect(calls.closed).toBe(1);

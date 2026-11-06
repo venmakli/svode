@@ -78,11 +78,15 @@ export interface ScopeMainItemTopBar {
 export interface ScopeMainItem {
   item: ScopeItemRef;
   renderTopBar(parts: ScopeMainItemTopBar): ReactNode;
+  /** The label of the item's surface tab, as its breadcrumb shows it. */
+  surfaceLabel: string;
+  /** Opens the owner on the item's surface tab, as its breadcrumb does. */
+  openSurface(): void;
   /** Adds a guard every navigation away from the main area passes. */
   registerNavigationGuard(guard: () => Promise<boolean>): () => void;
   /**
-   * The ready source has no such item: it leaves Now and Pinned, and the
-   * main area closes.
+   * A complete read of the source has no such item: it leaves Now and
+   * Pinned, and the main area closes.
    */
   onGone(): void;
 }

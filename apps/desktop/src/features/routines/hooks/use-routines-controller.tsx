@@ -6,6 +6,7 @@ import {
   type CollectionInstance,
 } from "@/features/collection";
 import {
+  COLLECTION_ITEM_UNREAD,
   CollectionItemMain,
   CollectionItemPeek,
   useCollectionItemPeek,
@@ -20,6 +21,7 @@ import { useSpaceNames } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
+import { isRoutineCatalogReadComplete } from "../model/catalog-completeness";
 import type {
   RoutineAgentActorTarget,
   RoutineCatalogSnapshot,
@@ -279,10 +281,14 @@ export function useRoutinesController(
       main={mainItem}
       target={mainItem.item.itemId}
       find={(routineId: string) => {
-        if (!catalogItems) return null;
-        return catalogItems.find(
+        if (state.phase !== "ready") return null;
+        const item = state.snapshot.items.find(
           (candidate) => candidate.routineId === routineId,
         );
+        if (item) return item;
+        return isRoutineCatalogReadComplete(state.snapshot)
+          ? undefined
+          : COLLECTION_ITEM_UNREAD;
       }}
       render={(item) => routinePeek.render(item, presentation)}
     />

@@ -55,7 +55,8 @@ export function useExpandScopeItem(owner: ScopeOwnerRef) {
  * An item expanded as the main area object: the surface of its domain shows
  * the screen of the item, and the top bar shows the breadcrumbs of the
  * owner, the surface's tab and the item. The tab breadcrumb opens the owner
- * on that tab. An item whose ready source no longer has it leaves Now and
+ * on that tab, as the empty state of an item its source cannot read now
+ * does. An item a complete read of its source no longer has leaves Now and
  * Pinned, and the main area closes.
  */
 export function ScopeItemMain({
@@ -97,10 +98,13 @@ export function ScopeItemMain({
       ) : null,
     [keyId, openSurface, owner, surface],
   );
+  const surfaceLabel = surface?.label ?? "";
   const mainItem = useMemo<ScopeMainItem>(
     () => ({
       item,
       renderTopBar,
+      surfaceLabel,
+      openSurface,
       registerNavigationGuard: (guard) =>
         registerSupplementalContentDeactivation(async () =>
           (await guard()) ? "ready" : "blocked",
@@ -110,7 +114,7 @@ export function ScopeItemMain({
         closeActiveContent();
       },
     }),
-    [item, key, renderTopBar],
+    [item, key, openSurface, renderTopBar, surfaceLabel],
   );
   if (!surface) return null;
   return (

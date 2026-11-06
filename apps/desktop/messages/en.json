@@ -1343,6 +1343,8 @@
   "collection_manage_views": "Manage views",
   "collection_more_views": "More views",
   "collection_item_actions": "Row actions",
+  "collection_item_main_unread": "This item can't be read right now. It will appear once its source reads again.",
+  "collection_item_main_open_surface": "Open “{surface}”",
   "collection_unknown_property": "Property \"{property}\" is unavailable.",
   "collection_unknown_action": "Action \"{action}\" is unavailable.",
   "collection_property_renderer_unavailable": "Property \"{property}\" does not provide value presentation.",

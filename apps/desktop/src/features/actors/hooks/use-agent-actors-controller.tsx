@@ -359,6 +359,8 @@ export function useAgentActorsController({
     overlays,
     peek: agentPeek,
     presentationState,
+    /** The read of the catalog; null until it is read. */
+    snapshot,
     spaceName,
   };
 }

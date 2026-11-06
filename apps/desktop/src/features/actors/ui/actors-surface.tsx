@@ -11,6 +11,7 @@ import {
   type CollectionPresentationState,
 } from "@/features/collection";
 import {
+  COLLECTION_ITEM_UNREAD,
   CollectionItemMain,
   CollectionItemPeek,
   useCollectionItemPeek,
@@ -32,6 +33,10 @@ import { useActorMutation } from "../hooks/use-actor-mutation";
 import { useAgentActorsController } from "../hooks/use-agent-actors-controller";
 import { actorPeekIdentity, type ActorPeekTarget } from "../model/actor-peek";
 import type { AgentActorItem } from "../model/agent-actor-types";
+import {
+  isAgentActorCatalogReadComplete,
+  isPersonCatalogReadComplete,
+} from "../model/catalog-completeness";
 import type { ActorCatalogState } from "../model/catalog-state";
 import type {
   ActorMutationIntent,
@@ -377,15 +382,23 @@ export function ActorsSurface({
           target={mainTarget}
           find={(target) => {
             if (target.presentationId === "humans") {
-              return humanPeek.find(target.itemId);
+              if (state.phase !== "ready") return null;
+              return (
+                humanPeek.find(target.itemId) ??
+                (isPersonCatalogReadComplete(state.snapshot)
+                  ? undefined
+                  : COLLECTION_ITEM_UNREAD)
+              );
             }
-            if (!agentActorItems) return null;
+            const { snapshot } = agentActors;
+            if (!agentActorItems || !snapshot) return null;
             const agent = agentActorItems.find(
               (candidate) => candidate.id === target.itemId,
             );
-            return agent
-              ? agentActors.peek.find(agentActorItemId(agent))
-              : undefined;
+            if (agent) return agentActors.peek.find(agentActorItemId(agent));
+            return isAgentActorCatalogReadComplete(snapshot)
+              ? undefined
+              : COLLECTION_ITEM_UNREAD;
           }}
           render={renderItem}
         />

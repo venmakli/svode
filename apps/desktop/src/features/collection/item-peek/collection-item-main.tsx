@@ -1,11 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+} from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ScopeMainItem } from "@/features/scope-surfaces";
+import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
 import { ObjectContentHeader } from "./object-content-header";
 import type { CollectionItemPeekScreen } from "./types";
+
+/**
+ * What `find` of an expanded item returns when the owner's ready set has no
+ * such item but its read is incomplete: the read may have lost the item, so
+ * it is not gone.
+ */
+export const COLLECTION_ITEM_UNREAD: unique symbol = Symbol(
+  "collection-item-unread",
+);
 
 /**
  * The screen of an item expanded as the main area object: the same parts as
@@ -13,8 +30,9 @@ import type { CollectionItemPeekScreen } from "./types";
  *
  * The screen follows the current version of its item as the peek does: each
  * ready state of the owner's source draws it in place, a source that is not
- * ready leaves the shown version, and once the ready source has no such item
- * the host closes it.
+ * ready leaves the shown version, and once a complete read has no such item
+ * the host closes it. While an incomplete read lacks the item, the screen
+ * says so and offers the owner's tab; a later read that has it draws it.
  */
 export function CollectionItemMain<Target, Item>({
   main,
@@ -26,17 +44,25 @@ export function CollectionItemMain<Target, Item>({
   target: Target;
   /**
    * The current version of the item of `target` in the owner's own ready
-   * set; undefined when the set has no such item, null while the source is
-   * not ready.
+   * set; undefined when a complete read of the set has no such item,
+   * `COLLECTION_ITEM_UNREAD` when an incomplete one has none, null while the
+   * source is not ready.
    */
-  find(target: Target): Item | null | undefined;
+  find(target: Target): Item | null | undefined | typeof COLLECTION_ITEM_UNREAD;
   render(item: Item, target: Target): CollectionItemPeekScreen;
 }) {
   const found = find(target);
-  const [kept, setKept] = useState<Item | null>(null);
+  // The last version or unread outcome stays while the source is not ready.
+  const [kept, setKept] = useState<Item | typeof COLLECTION_ITEM_UNREAD | null>(
+    null,
+  );
   if (found !== null && found !== undefined && kept !== found) setKept(found);
-  const item = found ?? kept;
-  const screen = item !== null ? render(item, target) : null;
+  const shown = found ?? kept;
+  const unread = shown === COLLECTION_ITEM_UNREAD;
+  const screen =
+    shown !== null && shown !== COLLECTION_ITEM_UNREAD
+      ? render(shown, target)
+      : null;
 
   const gone = found === undefined;
   const { onGone } = main;
@@ -46,7 +72,9 @@ export function CollectionItemMain<Target, Item>({
 
   return (
     <div className="flex min-h-full flex-col" data-collection-item-main>
-      {screen ? (
+      {unread ? (
+        <CollectionItemMainUnread main={main} />
+      ) : screen ? (
         <>
           <CollectionItemMainGuard main={main} screen={screen} />
           {main.renderTopBar({
@@ -65,6 +93,27 @@ export function CollectionItemMain<Target, Item>({
         </div>
       )}
     </div>
+  );
+}
+
+/** An item its owner's source cannot read now, with the way to its tab. */
+function CollectionItemMainUnread({ main }: { main: ScopeMainItem }) {
+  return (
+    <Empty data-collection-item-unread>
+      <EmptyHeader>
+        <EmptyDescription>{m.collection_item_main_unread()}</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={main.openSurface}
+        >
+          {m.collection_item_main_open_surface({ surface: main.surfaceLabel })}
+        </Button>
+      </EmptyContent>
+    </Empty>
   );
 }
 

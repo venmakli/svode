@@ -9,6 +9,7 @@ import {
   type CollectionInstance,
 } from "@/features/collection";
 import {
+  COLLECTION_ITEM_UNREAD,
   CollectionItemMain,
   CollectionItemPeek,
 } from "@/features/collection/app-shell";
@@ -17,6 +18,7 @@ import { useAppLocale } from "@/features/settings";
 
 import { useAgentContext } from "../hooks/use-agent-context";
 import { useAgentContextPeek } from "../hooks/use-agent-context-peek";
+import { isAgentContextReadComplete } from "../model/catalog-completeness";
 import type { AgentContextPeekTarget } from "../model/detail-items";
 import type { AgentContextItem } from "../model/types";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
@@ -164,7 +166,13 @@ export function AgentContextSurface({
         <CollectionItemMain
           main={mainItem}
           target={{ kind: "item", instanceKey, itemId: mainItem.item.itemId }}
-          find={contextPeek.find}
+          find={(target) => {
+            const item = contextPeek.find(target);
+            if (item !== undefined || state.phase !== "ready") return item;
+            return isAgentContextReadComplete(state.snapshot)
+              ? undefined
+              : COLLECTION_ITEM_UNREAD;
+          }}
           render={contextPeek.render}
         />
         {peekElement}

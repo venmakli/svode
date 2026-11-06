@@ -1343,6 +1343,8 @@
   "collection_manage_views": "Управлять видами",
   "collection_more_views": "Ещё виды",
   "collection_item_actions": "Действия строки",
+  "collection_item_main_unread": "Этот элемент сейчас не удаётся прочитать. Он появится, когда источник снова прочитается.",
+  "collection_item_main_open_surface": "Открыть «{surface}»",
   "collection_unknown_property": "Свойство «{property}» недоступно.",
   "collection_unknown_action": "Действие «{action}» недоступно.",
   "collection_property_renderer_unavailable": "Свойство «{property}» не предоставляет представление значения.",
