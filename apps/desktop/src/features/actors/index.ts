@@ -6,3 +6,7 @@ export {
   useAgentActorNavigationSource,
   usePersonNavigationSource,
 } from "./hooks/use-actor-navigation-source";
+export {
+  isAgentActorCatalogReadComplete,
+  isPersonCatalogReadComplete,
+} from "./model/catalog-completeness";

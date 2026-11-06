@@ -5,13 +5,14 @@ import type {
   NavigationItemSource,
 } from "@/features/navigation";
 
+import { isAgentContextReadComplete } from "../model/catalog-completeness";
+import type { AgentContextSnapshot } from "../model/types";
 import { AgentContextItemIcon } from "../ui/item-properties";
 import { useAgentContext } from "./use-agent-context";
 
 /**
  * The items of the "Context" of a Space as rows show them, by the id the
- * scanner gives them, with the components of plugins. An item of the
- * device that this device does not have is absent.
+ * scanner gives them, with the components of plugins.
  */
 export function useAgentContextNavigationSource({
   ownerKey,
@@ -23,19 +24,33 @@ export function useAgentContextNavigationSource({
   spacePath: string;
 }): NavigationItemSource {
   const { state } = useAgentContext({ ownerKey, projectPath, spacePath });
-  const items = state.phase === "ready" ? state.snapshot.items : null;
-  return useMemo(() => {
-    if (!items) return null;
-    const displays = new Map<string, NavigationItemDisplay>();
-    for (const item of [
-      ...items,
-      ...items.flatMap((candidate) => candidate.components),
-    ]) {
-      displays.set(item.id, {
-        title: item.name,
-        icon: <AgentContextItemIcon item={item} />,
-      });
-    }
-    return { items: displays, confirmsAbsence: true };
-  }, [items]);
+  const snapshot = state.phase === "ready" ? state.snapshot : null;
+  return useMemo(
+    () => (snapshot ? agentContextNavigationSource(snapshot) : null),
+    [snapshot],
+  );
+}
+
+/**
+ * A read of the "Context" as navigation rows show it. Only a complete read
+ * confirms absence; an item of the device that this device does not have is
+ * absent.
+ */
+export function agentContextNavigationSource(
+  snapshot: AgentContextSnapshot,
+): NonNullable<NavigationItemSource> {
+  const displays = new Map<string, NavigationItemDisplay>();
+  for (const item of [
+    ...snapshot.items,
+    ...snapshot.items.flatMap((candidate) => candidate.components),
+  ]) {
+    displays.set(item.id, {
+      title: item.name,
+      icon: <AgentContextItemIcon item={item} />,
+    });
+  }
+  return {
+    items: displays,
+    confirmsAbsence: isAgentContextReadComplete(snapshot),
+  };
 }
