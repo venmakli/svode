@@ -1,6 +1,6 @@
 //! Automatic versions over real repositories (Stage 11 1.E): the content
 //! flag and its routing, the closing events, the states in which versions
-//! wait, a refused commit and the separation of kinds of commits.
+//! wait, a refused commit and the kinds of commits a version takes.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -396,7 +396,8 @@ async fn a_refused_commit_names_its_cause_and_keeps_the_edits() {
 }
 
 #[tokio::test]
-async fn versions_never_take_system_or_structural_paths_and_system_commits_never_take_content() {
+async fn versions_take_system_paths_but_never_structural_ones_and_system_commits_never_take_content()
+ {
     let cli = cli();
     let tmp = pages().await;
     let root = tmp.path();
@@ -420,17 +421,20 @@ async fn versions_never_take_system_or_structural_paths_and_system_commits_never
         "[submodule \"x\"]\n\tpath = x\n\turl = ./x\n",
     );
 
+    // With content commits, a commit is one lifecycle: the Page and the
+    // system group of the root land; the structural path waits.
     assert!(matches!(
         fixture.close(root, Closing::all(PAUSE)).await,
-        AutoVersions::Done { commits: 1, .. }
+        AutoVersions::Done { commits: 2, .. }
     ));
-    assert_eq!(last_commit(root).await, ["a.md"]);
     assert_eq!(
-        dirty(root).await,
-        [".gitignore", ".gitmodules", ".svode/config.json"]
+        last_commit(root).await,
+        [".gitignore", ".svode/config.json"]
     );
+    assert_eq!(dirty(root).await, [".gitmodules"]);
 
     write(root, "b.md", "---\ntitle: B\n---\nB2\n");
+    write(root, ".svode/config.json", "{\"name\":\"Again\"}\n");
     let service = AutocommitService::new(
         std::sync::Arc::new(GitRuntime::with_cli(cli.clone())),
         std::sync::Arc::new(TestHost::default()),
@@ -444,6 +448,8 @@ async fn versions_never_take_system_or_structural_paths_and_system_commits_never
         .await
         .expect("system commit");
     assert_eq!(last_commit(root).await, [".svode/config.json"]);
+    // Its local repair rewrote the ignore rules: a system change it leaves
+    // for the next closing.
     assert_eq!(dirty(root).await, [".gitignore", ".gitmodules", "b.md"]);
 }
 

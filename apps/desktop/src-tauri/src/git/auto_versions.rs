@@ -1,6 +1,7 @@
-//! Desktop moments of automatic content versions (Stage 11 1.E): the pause
-//! timer of each repository, leaving a Page or the window, a sync and quit.
-//! Which groups closed and their commits belong to
+//! Desktop moments of automatic content versions and background system
+//! commits (Stage 11 1.E): the pause timer of each repository, leaving a
+//! Page or the window, a sync and quit, where content or system commits are
+//! on. Which groups closed and their commits belong to
 //! `svode_core::git::versions::auto`. A refused background commit becomes
 //! the commit stop of its repository and is tried again only at the next
 //! closing, never in a loop. Agent turns and Routine runs hold the
@@ -154,9 +155,9 @@ fn plan<T>(app: &AppHandle, plan: impl FnOnce(&mut Planner) -> T) -> Option<T> {
         .map(|state| state.plan(plan))
 }
 
-/// The repository of `space` when automatic versions are on for it.
+/// The repository of `space` when content or system commits are on for it.
 fn enabled_repository(space: &Path) -> Option<PathBuf> {
-    auto::repository_of(space).filter(|repo| auto::enabled(repo))
+    auto::repository_of(space).filter(|repo| auto::lifecycle(repo).is_some())
 }
 
 /// A file of the Space changed on disk.

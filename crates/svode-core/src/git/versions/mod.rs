@@ -14,6 +14,8 @@ mod changes;
 mod creation_tests;
 mod facts;
 mod group;
+#[cfg(test)]
+mod lifecycle_tests;
 mod message;
 #[cfg(test)]
 mod places_tests;
@@ -32,7 +34,7 @@ use std::path::Path;
 pub use changes::{ChangeStatus, PathChange};
 pub use facts::{ChangeFact, General, GroupFacts, Place, PlacedFact, Sensitive};
 pub(crate) use group::is_page;
-pub use group::{GroupKind, PendingOperation, VersionGroup};
+pub use group::{GroupKind, PendingOperation, VersionGroup, is_system_path};
 pub use message::{MessageLanguage, VersionMessage, compose};
 pub use uncommitted::{HiddenFiles, UncommittedGroup, UncommittedGroups, uncommitted};
 

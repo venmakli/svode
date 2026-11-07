@@ -1,10 +1,12 @@
 //! Agent turns and Routine runs in a repository (Stage 11 1.E «Ходы
 //! агентов», «Рутины»). With content commits on, the open groups of a
 //! repository close before the first turn; while at least one turn runs,
-//! the repository makes no content versions and no integration step that
-//! changes its working copy; after the last turn the content paths the
+//! the repository makes no versions and no integration step that changes
+//! its working copy; after the last turn the content and system paths the
 //! turns changed land as one version. Paths the Svode editor wrote meanwhile
-//! and no turn touched keep their own groups.
+//! and no turn touched keep their own groups. With only system commits on,
+//! a turn only holds the system groups of the repository: they close by
+//! their own rules after it (DF-322 R3).
 //!
 //! Turn boundaries are runtime state of this process: a host (Desktop)
 //! binds the signals of the agent runtime, the known status of terminal
@@ -22,7 +24,7 @@ use super::super::host::GitHost;
 use super::super::ops;
 use super::super::state::GitRuntime;
 use super::MessageLanguage;
-use super::auto::{self, AutoVersions, Closing, Select};
+use super::auto::{self, AutoVersions, Closing, Lifecycle, Select};
 
 /// Whether Svode wraps a turn in a version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,12 +42,14 @@ pub enum TurnWrap {
 /// What the start of a turn did.
 #[derive(Debug)]
 pub enum TurnBegin {
-    /// Content commits are off for the repository: the turn is not tracked.
+    /// Content and system commits are off for the repository: the turn is
+    /// not tracked.
     Off,
     /// The first turn of the repository: the groups before it closed with
-    /// `closed` (`None` for a turn that leaves commits to the agent). A
-    /// refused commit does not stop the turn: its edits stay in the working
-    /// copy and the refusal is the host's commit stop.
+    /// `closed` (`None` for a turn that leaves commits to the agent and with
+    /// only system commits on). A refused commit does not stop the turn: its
+    /// edits stay in the working copy and the refusal is the host's commit
+    /// stop.
     First {
         closed: Option<Result<AutoVersions, GitError>>,
     },
@@ -78,6 +82,9 @@ type Stamp = Option<(u64, SystemTime)>;
 /// The turns of one repository from the start of the first until the end
 /// of the last.
 struct Period {
+    /// Content commits were on when the period started: it holds the
+    /// integration and may end in a version.
+    content: bool,
     /// Running turns by host key, with whether each is wrapped in a version.
     active: HashMap<String, TurnWrap>,
     /// At least one turn of the period is wrapped in a version.
@@ -139,11 +146,14 @@ pub fn holds(repo: &Path) -> bool {
     periods().contains_key(&canonical(repo))
 }
 
-/// A sync reached its integration step while a turn runs in `repo`: the
-/// step does not run and the period remembers to sync after it. `false`
-/// when no turn runs.
+/// A sync reached its integration step while a turn runs in `repo` with
+/// content commits on: the step does not run and the period remembers to
+/// sync after it. `false` when no such turn runs.
 pub(crate) fn defer_integration(repo: &Path) -> bool {
-    match periods().get_mut(&canonical(repo)) {
+    match periods()
+        .get_mut(&canonical(repo))
+        .filter(|period| period.content)
+    {
         Some(period) => {
             period.deferred = true;
             true
@@ -152,10 +162,11 @@ pub(crate) fn defer_integration(repo: &Path) -> bool {
     }
 }
 
-/// The turn `key` of a session or a Routine run starts in `repo`. The first
-/// turn wrapped in a version closes the open groups of the repository
-/// first; a turn that leaves commits to the agent closes nothing. Without
-/// content commits the turn is not tracked.
+/// The turn `key` of a session or a Routine run starts in `repo`. With
+/// content commits on, the first turn wrapped in a version closes the open
+/// groups of the repository first; a turn that leaves commits to the agent
+/// closes nothing. With only system commits on, the turn holds the system
+/// groups and closes nothing. Without either the turn is not tracked.
 pub async fn begin(
     runtime: &GitRuntime,
     host: &dyn GitHost,
@@ -164,42 +175,50 @@ pub async fn begin(
     wrap: TurnWrap,
     language: MessageLanguage,
 ) -> TurnBegin {
-    if !auto::enabled(repo) {
+    let Some(lifecycle) = auto::lifecycle(repo) else {
         return TurnBegin::Off;
-    }
+    };
+    let content = lifecycle == Lifecycle::Content;
     let canonical = canonical(repo);
     if let Some(period) = periods().get_mut(&canonical) {
         period.join(key, wrap);
         return TurnBegin::Joined;
     }
     let closed = match wrap {
-        TurnWrap::Version => Some(
+        TurnWrap::Version if content => Some(
             auto::version(
                 runtime,
                 host,
                 repo,
                 language,
+                lifecycle,
                 Select::Closing(&Closing::all(std::time::Duration::ZERO)),
             )
             .await,
         ),
-        TurnWrap::AgentCommits => None,
+        TurnWrap::Version | TurnWrap::AgentCommits => None,
     };
-    let baseline = match baseline(runtime, repo).await {
-        Ok(baseline) => baseline,
-        Err(error) => {
-            // Without it every changed path counts as the turn's.
-            tracing::warn!(
-                kind = error.kind(),
-                "changed paths before a turn unavailable"
-            );
-            HashMap::new()
+    let baseline = if !content {
+        // No version follows the period.
+        HashMap::new()
+    } else {
+        match baseline(runtime, repo).await {
+            Ok(baseline) => baseline,
+            Err(error) => {
+                // Without it every changed path counts as the turn's.
+                tracing::warn!(
+                    kind = error.kind(),
+                    "changed paths before a turn unavailable"
+                );
+                HashMap::new()
+            }
         }
     };
     periods()
         .entry(canonical)
         // A turn that started meanwhile opened the period.
         .or_insert_with(|| Period {
+            content,
             active: HashMap::new(),
             wraps: false,
             baseline,
@@ -246,8 +265,8 @@ pub fn editor_wrote(paths: &[PathBuf]) {
 
 /// The turn `key` ended: answered, cancelled, failed, its session ended or
 /// its process was lost. After the last turn of a repository wrapped in a
-/// version, the content paths the turns changed land as one version with a
-/// message of the 1.G templates.
+/// version with content commits on, the content and system paths the turns
+/// changed land as one version with a message of the 1.G templates.
 pub async fn end(
     runtime: &GitRuntime,
     host: &dyn GitHost,
@@ -271,14 +290,21 @@ pub async fn end(
         let period = periods.remove(&repository).expect("period of the turn");
         (repository, period)
     };
-    let version = if period.wraps && auto::enabled(&repository) {
+    let version = if period.wraps && period.content && auto::enabled(&repository) {
         let changed = |path: &str| period.changed(&repository, path);
-        auto::version(runtime, host, &repository, language, Select::Turn(&changed))
-            .await
-            .map(|versions| match versions {
-                AutoVersions::Done { commits, .. } => commits,
-                AutoVersions::Off | AutoVersions::Held(_) => 0,
-            })
+        auto::version(
+            runtime,
+            host,
+            &repository,
+            language,
+            Lifecycle::Content,
+            Select::Turn(&changed),
+        )
+        .await
+        .map(|versions| match versions {
+            AutoVersions::Done { commits, .. } => commits,
+            AutoVersions::Off | AutoVersions::Held(_) => 0,
+        })
     } else {
         Ok(0)
     };

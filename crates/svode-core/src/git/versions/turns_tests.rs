@@ -343,17 +343,19 @@ async fn a_system_path_changed_during_a_turn_lands_as_its_own_commit() {
         .expect("system commit");
     assert_eq!(last_commit(root).await, [".svode/config.json"]);
     assert!(dirty(root).await.contains(&"a.md".to_string()));
-    // The version of the turn takes the content path only.
+    // The version of the turn takes the content path and the ignore rules
+    // the local repair of that commit rewrote during the turn (DF-322 R2),
+    // not the committed config.
     assert_eq!(ended(fixture.end("t6:turn").await), (1, false));
-    assert_eq!(last_commit(root).await, ["a.md"]);
+    assert_eq!(last_commit(root).await, [".gitignore", "a.md"]);
     assert!(!dirty(root).await.contains(&"a.md".to_string()));
 }
 
 #[tokio::test]
-async fn without_content_commits_turns_and_routine_runs_make_no_versions() {
+async fn without_content_and_system_commits_turns_and_routine_runs_are_not_tracked() {
     let tmp = pages().await;
     let root = tmp.path();
-    policy(root, false);
+    write_user_policy(root, &GitUserPolicy::default()).expect("write policy");
     let fixture = Fixture::new();
     write(root, "a.md", "---\ntitle: A\n---\nBefore\n");
     assert!(matches!(

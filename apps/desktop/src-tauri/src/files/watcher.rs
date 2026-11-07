@@ -243,6 +243,9 @@ fn process_published_events(
     // one debounce window; the sidebar still needs this as `file:created`.
     let mut seen: HashMap<PathBuf, EventKind> = HashMap::new();
     let mut any_dirty = false;
+    // System settings files are hidden from the tree but committed by the
+    // automatic commits of their repository (Stage 11 1.E, DF-322).
+    let mut system_changed = false;
     let mut any_assets_changed = false;
     let mut any_tree_changed = false;
     let mut visibility_policy_changed = false;
@@ -315,6 +318,7 @@ fn process_published_events(
             }
             visibility_policy_changed =
                 visibility_policy_changed || is_visibility_policy_path(space_root, path);
+            system_changed = system_changed || is_system_settings_path(space_root, path);
             spaces_config_changed = spaces_config_changed
                 || relative_watched_path(space_root, path).as_deref() == Some(".svode/config.json");
             if let Some(kind) =
@@ -434,8 +438,10 @@ fn process_published_events(
             serde_json::json!({ "ownerPath": owner_path }),
         );
     }
-    if any_dirty {
+    if any_dirty || system_changed {
         crate::git::auto_versions::touched(app, space_root);
+    }
+    if any_dirty {
         let _ = app.emit(
             "space:dirty",
             serde_json::json!({ "space": space, "affectsTree": any_tree_changed }),
@@ -1000,6 +1006,11 @@ fn classify_membership_index_event(
 fn is_visibility_policy_path(space_root: &Path, path: &Path) -> bool {
     relative_watched_path(space_root, path)
         .is_some_and(|path| matches!(path.as_str(), ".gitignore" | ".svode/config.json"))
+}
+
+fn is_system_settings_path(space_root: &Path, path: &Path) -> bool {
+    relative_watched_path(space_root, path)
+        .is_some_and(|path| svode_core::git::versions::is_system_path(&path))
 }
 
 fn is_under_child_space(rel_path: &str, skip_dirs: &HashSet<String>) -> bool {
@@ -1997,6 +2008,26 @@ mod tests {
             tmp.path(),
             &tmp.path().join(".svode/config.json")
         ));
+    }
+
+    #[test]
+    fn system_settings_files_wake_the_automatic_commits_although_the_tree_hides_them() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        for path in [
+            ".svode/config.json",
+            ".svode/AGENTS.md",
+            ".gitignore",
+            ".gitattributes",
+            ".lfsconfig",
+            ".mailmap",
+            "notes/.svode/config.json",
+        ] {
+            assert!(is_system_settings_path(root, &root.join(path)), "{path}");
+        }
+        for path in [".svode/local.json", ".svode/order.json", "Page.md"] {
+            assert!(!is_system_settings_path(root, &root.join(path)), "{path}");
+        }
     }
 
     #[test]

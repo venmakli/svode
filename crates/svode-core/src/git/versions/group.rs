@@ -2,13 +2,16 @@
 //! changes it commits by what it knows about the data, not by the file list:
 //! a managed operation with the paths it touched, the creation of a content
 //! object with its renames and moves before the first commit, then the
-//! remaining changes by their owner. Kinds of changes and repositories never
-//! share a group.
+//! remaining changes by their owner. Repositories never share a group, and
+//! kinds of changes share one only as one lifecycle: with content commits
+//! on, the system paths a registered operation wrote belong to its group
+//! (1.E, DF-322 R2).
 
 use std::path::{Path, PathBuf};
 
 use crate::git::path::{RootMode, repo_relative_from_base};
 use crate::git::pending::{OperationId, StructuralChange, StructuralOp};
+use crate::git::policy;
 
 use super::changes::{ChangeStatus, PathChange, Sources};
 
@@ -47,7 +50,7 @@ pub enum GroupKind {
 
 impl GroupKind {
     /// Whether the group holds content rather than system or structural
-    /// changes (Stage 11 1.E: kinds of commits never mix).
+    /// changes (Stage 11 1.E «Виды коммитов и жизненный цикл»).
     pub fn is_content(self) -> bool {
         !matches!(self, Self::System | Self::Structural)
     }
@@ -142,7 +145,9 @@ impl VersionGroup {
 
 /// Split `changes` into groups. `operations` are the pending registrations
 /// in order; an operation group claims the content changes at or under the
-/// paths of its operations, linked by identity and relocation endpoints.
+/// paths of its operations, linked by identity and relocation endpoints,
+/// and, where content commits are on for `repo`, the system changes there
+/// too.
 pub(crate) fn group_changes(
     repo: &Path,
     changes: Vec<PathChange>,
@@ -151,8 +156,10 @@ pub(crate) fn group_changes(
 ) -> Vec<VersionGroup> {
     let mut left = changes.into_iter().map(Some).collect::<Vec<_>>();
     let mut groups = Vec::<VersionGroup>::new();
+    let lifecycle = policy::effective_user_policy(repo).auto_commit_content;
 
-    // System and structural changes keep their own commits.
+    // Structural changes keep their own commits, and so do system changes
+    // unless a registered operation wrote them as one lifecycle.
     let mut system = Vec::<VersionGroup>::new();
     for slot in left.iter_mut() {
         let Some(change) = slot.as_ref() else {
@@ -160,6 +167,8 @@ pub(crate) fn group_changes(
         };
         let kind = if change.gitlink || change.path == ".gitmodules" {
             Some((GroupKind::Structural, String::new()))
+        } else if lifecycle && operations.iter().any(|op| claims(op, change)) {
+            None
         } else {
             system_owner(&change.path).map(|owner| (GroupKind::System, owner))
         };
@@ -256,6 +265,15 @@ pub(crate) fn group_changes(
     groups
 }
 
+/// Whether a group of `op` claims `change`: an operation, or a touched set
+/// that rewrote a schema, whose paths hold the change.
+fn claims(op: &PendingOperation, change: &PathChange) -> bool {
+    (op.op.is_some() || op.paths.iter().any(|path| is_schema(path)))
+        && change
+            .paths()
+            .any(|own| op.paths.iter().any(|path| at_or_under(own, path)))
+}
+
 fn push(groups: &mut Vec<VersionGroup>, kind: GroupKind, owner: String, change: PathChange) {
     match groups
         .iter_mut()
@@ -310,6 +328,13 @@ fn fields_only(sources: &Sources, path: &str) -> bool {
     let old = crate::page::changes::PageVersion::read(old);
     let new = crate::page::changes::PageVersion::read(&new);
     old.same_text(&new) && old.title == new.title
+}
+
+/// Whether a repository- or Space-relative path is a system settings file
+/// (1.E): ignore, attribute and LFS rules, `.mailmap`, the config and the
+/// agent instructions of a Space or folder.
+pub fn is_system_path(path: &str) -> bool {
+    system_owner(path).is_some()
 }
 
 /// The owner folder of a system settings file.

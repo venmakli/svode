@@ -2,14 +2,17 @@
 //! on for a repository, its open groups (1.G) become versions as they close:
 //! after a pause, when the user leaves a Page or the window, before a sync
 //! and on quit. Desktop plans these moments; this owner decides which groups
-//! closed and commits them. A version never takes the paths of system or
-//! structural changes, and versions wait while the repository is in a Git
+//! closed and commits them. Which groups a closing takes follows the
+//! effective policy ([`Lifecycle`], DF-322): with content commits, content
+//! and system groups as one lifecycle; with only system commits, the system
+//! groups by owner, each its own commit; structural groups never, they
+//! follow the pointer rules. Versions wait while the repository is in a Git
 //! operation, has files in conflict or a detached HEAD, while an agent turn
 //! or a Routine run holds the repository ([`super::turns`]) and while
 //! another writer holds its write guard. The pending creation commits of
 //! the repository land before its versions, and until they land no version
-//! takes their paths or a path inside an Inline Space they create
-//! ([`super::super::space_creation`]).
+//! and no system commit takes their paths or a path inside an Inline Space
+//! they create ([`super::super::space_creation`]).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -27,13 +30,13 @@ use super::changes::{ChangeStatus, PathChange, Sources};
 use super::group::{self, GroupKind, PendingOperation, VersionGroup, at_or_under};
 use super::{MessageLanguage, commit_grouped, commit_single};
 
-/// Which open content groups of a repository close now.
+/// Which open groups of a repository close now.
 #[derive(Debug, Clone)]
 pub struct Closing {
     /// Groups whose last change is at least this old close.
     pub pause: Duration,
-    /// Groups at or under these repository-relative paths close: the Page
-    /// or Collection the user left.
+    /// Content groups at or under these repository-relative paths close: the
+    /// Page or Collection the user left.
     pub left: Vec<String>,
     /// Every open group closes: the window lost focus, a sync starts or the
     /// app quits.
@@ -79,7 +82,7 @@ pub enum Held {
 /// What a closing did to a repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutoVersions {
-    /// Content commits are off for the repository.
+    /// Content and system commits are off for the repository.
     Off,
     /// The repository is in a state where versions wait; edits accumulate.
     Held(Held),
@@ -99,17 +102,53 @@ pub fn repository_of(path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// Whether the device enabled automatic versions of content for `repo`
-/// (the root flags for an Inline Space, its own for an Independent or
-/// Submodule Space: the flags of the repository root).
-pub fn enabled(repo: &Path) -> bool {
-    policy::effective_user_policy(repo).auto_commit_content
+/// What the automatic commits of a repository take, by the effective
+/// policy of the device (1.E «Виды коммитов и жизненный цикл», DF-322).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    /// Content commits are on: a commit is one lifecycle, and versions take
+    /// the content and system groups.
+    Content,
+    /// Content commits are off and system commits on: the system changes no
+    /// Desktop operation committed land as their groups by owner, only their
+    /// paths.
+    System,
 }
 
-/// Close the groups `closing` names in `repo` and commit them as versions
-/// with messages in `language`. A failed commit is returned as is: the
-/// groups before it keep their versions, the rest stays in the working
-/// copy and Svode tries again only at the next closing.
+impl Lifecycle {
+    /// Whether the automatic commits of this lifecycle take a group of
+    /// `kind`. Structural groups stay with the pointer rules.
+    fn takes(self, kind: GroupKind) -> bool {
+        match self {
+            Self::Content => kind != GroupKind::Structural,
+            Self::System => kind == GroupKind::System,
+        }
+    }
+}
+
+/// The lifecycle of the automatic commits of `repo` (the root flags for an
+/// Inline Space, its own for an Independent or Submodule Space: the flags of
+/// the repository root); `None` with content and system commits off.
+pub fn lifecycle(repo: &Path) -> Option<Lifecycle> {
+    let policy = policy::effective_user_policy(repo);
+    if policy.auto_commit_content {
+        Some(Lifecycle::Content)
+    } else if policy.auto_commit_system {
+        Some(Lifecycle::System)
+    } else {
+        None
+    }
+}
+
+/// Whether the device enabled automatic versions of content for `repo`.
+pub fn enabled(repo: &Path) -> bool {
+    lifecycle(repo) == Some(Lifecycle::Content)
+}
+
+/// Close the groups `closing` names in `repo` and commit them with messages
+/// in `language`, as its [`Lifecycle`] takes them. A failed commit is
+/// returned as is: the groups before it keep their commits, the rest stays
+/// in the working copy and Svode tries again only at the next closing.
 pub async fn close(
     runtime: &GitRuntime,
     host: &dyn GitHost,
@@ -117,32 +156,40 @@ pub async fn close(
     closing: &Closing,
     language: MessageLanguage,
 ) -> Result<AutoVersions, GitError> {
-    if !enabled(repo) {
+    let Some(lifecycle) = lifecycle(repo) else {
         return Ok(AutoVersions::Off);
-    }
+    };
     if super::turns::holds(repo) {
         return Ok(AutoVersions::Held(Held::Turn));
     }
-    version(runtime, host, repo, language, Select::Closing(closing)).await
+    version(
+        runtime,
+        host,
+        repo,
+        language,
+        lifecycle,
+        Select::Closing(closing),
+    )
+    .await
 }
 
-/// Which changed content paths of a repository become versions now, and in
-/// what shape.
+/// Which changed paths of a repository become versions now, and in what
+/// shape.
 pub(super) enum Select<'a> {
     /// The groups a closing names, one version per group.
     Closing(&'a Closing),
-    /// The content paths a turn changed, as one version (1.E «Ходы
-    /// агентов»).
+    /// The paths a turn changed, as one version (1.E «Ходы агентов»).
     Turn(&'a (dyn Fn(&str) -> bool + Sync)),
 }
 
-/// Commit the content paths `select` picks in `repo` as versions; the
-/// shared body of a closing and of the version of a turn.
+/// Commit the paths `select` picks in `repo` from the groups `lifecycle`
+/// takes; the shared body of a closing and of the version of a turn.
 pub(super) async fn version(
     runtime: &GitRuntime,
     host: &dyn GitHost,
     repo: &Path,
     language: MessageLanguage,
+    lifecycle: Lifecycle,
     select: Select<'_>,
 ) -> Result<AutoVersions, GitError> {
     let cli = runtime.require_cli()?;
@@ -174,12 +221,12 @@ pub(super) async fn version(
     let created = |path: &str| creations.iter().any(|creation| creation.holds(path));
 
     let pending = runtime.pending();
-    let peeked = pending
+    let mut peeked = pending
         .peek_under(repo)
         .into_iter()
         .filter(|registration| repository_of(&registration.space).as_deref() == Some(repo))
         .collect::<Vec<_>>();
-    let operations = peeked
+    let mut operations = peeked
         .iter()
         .map(|registration| {
             PendingOperation::registered(
@@ -189,11 +236,26 @@ pub(super) async fn version(
             )
         })
         .collect::<Vec<_>>();
+    // A registered operation is content written by Desktop: system commits
+    // alone leave every path of it for its manual commit.
+    let registered = match lifecycle {
+        Lifecycle::Content => Vec::new(),
+        Lifecycle::System => {
+            peeked.clear();
+            std::mem::take(&mut operations)
+                .into_iter()
+                .flat_map(|operation| operation.paths)
+                .collect()
+        }
+    };
     let changes = status
         .files
         .iter()
         .filter(|file| {
-            file.state != "conflict" && !nested_repository(repo, &file.path) && !created(&file.path)
+            file.state != "conflict"
+                && !nested_repository(repo, &file.path)
+                && !created(&file.path)
+                && !registered.iter().any(|path| at_or_under(&file.path, path))
         })
         .map(|file| PathChange {
             status: match file.state.as_str() {
@@ -215,8 +277,8 @@ pub(super) async fn version(
     let sources = Sources::read(&cli, repo, &changes).await;
     let groups = group::group_changes(repo, changes, &operations, &sources);
     let (due, next) = match &select {
-        Select::Closing(closing) => due_paths(repo, &groups, closing, SystemTime::now()),
-        Select::Turn(changed) => (turn_paths(&groups, changed), None),
+        Select::Closing(closing) => due_paths(repo, &groups, lifecycle, closing, SystemTime::now()),
+        Select::Turn(changed) => (turn_paths(&groups, lifecycle, changed), None),
     };
     if due.is_empty() {
         return Ok(AutoVersions::Done { commits: 0, next });
@@ -296,22 +358,26 @@ pub(super) async fn version(
     }
 }
 
-/// The repository-relative paths of the content groups that close now, and
-/// when the earliest group left open reaches the pause.
+/// The repository-relative paths of the groups `lifecycle` takes that close
+/// now, and when the earliest group left open reaches the pause. A system
+/// group closes like changes of an unknown source (1.G): by the pause or
+/// when every group closes, never by leaving a Page.
 fn due_paths(
     repo: &Path,
     groups: &[VersionGroup],
+    lifecycle: Lifecycle,
     closing: &Closing,
     now: SystemTime,
 ) -> (Vec<String>, Option<Duration>) {
     let mut due = Vec::new();
     let mut next: Option<Duration> = None;
-    for group in groups.iter().filter(|group| group.kind.is_content()) {
+    for group in groups.iter().filter(|group| lifecycle.takes(group.kind)) {
         let paths = group.paths();
         let idle = idle_for(repo, &paths, now);
-        let left = closing.left.iter().any(|left| {
-            at_or_under(&group.owner, left) || paths.iter().any(|path| at_or_under(path, left))
-        });
+        let left = group.kind.is_content()
+            && closing.left.iter().any(|left| {
+                at_or_under(&group.owner, left) || paths.iter().any(|path| at_or_under(path, left))
+            });
         if closing.all || closes_at_once(group) || left || idle >= closing.pause {
             for path in paths {
                 if !due.contains(&path) {
@@ -326,10 +392,15 @@ fn due_paths(
     (due, next)
 }
 
-/// The paths of the content groups that `changed` says the turn changed.
-fn turn_paths(groups: &[VersionGroup], changed: &(dyn Fn(&str) -> bool + Sync)) -> Vec<String> {
+/// The paths of the groups `lifecycle` takes that `changed` says the turn
+/// changed.
+fn turn_paths(
+    groups: &[VersionGroup],
+    lifecycle: Lifecycle,
+    changed: &(dyn Fn(&str) -> bool + Sync),
+) -> Vec<String> {
     let mut paths = Vec::new();
-    for group in groups.iter().filter(|group| group.kind.is_content()) {
+    for group in groups.iter().filter(|group| lifecycle.takes(group.kind)) {
         for path in group.paths() {
             if changed(&path) && !paths.contains(&path) {
                 paths.push(path);
