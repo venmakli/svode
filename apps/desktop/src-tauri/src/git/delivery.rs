@@ -289,13 +289,14 @@ pub(crate) async fn require_scope_repair(
     project: &Path,
     space: &Path,
 ) -> Result<(), crate::AppError> {
-    Ok(svode_core::git::local_repair::require_scope_repair(
+    svode_core::git::local_repair::require_scope_repair(
         &runtime(app),
         host(app).as_ref(),
         project,
         space,
     )
-    .await?)
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn repair_scope(

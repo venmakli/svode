@@ -124,18 +124,19 @@ pub async fn repair_scope(
     repair_authorized(cli, repository, inline, authorization).await
 }
 
+/// A repair that has to happen: `Changed` or `Unchanged`, never `Skipped`.
 pub async fn require_scope_repair(
     runtime: &GitRuntime,
     host: &dyn GitHost,
     project: &Path,
     space: &Path,
-) -> Result<(), GitError> {
-    if repair_scope(runtime, host, project, space).await? == RepairOutcome::Skipped {
-        return Err(GitError::GitCommandFailed(
+) -> Result<RepairOutcome, GitError> {
+    match repair_scope(runtime, host, project, space).await? {
+        RepairOutcome::Skipped => Err(GitError::GitCommandFailed(
             "Repository is not safe for ignore repair".into(),
-        ));
+        )),
+        outcome => Ok(outcome),
     }
-    Ok(())
 }
 
 /// Exact-path callers already serialize their repository before preflight/publication.

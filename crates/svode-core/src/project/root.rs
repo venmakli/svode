@@ -111,11 +111,13 @@ pub async fn create(
         .unwrap_or_else(|| folder_name(&path));
 
     let existing_repository = exists && path.join(".git").symlink_metadata().is_ok();
+    let mut prepared = false;
     if existing_repository {
         host.authorize_repository(&path).await?;
         // Preparing the repository (local repair) is not part of the
-        // creation and is not rolled back.
-        local_repair::require_scope_repair(runtime, host, &path, &path).await?;
+        // creation and is not rolled back, but its changes are reported.
+        prepared = local_repair::require_scope_repair(runtime, host, &path, &path).await?
+            == local_repair::RepairOutcome::Changed;
     }
 
     let mut journal = Journal::new(&path, exists);
@@ -129,7 +131,12 @@ pub async fn create(
     )
     .await
     {
-        Ok(created) => Ok(created),
+        Ok(mut created) => {
+            if prepared {
+                created.changed_paths.push(path.join(".gitignore"));
+            }
+            Ok(created)
+        }
         // Another creator scaffolded the folder first; it owns everything
         // there.
         Err(ProjectError::Config(SpaceConfigError::Exists)) => {

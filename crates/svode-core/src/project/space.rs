@@ -137,10 +137,11 @@ pub async fn create(
         &targets,
         async {
             // Preparing the Project repository (local repair) is not part of
-            // the creation and is not rolled back.
-            if project_repository {
-                local_repair::require_scope_repair(runtime, host, &project, &project).await?;
-            }
+            // the creation and is not rolled back, but its changes are
+            // reported.
+            let prepared = project_repository
+                && local_repair::require_scope_repair(runtime, host, &project, &project).await?
+                    == local_repair::RepairOutcome::Changed;
             // Another writer may have taken the folder meanwhile.
             ensure_free(&space_config::read(&project)?, &space_dir, &folder)?;
             let mut journal = Journal::new(&project, &space_dir);
@@ -155,7 +156,13 @@ pub async fn create(
             )
             .await;
             match written {
-                Ok(created) => Ok(created),
+                Ok(mut created) => {
+                    let gitignore = project.join(".gitignore");
+                    if prepared && !created.changed_paths.contains(&gitignore) {
+                        created.changed_paths.push(gitignore);
+                    }
+                    Ok(created)
+                }
                 Err(error) => Err(journal.rollback(cli.as_ref(), error).await),
             }
         },

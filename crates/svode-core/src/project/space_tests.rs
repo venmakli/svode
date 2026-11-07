@@ -326,6 +326,41 @@ async fn each_type_writes_its_scaffold_and_git_effects_without_a_commit() {
 }
 
 #[tokio::test]
+async fn the_answer_names_the_project_gitignore_the_preparation_changed() {
+    let named = |created: &SpaceCreated, file: &Path| {
+        created
+            .changed_paths
+            .iter()
+            .filter(|path| path.as_path() == file)
+            .count()
+    };
+
+    // A prepared Project repository: the preparation changes nothing and a
+    // submodule leaves the Project `.gitignore` alone.
+    let f = Fixture::new(structural()).await;
+    let gitignore = f.root.join(".gitignore");
+    let before = std::fs::read(&gitignore).unwrap();
+    let code = f.create("code", SpaceGitType::Submodule).await.unwrap();
+    assert_eq!(std::fs::read(&gitignore).unwrap(), before);
+    assert_eq!(named(&code, &gitignore), 0);
+
+    // Without the `# svode:local` block the preparation writes it.
+    let f = Fixture::new(structural()).await;
+    let gitignore = f.root.join(".gitignore");
+    std::fs::write(&gitignore, "target/\n").unwrap();
+    git(&f.cli, &f.root, &["commit", "-qam", "Drop the local block"]).await;
+    let code = f.create("code", SpaceGitType::Submodule).await.unwrap();
+    let written = std::fs::read_to_string(&gitignore).unwrap();
+    assert!(written.contains("# svode:local:start"), "{written}");
+    assert_eq!(named(&code, &gitignore), 1);
+
+    // An inline Space changes the same file itself: it is named once.
+    std::fs::write(&gitignore, "target/\n").unwrap();
+    let notes = f.create("notes", SpaceGitType::Inline).await.unwrap();
+    assert_eq!(named(&notes, &gitignore), 1);
+}
+
+#[tokio::test]
 async fn the_creation_commit_follows_the_structural_flag_and_comes_once() {
     for (git_type, folder, paths) in [
         (

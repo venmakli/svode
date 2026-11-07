@@ -273,6 +273,35 @@ async fn an_existing_repository_is_prepared_without_git_init_or_commit() {
     let status = stdout(git(&path, &["status", "--porcelain", "-uall"]));
     assert!(!status.contains("local.json"), "{status}");
     assert!(status.contains(".svode/config.json"), "{status}");
+    // The preparation wrote `.gitignore`, so the answer names it.
+    assert!(path.join(".gitignore").is_file());
+    let mut changed = created.changed_paths.clone();
+    changed.sort();
+    let mut expected = vec![
+        path.join(".svode/config.json"),
+        path.join(".svode/local.json"),
+        path.join(README_FILE),
+        path.join(".gitignore"),
+    ];
+    expected.sort();
+    assert_eq!(changed, expected);
+}
+
+#[tokio::test]
+async fn an_already_prepared_repository_leaves_gitignore_out_of_the_answer() {
+    let fixture = Fixture::new();
+    let path = fixture.path("code");
+    std::fs::create_dir(&path).unwrap();
+    stdout(git(&path, &["init", "-q", "-b", "trunk"]));
+    crate::git::ops::ensure_svode_gitignore(&path).unwrap();
+    std::fs::write(path.join("main.rs"), "fn main() {}").unwrap();
+    stdout(git(&path, &["add", "-A"]));
+    stdout(git(&path, &["commit", "-qm", "Code"]));
+    let gitignore = std::fs::read(path.join(".gitignore")).unwrap();
+
+    let created = fixture.create(&path, Some("Code")).await.unwrap();
+
+    assert_eq!(std::fs::read(path.join(".gitignore")).unwrap(), gitignore);
     assert!(!created.changed_paths.contains(&path.join(".gitignore")));
 }
 
