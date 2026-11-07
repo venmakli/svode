@@ -538,12 +538,20 @@ if (!isolatedProcess) {
       Array.from(document.querySelectorAll<HTMLElement>("section")).find(
         (section) =>
           section.querySelector("h3")?.textContent ===
-          "Automation on this device",
+          m.settings_git_automation_title(),
       )!;
     const labels = () =>
       Array.from(automation().querySelectorAll("label")).map(
         (label) => label.textContent,
       );
+    const labelFor = (text: string) =>
+      Array.from(automation().querySelectorAll("label")).find(
+        (label) => label.textContent === text,
+      )!;
+    const switchFor = (text: string) =>
+      document.getElementById(labelFor(text).htmlFor)!;
+    const rowFor = (text: string) =>
+      labelFor(text).closest<HTMLElement>("[data-slot=field]")!;
     const draw = async (overrides: Partial<SpaceSettingsGit>) => {
       await act(async () => {
         root.render(
@@ -579,13 +587,15 @@ if (!isolatedProcess) {
       expect(automation().querySelector("[data-slot=card]")).toBeNull();
 
       // "Custom": four switches in their order, the content one marked
-      // experimental; content and sync without structural commits warn
-      // under the switches.
+      // experimental. Content commits hold the structural and system
+      // switches on and unavailable, even from a stored combination with
+      // them off; no warning shows.
       await draw({
         preset: "custom",
         autoCommitContent: true,
         autoSync: true,
         autoCommitStructural: false,
+        autoCommitSystem: false,
       });
       expect(automation().querySelector('[role="combobox"]')?.textContent).toBe(
         "Custom",
@@ -606,25 +616,61 @@ if (!isolatedProcess) {
           "After a commit, on opening and regularly while the window is open.",
         ),
       ).toBe(true);
-      const warning = automation().querySelector<HTMLElement>(
-        "[data-git-automation-warning]",
-      );
-      expect(warning?.textContent).toBe(
-        "Spaces you create and their pointers stay uncommitted until you commit them by hand and may hold up publishing the project.",
-      );
-      expect(warning?.previousElementSibling?.getAttribute("data-slot")).toBe(
-        "card",
-      );
-
-      await draw({
-        preset: "custom",
-        autoCommitContent: true,
-        autoSync: true,
-        autoCommitStructural: true,
-      });
+      const held = ["Commit structural changes", "Commit system settings"];
+      for (const label of held) {
+        const control = switchFor(label);
+        expect(control.getAttribute("aria-checked")).toBe("true");
+        expect(control.hasAttribute("disabled")).toBe(true);
+        expect(rowFor(label).textContent).toBe(`${label}With content commits.`);
+      }
+      expect(
+        switchFor("Commit content editsExperimental").hasAttribute("disabled"),
+      ).toBe(false);
       expect(
         automation().querySelector("[data-git-automation-warning]"),
       ).toBeNull();
+      expect(automation().querySelector("[data-slot=alert]")).toBeNull();
+      expect(automation().textContent?.includes("Spaces you create")).toBe(
+        false,
+      );
+
+      await setLocale("ru", { reload: false });
+      await draw({
+        preset: "custom",
+        autoCommitContent: true,
+        autoCommitStructural: true,
+        autoCommitSystem: true,
+      });
+      for (const label of [
+        "Фиксировать структурные изменения",
+        "Фиксировать системные настройки",
+      ]) {
+        expect(switchFor(label).hasAttribute("disabled")).toBe(true);
+        expect(rowFor(label).textContent).toBe(
+          `${label}Вместе с правками содержимого.`,
+        );
+      }
+      await setLocale("en", { reload: false });
+
+      // After content commits are off, the switches stay on and can be
+      // changed again, with their own descriptions.
+      await draw({
+        preset: "custom",
+        autoCommitContent: false,
+        autoCommitStructural: true,
+        autoCommitSystem: true,
+      });
+      for (const label of held) {
+        const control = switchFor(label);
+        expect(control.getAttribute("aria-checked")).toBe("true");
+        expect(control.hasAttribute("disabled")).toBe(false);
+      }
+      expect(rowFor("Commit structural changes").textContent).toBe(
+        `Commit structural changes${m.git_auto_commit_structural_hint()}`,
+      );
+      expect(rowFor("Commit system settings").textContent).toBe(
+        `Commit system settings${m.git_auto_commit_system_hint()}`,
+      );
     } finally {
       await act(async () => root.unmount());
       clearNativeMocks();

@@ -40,14 +40,28 @@ export function gitAutomationPolicy(
 }
 
 /**
- * Content versions sync while Spaces and pointers Svode creates stay
- * uncommitted: their publication may wait for a manual commit.
+ * Content commits include structural and system commits (DF-322 R1): while
+ * content commits are on, both act as on whatever is stored. An already
+ * effective policy comes back as the same object.
  */
-export function gitAutomationLeavesStructureUncommitted(
+export function effectiveGitPolicy(policy: GitUserPolicy): GitUserPolicy {
+  if (
+    !policy.autoCommitContent ||
+    (policy.autoCommitStructural && policy.autoCommitSystem)
+  ) {
+    return policy;
+  }
+  return { ...policy, autoCommitStructural: true, autoCommitSystem: true };
+}
+
+/** Whether a switch is held on by content commits and cannot be changed. */
+export function gitPolicyFollowsContent(
+  field: keyof GitUserPolicy,
   policy: GitUserPolicy,
 ): boolean {
   return (
-    policy.autoCommitContent && policy.autoSync && !policy.autoCommitStructural
+    policy.autoCommitContent &&
+    (field === "autoCommitStructural" || field === "autoCommitSystem")
   );
 }
 

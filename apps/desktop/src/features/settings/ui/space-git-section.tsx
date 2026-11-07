@@ -12,8 +12,8 @@ import type {
 } from "../hooks/use-space-settings-git";
 import type { SpaceSettingsIdentity } from "../hooks/use-space-settings-identity";
 import {
-  gitAutomationLeavesStructureUncommitted,
   gitAutomationPresetOptions,
+  gitPolicyFollowsContent,
   type GitAutomationPreset,
 } from "../model/git-automation";
 import { IdentitySection } from "./identity-section";
@@ -51,14 +51,19 @@ export function SpaceGitSection({
     field: GitPolicyField,
     label: ReactNode,
     description: ReactNode,
-    disabled = false,
+    unavailable = false,
   ) {
     const pending = git.policyPending.has(field);
+    // Content commits hold the structural and system switches on.
+    const heldByContent = gitPolicyFollowsContent(field, git);
+    const disabled = unavailable || heldByContent;
     return (
       <SettingsRow
         key={field}
         label={label}
-        description={description}
+        description={
+          heldByContent ? m.settings_git_with_content_commits() : description
+        }
         htmlFor={`${id}-${field}`}
         data-disabled={disabled || undefined}
       >
@@ -70,7 +75,7 @@ export function SpaceGitSection({
         ) : null}
         <Switch
           id={`${id}-${field}`}
-          checked={git[field]}
+          checked={git[field] || heldByContent}
           disabled={disabled}
           aria-disabled={pending || undefined}
           className={pendingClassName}
@@ -206,18 +211,6 @@ export function SpaceGitSection({
                 void git.handlePresetChange(value as GitAutomationPreset)
               }
             />
-          ) : null
-        }
-        footer={
-          git.loaded &&
-          git.preset === "custom" &&
-          gitAutomationLeavesStructureUncommitted(git) ? (
-            <Alert data-git-automation-warning>
-              <TriangleAlert />
-              <AlertDescription>
-                {m.settings_git_structure_uncommitted()}
-              </AlertDescription>
-            </Alert>
           ) : null
         }
       >

@@ -3,10 +3,11 @@ import { setLocale } from "@/paraglide/runtime";
 import type { GitUserPolicy } from "@/features/git";
 import {
   GIT_POLICY_FIELDS,
-  gitAutomationLeavesStructureUncommitted,
+  effectiveGitPolicy,
   gitAutomationPolicy,
   gitAutomationPreset,
   gitAutomationPresetOptions,
+  gitPolicyFollowsContent,
 } from "./git-automation";
 
 function combination(bits: number): GitUserPolicy {
@@ -72,14 +73,43 @@ test("the presets carry their descriptions and Automatic needs a remote", async 
   await setLocale("en", { reload: false });
 });
 
-test("content commits with sync and no structural commits warn about pending structure", () => {
+test("content commits hold structural and system commits on, other switches stay as stored", () => {
   for (let bits = 0; bits < 16; bits += 1) {
     const policy = combination(bits);
-    expect(gitAutomationLeavesStructureUncommitted(policy)).toBe(
-      policy.autoCommitContent &&
-        policy.autoSync &&
-        !policy.autoCommitStructural,
-    );
+    const effective = effectiveGitPolicy(policy);
+    if (policy.autoCommitContent) {
+      expect(effective).toEqual({
+        ...policy,
+        autoCommitStructural: true,
+        autoCommitSystem: true,
+      });
+    } else {
+      expect(effective).toBe(policy);
+    }
   }
-  expect(gitAutomationLeavesStructureUncommitted(combination(9))).toBe(true);
+  // Content on with structural and system off reads as on; an already
+  // effective policy is the same object.
+  expect(effectiveGitPolicy(combination(8))).toEqual(combination(14));
+  const automatic = combination(15);
+  expect(effectiveGitPolicy(automatic)).toBe(automatic);
+});
+
+test("only the structural and system switches follow content commits", () => {
+  for (let bits = 0; bits < 16; bits += 1) {
+    const policy = combination(bits);
+    for (const field of GIT_POLICY_FIELDS) {
+      expect(gitPolicyFollowsContent(field, policy)).toBe(
+        policy.autoCommitContent &&
+          (field === "autoCommitStructural" || field === "autoCommitSystem"),
+      );
+    }
+  }
+});
+
+test("presets write effective combinations", () => {
+  const current = combination(8);
+  for (const preset of ["manual", "automatic"] as const) {
+    const policy = gitAutomationPolicy(preset, current);
+    expect(effectiveGitPolicy(policy)).toBe(policy);
+  }
 });

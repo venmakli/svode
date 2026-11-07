@@ -899,7 +899,7 @@
   "settings_git_preset_custom": "Выборочно",
   "settings_git_preset_custom_description": "Свой набор переключателей.",
   "settings_git_experimental": "Экспериментальный",
-  "settings_git_structure_uncommitted": "Созданные пространства и указатели остаются незакоммиченными до ручного коммита и могут задержать публикацию проекта.",
+  "settings_git_with_content_commits": "Вместе с правками содержимого.",
   "git_auto_commit_content_checkbox": "Фиксировать правки содержимого",
   "git_auto_commit_content_hint": "После паузы и при уходе со страницы.",
   "settings_git_inline_title": "Часть репозитория проекта «{name}»",

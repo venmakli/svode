@@ -899,7 +899,7 @@
   "settings_git_preset_custom": "Custom",
   "settings_git_preset_custom_description": "Your own set of switches.",
   "settings_git_experimental": "Experimental",
-  "settings_git_structure_uncommitted": "Spaces you create and their pointers stay uncommitted until you commit them by hand and may hold up publishing the project.",
+  "settings_git_with_content_commits": "With content commits.",
   "git_auto_commit_content_checkbox": "Commit content edits",
   "git_auto_commit_content_hint": "After a pause and when you leave a page.",
   "settings_git_inline_title": "Part of the “{name}” project repository",

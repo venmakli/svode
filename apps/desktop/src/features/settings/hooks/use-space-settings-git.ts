@@ -16,6 +16,7 @@ import {
   type GitSetRemoteResult,
 } from "../api";
 import {
+  effectiveGitPolicy,
   gitAutomationPolicy,
   gitAutomationPreset,
   type GitAutomationPreset,
@@ -82,7 +83,9 @@ export function useSpaceSettingsGit({
         spacePath,
         projectPath: activeRootPath,
       });
-      applyGitPolicyState(policy);
+      // A stored combination of content commits without structural or
+      // system commits shows as on and is written normalized on next save.
+      applyGitPolicyState(effectiveGitPolicy(policy));
     } catch (err) {
       console.error("Failed to load git config:", err);
     }
@@ -205,8 +208,11 @@ export function useSpaceSettingsGit({
     setRemoteUrl(value);
   }
 
-  async function writePolicy(next: GitUserPolicy, label: string) {
+  // Every write stores the effective policy: turning content commits on
+  // turns structural and system commits on with them.
+  async function writePolicy(requested: GitUserPolicy, label: string) {
     const previous = gitPolicyRef.current;
+    const next = effectiveGitPolicy(requested);
     applyGitPolicyState(next);
     try {
       await setSettingsGitUserPolicy({
