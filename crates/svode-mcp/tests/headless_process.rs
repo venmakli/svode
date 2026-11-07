@@ -22,13 +22,14 @@ const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 57] = [
+const SERVED: [&str; 58] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
     "convert_to_collection",
     "create_collection",
     "create_page",
+    "create_project",
     "create_routine",
     "create_space",
     "delete_collection",
@@ -1122,6 +1123,99 @@ fn a_space_created_in_a_session_is_the_shared_result_and_the_session_writes_into
     );
 }
 
+/// A session with a Project creates another Project and keeps working with
+/// its own; the result is the shared result of the capability but for the
+/// session it names, and existing or nested Projects are refused.
+#[test]
+fn a_session_with_a_project_creates_another_and_keeps_its_own() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let base = fixture.temp.path().canonicalize().unwrap();
+    let home = base.join("home");
+    let config = home.join(".config");
+    let acme = base.join("acme");
+    let before = snapshot(project);
+    let mut live = Live::start_with(
+        &base,
+        &["--project", project.to_str().unwrap()],
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("XDG_CONFIG_HOME", config.to_str().unwrap()),
+        ],
+    );
+    let created = live.ok("create_project", json!({ "path": acme, "name": "Acme" }));
+    let path = acme.to_string_lossy().to_string();
+    assert_eq!(created["project"]["path"], path);
+    assert_eq!(
+        created["session"],
+        json!({
+            "addressing": "session",
+            "addressesCreatedProject": false,
+            "project": project.to_str().unwrap(),
+            "hint": format!("Work with the new project through `svode --project {path}` or a new agent session started in its folder."),
+        })
+    );
+    let info = live.ok("get_project_info", json!({}));
+    assert_eq!(info["projectPath"], project.to_str().unwrap());
+    let page = live.ok(
+        "create_page",
+        json!({ "parentPath": "", "title": "Kickoff", "content": "Agenda" }),
+    );
+    assert_eq!(page["path"], "Kickoff.md");
+    assert!(project.join("Kickoff.md").is_file());
+    assert!(!acme.join("Kickoff.md").exists());
+
+    let taken = live.call("create_project", json!({ "path": project }));
+    assert_eq!(business_code(&taken), "PROJECT_ALREADY_EXISTS", "{taken}");
+    let nested = live.call("create_project", json!({ "path": project.join("docs") }));
+    assert_eq!(business_code(&nested), "PROJECT_NESTED", "{nested}");
+    assert_eq!(
+        nested["result"]["structuredContent"]["error"]["project"],
+        project.to_str().unwrap()
+    );
+    live.finish();
+    let sources = |mut files: BTreeMap<PathBuf, Vec<u8>>| {
+        files.retain(|path, _| {
+            !path.starts_with(".git")
+                && (!path.starts_with(".svode") || path.ends_with("config.json"))
+        });
+        files
+    };
+    let mut after = sources(snapshot(project));
+    after.remove(Path::new("Kickoff.md"));
+    assert_eq!(after, sources(before), "the refusals changed nothing");
+
+    // The same capability in process, where each `svode` command addresses
+    // its own Project: one result but for the session it names.
+    let twin = base.join("twin");
+    let shared = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let host = svode_tools::standalone::StandaloneHost::new("test")
+            .with_project_list_dir(base.join("device"));
+        svode_tools::dispatch::call_tool(
+            &host,
+            None,
+            "create_project",
+            json!({ "path": twin, "name": "Acme" }),
+        )
+        .await
+        .structured_content
+        .unwrap()
+    });
+    let comparable = |mut value: Value, folder: &Path| {
+        value.as_object_mut().unwrap().remove("session");
+        value["repositories"][0]["initialBranch"] = Value::Null;
+        let id = value["project"]["id"].as_str().unwrap().to_string();
+        serde_json::from_str::<Value>(
+            &value
+                .to_string()
+                .replace(&id, "<id>")
+                .replace(folder.to_str().unwrap(), "<folder>"),
+        )
+        .unwrap()
+    };
+    assert_eq!(comparable(created, &acme), comparable(shared, &twin));
+}
+
 #[test]
 fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
     let fixture = fixture();
@@ -1694,9 +1788,17 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
         &project.join("board/app.yaml"),
         "runtime:\n  type: url\n  url: https://example.com/board\n",
     );
-    let mut live = Live::start(
+    // The Project it creates is registered in a project list apart from
+    // the user's own.
+    let home = fixture.temp.path().join("home");
+    let config = home.join(".config");
+    let mut live = Live::start_with(
         fixture.temp.path(),
         &["--project", project.to_str().unwrap()],
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("XDG_CONFIG_HOME", config.to_str().unwrap()),
+        ],
     );
     writeln!(
         live.stdin,
@@ -1945,6 +2047,15 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
         json!({ "name": "Clients", "folder": "clients" }),
     );
     assert_eq!(created["space"]["gitType"], "inline", "{created}");
+    let created = ok(
+        &mut live,
+        "create_project",
+        json!({ "path": fixture.temp.path().join("new-project") }),
+    );
+    assert_eq!(
+        created["session"]["addressesCreatedProject"], false,
+        "{created}"
+    );
 
     // Routine definitions, without execution.
     let tasks = json!({ "spaceId": "root", "collectionPath": "tasks" });

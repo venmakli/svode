@@ -32,8 +32,6 @@ pub struct ToolCommand {
     /// Whether the tool addresses a Space; a Project-level tool gets no
     /// `spaceId`.
     pub space_scoped: bool,
-    /// Whether the tool runs without a Project, so no target is resolved.
-    pub project_free: bool,
     /// Whether the tool requires an explicit `spaceId`, so the resolved
     /// Space is always passed, even when it came from the current directory.
     pub explicit_space: bool,
@@ -47,7 +45,6 @@ impl ToolCommand {
             selectors: Map::new(),
             render,
             space_scoped: true,
-            project_free: false,
             explicit_space: false,
         }
     }
@@ -75,11 +72,6 @@ impl ToolCommand {
 
     fn project_scoped(mut self) -> Self {
         self.space_scoped = false;
-        self
-    }
-
-    fn project_free(mut self) -> Self {
-        self.project_free = true;
         self
     }
 
@@ -174,6 +166,20 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         Noun::Project {
             verb: ProjectVerb::Info,
         } => ToolCommand::new("get_project_info", render::project),
+        // The shared operation takes an absolute path; a relative one is
+        // the caller's current directory.
+        Noun::Project {
+            verb: ProjectVerb::Create(args),
+        } => ToolCommand::new("create_project", render::project_created)
+            .selector(
+                "path",
+                "path",
+                cwd.join(&args.path).to_string_lossy().to_string(),
+            )
+            .optional("name", args.name)
+            .optional("icon", args.icon)
+            .optional("description", args.description)
+            .project_scoped(),
         Noun::Space {
             verb: SpaceVerb::List,
         } => ToolCommand::new("list_spaces", render::spaces),
@@ -512,8 +518,7 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 ToolCommand::new("get_app", render::app).selector("ownerPath", "owner", args.owner)
             }
             AppVerb::Validate(args) => ToolCommand::new("validate_app_manifest", render::manifest)
-                .arg("yaml", input::text(cwd, "file", &args.file)?)
-                .project_free(),
+                .arg("yaml", input::text(cwd, "file", &args.file)?),
         },
         Noun::Routine { verb } => match verb {
             RoutineVerb::List(args) => ToolCommand::new("list_routines", render::routines)

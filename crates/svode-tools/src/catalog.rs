@@ -814,6 +814,27 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "create_project",
+            "Create a new Svode project in a folder outside any project: a new folder, or an existing one without .svode/config.json, including a Git repository (for example the user's own code repository), with the same scaffold, Git effects and storage defaults as Svode Desktop. A folder without Git gets a new repository when Git is found; an existing repository gets no git init, and with a remote needs write access already verified on this device (REPOSITORY_ACCESS_DENIED with the next step otherwise). The project is registered in the project list of this device, so Svode Desktop shows it on Home. Needs no open project. The path must be absolute (INVALID_PATH otherwise); a folder that already holds a project fails with PROJECT_ALREADY_EXISTS, a folder inside another Svode project with PROJECT_NESTED, naming that project: create a Space there with create_space instead. A failure removes what the call created. Does not commit or sync: a new project commits manually until its commit settings change in Svode Desktop. Returns the project (id, name, path), registration, repositories with upstream, storage, session (whether the next calls of this session address the new project, or how to reach it otherwise), settings and changedPaths relative to the project.",
+            schema(
+                &[
+                    (
+                        "path",
+                        json!({ "type": "string", "description": "Absolute path of the project folder; created when missing. Prefer the directory of this session." }),
+                    ),
+                    (
+                        "name",
+                        json!({ "type": "string", "description": "Project name, also the title of its README; the folder name when absent." }),
+                    ),
+                    str_opt("icon"),
+                    str_opt("description"),
+                ],
+                &["path"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
             "convert_page_to_leaf",
             "Convert a supported directory-backed Page at README.md into a leaf Page through Svode's managed structural backend. This is not a Collection demotion tool. Returns changed paths and does not autocommit.",
             schema(
@@ -2088,14 +2109,15 @@ mod tests {
     #[test]
     fn every_mutation_names_what_it_changes_by_its_own_arguments() {
         // Order, Routine launches and App process control change no Page,
-        // Collection or file; a created Space lies outside the Space a call
-        // addresses, so its files are not named relative to it.
+        // Collection or file; a created Space or Project lies outside the
+        // Space a call addresses, so its files are not named relative to it.
         let without_objects = [
             "run_routine",
             "control_app",
             "reorder_content",
             "reorder_spaces",
             "create_space",
+            "create_project",
         ];
         for definition in definitions() {
             let mutating = annotations_are_mutating(definition.annotations.as_ref());
@@ -2743,6 +2765,7 @@ mod tests {
                 "reorder_content",
                 "reorder_spaces",
                 "create_space",
+                "create_project",
                 "convert_page_to_leaf",
                 "add_collection_column",
                 "update_collection_column",

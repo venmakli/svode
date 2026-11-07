@@ -23,6 +23,7 @@ use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::project::root::ProjectCreated;
 use svode_core::project::space::SpaceCreated;
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineDispatchResult, RoutineLiveEvidence,
@@ -323,7 +324,8 @@ pub trait ToolHost: Sync {
     /// such as creating a Space: it authorizes repositories from the access
     /// evidence of the host and delivers the notifications the host has
     /// consumers for. `None` means the host serves no such operation, so
-    /// `create_space` is neither published nor dispatched.
+    /// `create_space` and `create_project` are neither published nor
+    /// dispatched.
     fn git_host(&self) -> Option<&dyn GitHost> {
         None
     }
@@ -339,6 +341,24 @@ pub trait ToolHost: Sync {
         async {}
     }
 
+    /// Directory of the list of Projects of the device a created Project is
+    /// registered in; `None` when the device has none. By default the
+    /// device config directory the desktop app reads.
+    fn project_list_dir(&self) -> Option<PathBuf> {
+        svode_core::runtime::device::config_dir()
+    }
+
+    /// A Project was created by a request with `target`: the host decides
+    /// which Project its next requests address. The creation itself does not
+    /// depend on it. By default each request addresses its own Project.
+    fn project_created(
+        &self,
+        _target: Option<&RequestTarget>,
+        _created: &ProjectCreated,
+    ) -> impl Future<Output = NextRequests> + Send {
+        async { NextRequests::PerCommand }
+    }
+
     /// A content move of `space` starts: the host holds what shows content of
     /// that Space at a path the move may leave until `content_relocated`.
     fn content_relocating(&self, _space: &Path) {}
@@ -348,6 +368,22 @@ pub trait ToolHost: Sync {
     /// converted parent, and is empty when it failed. The source result does
     /// not depend on it.
     fn content_relocated(&self, _space: &Path, _relocations: &[ContentRelocation]) {}
+}
+
+/// Which Project the requests after a Project creation address (Stage 11 05
+/// «Сессия MCP после создания проекта»).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NextRequests {
+    /// A session that had no Project now addresses the created one.
+    BoundToCreated,
+    /// A session keeps the Project it had; `None` when it still has none.
+    KeptProject(Option<PathBuf>),
+    /// Each request is addressed by the directory of the calling process:
+    /// `addresses_created` when that directory now resolves to the created
+    /// Project.
+    ByCallerDirectory { addresses_created: bool },
+    /// Each command addresses the Project of its own directory or selector.
+    PerCommand,
 }
 
 /// One path a content move left and the path the same content has after it,

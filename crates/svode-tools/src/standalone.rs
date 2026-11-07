@@ -3,7 +3,8 @@
 //! One implementation of the host seam over the `svode-core` project
 //! runtime session, shared by both entrypoints. The process freezes its
 //! target before the first operation; the session binds to that Project on
-//! first need and opens stores only for the capabilities that need them.
+//! first need and opens stores only for the capabilities that need them. An
+//! MCP session started without a Project takes the Project it creates.
 //! Index-backed reads reconcile their pools with the files first, since no
 //! watcher keeps them current; a managed mutation does the same for the
 //! pools it publishes into before its source phase, so its Routine events
@@ -30,20 +31,21 @@ use svode_core::index::IndexKey;
 use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::page::ResolvedSpaceTarget;
+use svode_core::project::root::ProjectCreated;
 use svode_core::project::space::SpaceCreated;
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineLiveEvidence};
 use svode_core::runtime::session::ProjectSession;
 
 use crate::error::ToolError;
 use crate::host::{
-    MutationRuntime, ROUTINE_CALLER_TOKEN_ENV, ReadRuntime, RequestTarget, RoutineCaller,
-    RoutineRunner, RoutineRuntime, ToolHost,
+    MutationRuntime, NextRequests, ROUTINE_CALLER_TOKEN_ENV, ReadRuntime, RequestTarget,
+    RoutineCaller, RoutineRunner, RoutineRuntime, ToolHost,
 };
 
 /// Catalog tools a standalone process serves: every data and guidance
 /// capability. An explicit Routine launch and App process state and control
 /// need the Desktop execution owner and are never served.
-const SERVED_TOOLS: [&str; 57] = [
+const SERVED_TOOLS: [&str; 58] = [
     "get_svode_guide",
     "validate_app_manifest",
     "list_apps",
@@ -93,6 +95,7 @@ const SERVED_TOOLS: [&str; 57] = [
     "reorder_content",
     "reorder_spaces",
     "create_space",
+    "create_project",
     "convert_to_collection",
     "convert_page_to_leaf",
     "import_asset",
@@ -121,19 +124,58 @@ pub fn request_target(space: &ResolvedSpaceTarget) -> RequestTarget {
     }
 }
 
+/// How the requests of a standalone process are addressed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Addressing {
+    /// Each command of the `svode` CLI resolves its own target.
+    PerCommand,
+    /// An MCP session keeps one target; a session without one takes the
+    /// Project it creates (Stage 11 05 «Сессия MCP после создания проекта»).
+    Session,
+}
+
 pub struct StandaloneHost {
     version: &'static str,
     session: ProjectSession,
+    addressing: Addressing,
+    /// Directory of the list of Projects of the device; `None` for the
+    /// device config directory.
+    project_list: Option<PathBuf>,
 }
 
 impl StandaloneHost {
-    /// Host reporting `version` as the build version of its binary. It
-    /// opens nothing until an operation needs the Project.
+    /// Host of `svode` commands reporting `version` as the build version of
+    /// its binary. It opens nothing until an operation needs the Project.
     pub fn new(version: &'static str) -> Self {
         Self {
             version,
             session: ProjectSession::new(),
+            addressing: Addressing::PerCommand,
+            project_list: None,
         }
+    }
+
+    /// Host of one headless MCP session: a session started without a
+    /// Project works with the Project it creates.
+    pub fn session(version: &'static str) -> Self {
+        Self {
+            addressing: Addressing::Session,
+            ..Self::new(version)
+        }
+    }
+
+    /// The same host registering created Projects in the list in `dir`
+    /// instead of the device config directory.
+    pub fn with_project_list_dir(self, dir: PathBuf) -> Self {
+        Self {
+            project_list: Some(dir),
+            ..self
+        }
+    }
+
+    /// The Project the runtime session is bound to, if any.
+    pub fn project(&self) -> Option<&Path> {
+        self.session.project()
     }
 
     /// Closes every session-owned resource within a bounded wait.
@@ -259,6 +301,34 @@ impl ToolHost for StandaloneHost {
             tracing::warn!("the Spaces of the project could not be read again: {error}");
         }
     }
+
+    fn project_list_dir(&self) -> Option<PathBuf> {
+        self.project_list
+            .clone()
+            .or_else(svode_core::runtime::device::config_dir)
+    }
+
+    /// A session without a target binds its runtime to the created Project,
+    /// so its next requests address it; a session with a target keeps it.
+    async fn project_created(
+        &self,
+        target: Option<&RequestTarget>,
+        created: &ProjectCreated,
+    ) -> NextRequests {
+        match (self.addressing, target) {
+            (Addressing::PerCommand, _) => NextRequests::PerCommand,
+            (Addressing::Session, Some(target)) => {
+                NextRequests::KeptProject(Some(PathBuf::from(&target.project_path)))
+            }
+            (Addressing::Session, None) => match self.session.open_project(&created.path).await {
+                Ok(_) => NextRequests::BoundToCreated,
+                Err(error) => {
+                    tracing::warn!("the session could not take up the created project: {error}");
+                    NextRequests::KeptProject(self.project().map(Path::to_path_buf))
+                }
+            },
+        }
+    }
 }
 
 /// Git host of an operation that applies the shared Git policy itself in a
@@ -379,6 +449,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(served.len(), SERVED_TOOLS.len());
         assert_eq!(served.len() + 3, catalog::definitions().len());
+        let session = StandaloneHost::session("test");
+        assert_eq!(served_definitions(&session).len(), SERVED_TOOLS.len());
         for name in served {
             assert!(check_tool(&host, name).is_ok());
         }

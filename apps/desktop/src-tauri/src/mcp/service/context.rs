@@ -4,6 +4,34 @@ pub(super) fn resolve_context_override(
     app: &AppHandle,
     context_override: Option<&IpcContextOverride>,
 ) -> Result<Option<ActiveProjectContext>, ToolError> {
+    // The list of Projects lives in the config directory, where Desktop
+    // writes it (`runtime::device`).
+    let config_dir = app.path().app_config_dir().ok();
+    resolve_context_in(config_dir.as_deref(), context_override)
+}
+
+/// Whether a request with `context_override` addresses `project` now (Stage
+/// 11 05 «Сессия MCP после создания проекта» п. 3): its caller context
+/// resolves to that Project. A request without a caller context addresses
+/// the active window, never a Project just created.
+pub(super) fn caller_addresses_project(
+    config_dir: Option<&Path>,
+    context_override: Option<&IpcContextOverride>,
+    project: &Path,
+) -> bool {
+    let (Ok(Some(context)), Ok(project)) = (
+        resolve_context_in(config_dir, context_override),
+        project.canonicalize(),
+    ) else {
+        return false;
+    };
+    Path::new(&context.project_path) == project
+}
+
+fn resolve_context_in(
+    config_dir: Option<&Path>,
+    context_override: Option<&IpcContextOverride>,
+) -> Result<Option<ActiveProjectContext>, ToolError> {
     let Some(context_override) = context_override else {
         return Ok(None);
     };
@@ -31,10 +59,7 @@ pub(super) fn resolve_context_override(
     };
 
     let cwd = canonical_caller_cwd(Some(caller_cwd))?.expect("non-empty caller cwd");
-    // The list of Projects lives in the config directory, where Desktop
-    // writes it (`runtime::device`).
-    let config_dir = app.path().app_config_dir().ok();
-    let root = match resolve_project_root_for_cwd(config_dir.as_deref(), &cwd) {
+    let root = match resolve_project_root_for_cwd(config_dir, &cwd) {
         Ok(root) => root,
         Err(error) if error.code == "PROJECT_CONTEXT_NOT_FOUND" => return Ok(None),
         Err(error) => return Err(error),
@@ -197,6 +222,54 @@ mod tests {
             Path::new(&context.active_space_path),
             child.canonicalize().unwrap()
         );
+    }
+
+    fn caller(cwd: Option<&Path>, project: Option<&Path>) -> IpcContextOverride {
+        IpcContextOverride {
+            project_path: project.map(|path| path.to_string_lossy().to_string()),
+            caller_cwd: cwd.map(|path| path.to_string_lossy().to_string()),
+            routine_caller_token: None,
+        }
+    }
+
+    /// Stage 11 05 «Сессия MCP после создания проекта» п. 3: after the
+    /// shared `create_project` capability registers a Project in the list
+    /// Desktop reads, the next requests of a caller address it only when the
+    /// directory of the calling process now resolves to it.
+    #[tokio::test]
+    async fn the_next_requests_address_a_created_project_only_from_inside_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let config_dir = base.join("config");
+        let created = base.join("acme");
+        let host = svode_tools::standalone::StandaloneHost::new("test")
+            .with_project_list_dir(config_dir.clone());
+        let result = svode_tools::dispatch::call_tool(
+            &host,
+            None,
+            "create_project",
+            serde_json::json!({ "path": created }),
+        )
+        .await;
+        assert!(!result.is_error, "{:?}", result.structured_content);
+        let other = base.join("other");
+        write_project(&other, &[]);
+        let docs = created.join("docs");
+        let outside = base.join("outside");
+        fs::create_dir_all(&docs).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        let addresses = |context: Option<IpcContextOverride>| {
+            caller_addresses_project(Some(&config_dir), context.as_ref(), &created)
+        };
+        assert!(addresses(Some(caller(Some(&created), None))));
+        assert!(addresses(Some(caller(Some(&docs), None))));
+        assert!(!addresses(Some(caller(Some(&outside), None))));
+        assert!(!addresses(Some(caller(Some(&other), None))));
+        // An explicit Project of the caller wins over its directory.
+        assert!(!addresses(Some(caller(Some(&docs), Some(&other)))));
+        // Without a caller context a request addresses the active window.
+        assert!(!addresses(None));
     }
 
     #[test]

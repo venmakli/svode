@@ -381,6 +381,43 @@ pub fn space_created(value: &Value) -> String {
     out + &changes(value)
 }
 
+/// A created Project: its id and path, the repository with who commits the
+/// creation, which Project later commands address, where settings change,
+/// then each changed path.
+pub fn project_created(value: &Value) -> String {
+    let project = &value["project"];
+    let mut out = match project["id"].as_str() {
+        Some(id) => format!("projectId {id}\n"),
+        None => format!("projectId none: {}\n", text(&value["registration"]["hint"])),
+    };
+    out.push_str(&format!("path {}\n", text(&project["path"])));
+    for repository in value["repositories"].as_array().into_iter().flatten() {
+        let created = if repository["created"] == true {
+            " (new)"
+        } else {
+            ""
+        };
+        let upstream = if repository["upstream"] == true {
+            ", upstream set"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "repository {}{created}{upstream}: commit {}\n",
+            text(&repository["path"]),
+            text(&repository["commit"]["by"])
+        ));
+    }
+    if value["gitNotFound"] == true {
+        out.push_str("repository none: Git was not found\n");
+    }
+    if let Some(hint) = value["session"]["hint"].as_str() {
+        out.push_str(&format!("next {hint}\n"));
+    }
+    out.push_str(&format!("settings {}\n", text(&value["settings"])));
+    out + &changes(value)
+}
+
 /// Changed paths of a mutation, one per line.
 pub fn changes(value: &Value) -> String {
     lines(

@@ -40,7 +40,7 @@ pub async fn call_tool_with_context(
     let target = request_context
         .as_ref()
         .map(|context| request_target(context, routine_caller));
-    let host = DesktopMcpHost::new(app);
+    let host = DesktopMcpHost::for_caller(app, context_override);
     if let Some(target) = &target {
         host.session
             .attach_existing(
@@ -59,13 +59,20 @@ pub async fn call_tool_with_context(
 pub(crate) struct DesktopMcpHost {
     pub(crate) app: AppHandle,
     session: RequestSession,
+    /// Caller context of the request, which addresses each request anew.
+    caller: Option<IpcContextOverride>,
 }
 
 impl DesktopMcpHost {
     pub(crate) fn new(app: AppHandle) -> Self {
+        Self::for_caller(app, None)
+    }
+
+    fn for_caller(app: AppHandle, caller: Option<IpcContextOverride>) -> Self {
         Self {
             app,
             session: RequestSession::default(),
+            caller,
         }
     }
 
@@ -213,6 +220,29 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
             .await;
         } else {
             crate::git::auto_versions::commit_space_creations(&self.app, project).await;
+        }
+    }
+
+    /// The list Desktop reads and follows: Home, the recent projects menu
+    /// and the Routine schedulers pick the created Project up from it.
+    fn project_list_dir(&self) -> Option<PathBuf> {
+        self.app.path().app_config_dir().ok()
+    }
+
+    /// Each request is addressed by the directory of the calling process:
+    /// the next ones address the created Project when that directory now
+    /// resolves to it.
+    async fn project_created(
+        &self,
+        _target: Option<&RequestTarget>,
+        created: &svode_core::project::root::ProjectCreated,
+    ) -> svode_tools::host::NextRequests {
+        svode_tools::host::NextRequests::ByCallerDirectory {
+            addresses_created: super::context::caller_addresses_project(
+                self.project_list_dir().as_deref(),
+                self.caller.as_ref(),
+                &created.path,
+            ),
         }
     }
 

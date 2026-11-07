@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every command: reads from project sources, including `collection check`, from the index, from Git and from the Actor catalog; body writes; metadata, field, schema column and view changes; creation, deletion, structural changes and reordering; `space create`; `asset import`; Routine definitions (`routine …`), whose operational store of the owner is opened only by a Routine command; `git access verify`; `app list` and `app show`; and `app validate`, which needs no Project. `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every command: reads from project sources, including `collection check`, from the index, from Git and from the Actor catalog; body writes; metadata, field, schema column and view changes; creation, deletion, structural changes and reordering; `space create`; `project create`, which needs no Project; `asset import`; Routine definitions (`routine …`), whose operational store of the owner is opened only by a Routine command; `git access verify`; `app list` and `app show`; and `app validate`, which needs no Project. `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 Index-backed commands (`collection query`, `search`, `knowledge …`) check the index of their Spaces against the files before answering, with no watcher: a missing index is built, an incompatible or corrupt one is moved aside and rebuilt, and each command runs one check. Their result carries `index`: `{"status":"fresh"|"partial","verifiedAt":"<time of the check>","diagnostics":[…]}`, where `partial` means some sources could not be read and their earlier rows are kept. An index that cannot be prepared fails with `INDEX_UNAVAILABLE` and its diagnostics, never with an empty list. `space list`, `project info` and `doctor` report repository access from the evidence store shared with the desktop app, without contacting the remote; a repository never checked is `unknown` with reason `not_checked`. A write to a repository with a remote is allowed only while it is `local` or freshly `writable`: otherwise it fails before any effect with `REPOSITORY_ACCESS_DENIED`, its `status`, `reason` and a `hint`, and `git access verify` records new evidence.
 
@@ -29,6 +29,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | Command | Capability | Standalone in this build |
 |---|---|---|
 | `project info` | `get_project_info` | yes |
+| `project create <path> [--name --icon --description]` | `create_project` (`<path>` relative to the current directory) | yes, without a Project |
 | `space list` | `list_spaces` | yes |
 | `space readme read` | `read_space_readme` | yes |
 | `page read --path` | `read_page` (source read with `sourceVersion`, no index or store) | yes |
@@ -88,7 +89,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `guide` | `get_svode_guide` plus files-first rules | yes, without a Project |
 | `doctor` | CLI diagnostics | yes, target failures are part of the result |
 
-Flags follow the tool arguments: `collectionPath → --collection`, `path`, `from` and `contentPath → --path`, `sourcePath → --file`, `fileName → --name`, `yaml → --file`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `routineId → --id`, `expectedFingerprint → --fingerprint`, `definition → --definition-file`, `folder` of `space create` → the positional `<folder>`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
+Flags follow the tool arguments: `collectionPath → --collection`, `path`, `from` and `contentPath → --path`, `sourcePath → --file`, `fileName → --name`, `yaml → --file`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `routineId → --id`, `expectedFingerprint → --fingerprint`, `definition → --definition-file`, `folder` of `space create` → the positional `<folder>`, `path` of `project create` → the positional `<path>`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
 
 ## Structured input
 
@@ -134,6 +135,22 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 - JSON result: `space` (`id`, `name`, `folder`, `gitType`, `icon`, `description`), `repositories` (`path` relative to the Project with `.` for the Project repository, `created`, `initialBranch`, `upstream`, `commit`), `storage` (`inherited`, `strategy`, `binaryRouting`), `settings` and `changedPaths` relative to the Project.
 - Failures: `INVALID_PATH` (folder), `FILE_ALREADY_EXISTS` (folder taken or registered), `PATH_NOT_ACCESSIBLE`, `GIT_NOT_FOUND` (independent or submodule without Git), `REPOSITORY_ACCESS_DENIED`, `SOURCE_BUSY` (another writer holds the Project config), `INVALID_PROJECT_CONFIG`; a submodule in a Project without a Git repository is `SVODE_ERROR`. A refusal changes nothing.
 - Human output: the summary line, `spaceId`, one line per repository with who commits the creation, `settings`, then each changed path.
+
+## Project creation
+
+`project create <path>` creates a new Project through the shared creation operation, with the scaffold, Git effects, storage defaults and registration of a Project created in the desktop app. It needs no Project: `--project` and `--space` are not used, and `<path>` is absolute or relative to the current directory (`.` is the current directory).
+
+- The folder is created when missing. An existing folder without `.svode/config.json` is accepted, a Git repository included, for example your own code repository: Svode adds `.svode/`, a `README.md` and the `.gitignore` block to its working tree.
+- `--name` defaults to the folder name and is also the title of the README.
+- Git: a folder without Git gets a new repository (`git init` with the initial branch of the user's `init.defaultBranch`, else `main`) when Git is found, otherwise the Project has no repository (`gitNotFound`); an existing repository gets no `git init`, its write access is checked and it is prepared like in the desktop app.
+- Storage: the Project owns its storage policy: local strategy, binary routing with no Git LFS extensions and a 10 MB threshold.
+- The Project is registered in the project list of this device, the one the desktop app reads (see `SVODE_PRODUCT_IDENTIFIER` above), so an open desktop app shows it on Home and in the recent projects menu without a restart. Without an OS config directory it stays unregistered with a hint to open the folder in the desktop app.
+- A failure removes everything the command created; a rollback that could not remove everything names the paths left in `remaining`.
+- The command never commits or syncs: a new Project commits manually until its commit settings change in Svode Desktop → Settings → Git / Storage, where remote and storage are set too; `svode` has no command for them.
+- Later commands address the new Project from its folder or with `--project <path>`; `session` in the result says so.
+- JSON result: `project` (`id` in the device list or `null`, `name`, `path`, `icon`, `description`), `registration` (`registered`, else `reason` `no_device_directory` and `hint`), `repositories` (`path` `.`, `created`, `initialBranch`, `upstream` of an existing repository, `commit` with `by` `manual` and `reason` `new_repository` or `structural_commits_off`), `gitNotFound`, `storage` (`inherited`, `strategy`, `binaryRouting`), `session` (`addressing` `per_command`, `addressesCreatedProject`, `hint`), `settings` and `changedPaths` relative to the Project. Through MCP the same capability `create_project` takes an absolute `path` and answers the same result, with `session` saying whether the next calls of that MCP session address the new Project.
+- Failures: `PROJECT_ALREADY_EXISTS` (the folder already holds `.svode/config.json`), `PROJECT_NESTED` (the folder lies inside another Svode Project: `project` names it and `hint` says to create a Space there with `space create` instead), `PATH_NOT_ACCESSIBLE` (not a folder or not writable), `REPOSITORY_ACCESS_DENIED` (an existing repository with a remote whose write access is not verified on this device: `git access verify` needs a Project, so the `hint` asks to open the folder in the desktop app), `GIT_NOT_FOUND` (an existing repository cannot be prepared without Git), `SOURCE_BUSY` (another Svode process holds the project list past the bounded wait). A refusal changes nothing.
+- Human output: the summary line, `projectId`, `path`, the repository with who commits, the next step, `settings`, then each changed path.
 
 ## Assets and Apps
 

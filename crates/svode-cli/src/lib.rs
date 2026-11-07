@@ -19,7 +19,7 @@ use std::path::Path;
 use clap::Parser;
 use clap::error::ErrorKind;
 use serde_json::json;
-use svode_tools::dispatch::call_tool;
+use svode_tools::dispatch::{call_tool, requires_project};
 use svode_tools::host::ToolHost;
 
 use error::CliError;
@@ -73,10 +73,10 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
         } => access::verify(host, selectors).await,
         noun => {
             let command = tools::command(noun, cwd)?.expect("CLI-owned commands are handled above");
-            let target = if command.project_free {
-                None
-            } else {
+            let target = if requires_project(command.tool) {
                 Some(selectors.resolve()?)
+            } else {
+                None
             };
             if let Some(target) = &target {
                 target.open(host).await?;

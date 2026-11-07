@@ -19,7 +19,7 @@ fn serves(host: &impl ToolHost, name: &str) -> bool {
         && match name {
             "run_routine" => host.routine_runner().is_some(),
             "get_app_status" | "control_app" => host.app_process().is_some(),
-            "create_space" => host.git_host().is_some(),
+            "create_space" | "create_project" => host.git_host().is_some(),
             _ => true,
         }
 }
@@ -42,6 +42,16 @@ pub fn check_tool(host: &impl ToolHost, name: &str) -> Result<(), ToolError> {
         "UNKNOWN_TOOL",
         format!("unknown Svode MCP tool: {name}"),
     ))
+}
+
+/// Whether a tool addresses a Project. A Project-free tool runs without a
+/// request target: guidance, App manifest validation and creating a
+/// Project.
+pub fn requires_project(name: &str) -> bool {
+    !matches!(
+        name,
+        "get_svode_guide" | "validate_app_manifest" | "create_project"
+    )
 }
 
 /// Executes one tool within a request target frozen by the host. `None`
@@ -255,6 +265,11 @@ async fn call(
             // Boxed: the creation future is large, and inlined it would grow
             // the future of every tool call.
             Box::pin(creation::create_space(host, require(target)?, args)).await
+        }
+        "create_project" => {
+            let args = decode(args)?;
+            // Boxed like `create_space`.
+            Box::pin(creation::create_project(host, target, args)).await
         }
         "reorder_spaces" => {
             let args = decode(args)?;

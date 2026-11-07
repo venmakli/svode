@@ -73,8 +73,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Noun {
-    /// The Project and its Spaces.
-    #[command(after_help = "Example:\n  svode --project ~/Notes project info --json")]
+    /// The Project and its Spaces; creating a new Project.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes project info --json\n  svode project create ./acme --name Acme"
+    )]
     Project {
         #[command(subcommand)]
         verb: ProjectVerb,
@@ -244,6 +246,28 @@ pub enum ProjectVerb {
     /// Project name, Spaces and addressing.
     #[command(after_help = "Example:\n  svode --project ~/Notes project info --json")]
     Info,
+    /// Create a new Project in a folder outside any Project, with the
+    /// defaults of the desktop app.
+    #[command(after_help = PROJECT_CREATE)]
+    Create(ProjectCreateArgs),
+}
+
+const PROJECT_CREATE: &str = "The command needs no Project: --project and --space are not used, and <PATH> is absolute or relative to the current directory. The folder is created when missing; an existing folder without .svode/config.json is accepted, including a Git repository such as your own code repository. The project gets the scaffold, Git effects and storage defaults of a project created in the desktop app: a folder without Git gets a new repository when Git is found, an existing repository gets no git init (with a remote, its write access must already be verified on this device, else REPOSITORY_ACCESS_DENIED with a hint), and the project is registered in the project list of this device, so the desktop app shows it on Home. A folder that already holds a project fails with PROJECT_ALREADY_EXISTS. A folder inside another Svode project fails with PROJECT_NESTED: the error names that project in `project` with a `hint`; create a Space there with `svode space create` instead. A failure removes what the command created. The command does not commit or sync: a new project commits manually until its commit settings change in Svode Desktop → Settings → Git / Storage, where remote and storage are set too. Later commands address the new project from its folder or with --project <PATH>.\n\nExamples:\n  svode project create ./acme --name Acme\n  svode project create ~/code/my-app --name \"My app\" --json";
+
+#[derive(Debug, Args)]
+pub struct ProjectCreateArgs {
+    /// Project folder: absolute or relative to the current directory;
+    /// created when missing.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+    /// Project name, also the title of its README; the folder name when
+    /// absent.
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub icon: Option<String>,
+    #[arg(long)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]

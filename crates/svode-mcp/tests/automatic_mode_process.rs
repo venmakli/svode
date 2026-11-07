@@ -249,7 +249,7 @@ fn without_desktop_the_session_serves_the_project_of_the_launch_directory() {
             env!("CARGO_PKG_VERSION")
         );
         let tools = tool_names(&responses[&2]);
-        assert_eq!(tools.len(), 57);
+        assert_eq!(tools.len(), 58);
         assert!(!tools.contains(&"run_routine"));
         let info = structured(&responses[&3]);
         assert_eq!(info["projectPath"], project.to_str().unwrap(), "{cwd:?}");
@@ -275,7 +275,7 @@ fn outside_a_project_the_session_starts_and_tool_calls_answer_project_unavailabl
         ],
     );
     assert_eq!(responses[&1]["result"]["serverInfo"]["name"], "svode");
-    assert_eq!(tool_names(&responses[&2]).len(), 57);
+    assert_eq!(tool_names(&responses[&2]).len(), 58);
     let refused = &responses[&3]["result"];
     assert_eq!(refused["isError"], true, "{refused}");
     let error = &refused["structuredContent"]["error"];
@@ -300,6 +300,91 @@ fn outside_a_project_the_session_starts_and_tool_calls_answer_project_unavailabl
         responses[&1]["result"]["structuredContent"]["error"]["code"],
         "INVALID_PROJECT_CONFIG"
     );
+}
+
+/// A session started outside any Project serves the Project-free tools and,
+/// once it creates a Project, works with it in the same session (Stage 11
+/// 05 «Сессия MCP после создания проекта»); a second creation keeps it.
+#[test]
+fn outside_a_project_the_session_works_with_the_project_it_creates() {
+    let (temp, _project) = fixture();
+    let outside = temp.path().canonicalize().unwrap();
+    let home = outside.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let config = home.join(".config");
+    let no_desktop = incompatible_desktop(&outside);
+    let acme = outside.join("acme");
+    let other = outside.join("other");
+    let responses = session(
+        &outside,
+        &no_desktop,
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("XDG_CONFIG_HOME", config.to_str().unwrap()),
+        ],
+        &[
+            call(1, "get_svode_guide", json!({})),
+            call(2, "list_pages", json!({})),
+            call(3, "create_project", json!({ "path": "acme" })),
+            call(4, "create_project", json!({ "path": acme, "name": "Acme" })),
+            call(5, "get_project_info", json!({})),
+            call(
+                6,
+                "create_page",
+                json!({ "parentPath": "", "title": "Kickoff", "content": "Quarterly kickoff agenda" }),
+            ),
+            call(
+                7,
+                "create_collection",
+                json!({ "parentPath": "", "title": "Backlog", "columns": [{ "name": "Owner", "type": "text" }] }),
+            ),
+            call(8, "list_pages", json!({})),
+            call(9, "create_project", json!({ "path": other })),
+            call(10, "list_collections", json!({})),
+        ],
+    );
+    assert!(structured(&responses[&1])["guide"].is_string());
+    assert_eq!(
+        responses[&2]["result"]["structuredContent"]["error"]["code"],
+        "PROJECT_UNAVAILABLE"
+    );
+    assert_eq!(
+        responses[&3]["result"]["structuredContent"]["error"]["code"],
+        "INVALID_PATH"
+    );
+    let created = structured(&responses[&4]);
+    assert_eq!(created["project"]["path"], acme.to_str().unwrap());
+    assert_eq!(
+        created["session"],
+        json!({ "addressing": "session", "addressesCreatedProject": true })
+    );
+    assert_eq!(
+        structured(&responses[&5])["projectPath"],
+        acme.to_str().unwrap()
+    );
+    assert_eq!(structured(&responses[&6])["path"], "Kickoff.md");
+    assert!(acme.join("Kickoff.md").is_file());
+    assert_eq!(structured(&responses[&7])["collectionPath"], "Backlog");
+    assert!(acme.join("Backlog/schema.yaml").is_file());
+    let pages = structured(&responses[&8]).to_string();
+    assert!(pages.contains("Kickoff.md"), "{pages}");
+
+    // A second Project does not move the session.
+    let kept = structured(&responses[&9]);
+    assert_eq!(kept["session"]["addressesCreatedProject"], false);
+    assert_eq!(kept["session"]["project"], acme.to_str().unwrap());
+    assert!(
+        kept["session"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("svode --project {}", other.display())),
+        "{kept}"
+    );
+    assert!(
+        structured(&responses[&10]).to_string().contains("Backlog"),
+        "the session still addresses the first project"
+    );
+    assert!(!other.join("Kickoff.md").exists());
 }
 
 #[test]

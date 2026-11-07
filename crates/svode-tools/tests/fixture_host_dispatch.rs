@@ -421,12 +421,11 @@ fn error_code(result: &ToolCallResult) -> String {
 fn served_catalog_is_filtered_by_host_declaration_and_capabilities() {
     let host = FixtureHost::new(None);
     assert_eq!(served_definitions(&host).len(), 57);
-    assert_eq!(catalog::definitions().len(), 60);
-    // Creating a Space needs the Git host of the host.
-    assert_eq!(
-        check_tool(&host, "create_space").unwrap_err().code,
-        "UNKNOWN_TOOL"
-    );
+    assert_eq!(catalog::definitions().len(), 61);
+    // Creating a Space or a Project needs the Git host of the host.
+    for name in ["create_space", "create_project"] {
+        assert_eq!(check_tool(&host, name).unwrap_err().code, "UNKNOWN_TOOL");
+    }
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let names = served_names(&limited);

@@ -52,6 +52,8 @@ fn refusal(case: &Case) -> Option<&'static str> {
         Some("SOURCE_STALE")
     } else if case.argv.contains(&ROUTINE_ID) {
         Some("ROUTINE_NOT_FOUND")
+    } else if case.name == "project create" {
+        Some("PROJECT_NESTED")
     } else {
         None
     }
@@ -89,12 +91,23 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
             let error = &value["error"];
             assert_eq!(error["code"], code, "{}", case.name);
             assert!(error["message"].is_string(), "{}", case.name);
-            assert_eq!(
-                error["target"]["projectPath"],
-                fixture.project.to_str().unwrap(),
-                "{}: failure keeps the resolved target",
-                case.name
-            );
+            if case.name == "project create" {
+                // A Project-free command resolves no target: the failure
+                // names the requested folder.
+                assert_eq!(
+                    error["target"]["path"],
+                    fixture.input.join("../project/nested").to_str().unwrap(),
+                    "{}",
+                    case.name
+                );
+            } else {
+                assert_eq!(
+                    error["target"]["projectPath"],
+                    fixture.project.to_str().unwrap(),
+                    "{}: failure keeps the resolved target",
+                    case.name
+                );
+            }
         } else {
             assert_eq!(exit, 0, "{}: {value}", case.name);
             assert_eq!(value["ok"], true, "{}", case.name);

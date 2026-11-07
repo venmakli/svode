@@ -35,6 +35,13 @@ pub const STALE: &str = "stale-source-version";
 
 pub const CASES: &[Case] = &[
     case("project info", &["project", "info"], &["get_project_info"]),
+    // A folder inside the fixture Project: refused before any effect, so no
+    // Project is registered on the device.
+    case(
+        "project create",
+        &["project", "create", "../project/nested"],
+        &["create_project"],
+    ),
     case("space list", &["space", "list"], &["list_spaces"]),
     case(
         "space readme read",
