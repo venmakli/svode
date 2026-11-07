@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use svode_core::git::autocommit::AutocommitService;
@@ -45,6 +45,70 @@ struct Project {
     host: Arc<QuietHost>,
     index: IndexState,
     routines: RoutineStoreState,
+    project_runtime: ProjectRuntimeState,
+}
+
+/// The window effects a reconciliation asked for, recorded instead of done.
+#[derive(Default)]
+struct Recorded {
+    repaired: Mutex<Vec<PathBuf>>,
+    rebuilt: Mutex<Vec<IndexKey>>,
+    unready: Mutex<Vec<IndexKey>>,
+    events: Mutex<Vec<(String, serde_json::Value)>>,
+    commits: Mutex<Vec<PathBuf>>,
+}
+
+impl SpacesEffects for Recorded {
+    async fn repair_scope(&self, _project: &Path, dir: &Path) {
+        self.repaired.lock().unwrap().push(dir.to_path_buf());
+    }
+
+    fn rebuild(&self, key: IndexKey) {
+        self.rebuilt.lock().unwrap().push(key);
+    }
+
+    async fn space_unready(&self, key: IndexKey) {
+        self.unready.lock().unwrap().push(key);
+    }
+
+    fn emit(&self, event: &'static str, payload: serde_json::Value) {
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.to_string(), payload));
+    }
+
+    fn commit_creations(&self, project: &Path) {
+        self.commits.lock().unwrap().push(project.to_path_buf());
+    }
+}
+
+impl Recorded {
+    fn rebuilt(&self) -> Vec<IndexKey> {
+        self.rebuilt.lock().unwrap().clone()
+    }
+
+    /// `(event, spaceId)` of each window event, sorted.
+    fn events(&self) -> Vec<(String, String)> {
+        let mut events = self
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(event, payload)| {
+                (
+                    event.clone(),
+                    payload["spaceId"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        events.sort();
+        events
+    }
+
+    fn commit_requests(&self) -> usize {
+        self.commits.lock().unwrap().len()
+    }
 }
 
 impl Project {
@@ -73,6 +137,7 @@ impl Project {
             host: Arc::new(QuietHost),
             index: IndexState::new(),
             routines: RoutineStoreState::new(),
+            project_runtime: ProjectRuntimeState::new(),
         }
     }
 
@@ -104,22 +169,40 @@ impl Project {
         .id
     }
 
-    /// What the window runtime does with a change of `spaces`, without the
-    /// window: the index and Routine pools follow, the pools to rebuild
-    /// rebuild, and the change is returned with its events.
-    async fn reconcile(&self) -> (SpacesChange, Vec<IndexKey>) {
-        let change = self.index.spaces_change(&self.root).await.unwrap();
-        if change.is_empty() {
-            return (change, Vec::new());
-        }
-        let rebuild = apply_spaces_change(&self.index, &self.routines, &self.root, &change).await;
-        for key in &rebuild {
+    /// The pickup of the window runtime, as the watcher and a pull run it,
+    /// with its window effects recorded; the pools it asked to rebuild
+    /// rebuild here.
+    async fn pick_up(&self) -> (SpacesChange, Recorded) {
+        let effects = Recorded::default();
+        let change = self
+            .project_runtime
+            .pick_up_spaces_with(&self.index, &self.routines, &self.root, &effects)
+            .await
+            .unwrap();
+        self.rebuild(&effects).await;
+        (change, effects)
+    }
+
+    /// The reconciliation a Space command of the window runs after its
+    /// operation.
+    async fn reconcile_own(&self) -> (SpacesChange, Recorded) {
+        let effects = Recorded::default();
+        let change = self
+            .project_runtime
+            .reconcile_spaces_with(&self.index, &self.routines, &self.root, &effects)
+            .await
+            .unwrap();
+        self.rebuild(&effects).await;
+        (change, effects)
+    }
+
+    async fn rebuild(&self, effects: &Recorded) {
+        for key in effects.rebuilt() {
             test_update_state()
-                .run_full_reindex(&self.index, key)
+                .run_full_reindex(&self.index, &key)
                 .await
                 .unwrap();
         }
-        (change, rebuild)
     }
 
     fn service(&self) -> AutocommitService {
@@ -203,18 +286,6 @@ fn structural() -> GitUserPolicy {
     }
 }
 
-fn event_ids(change: &SpacesChange, project: &Path) -> Vec<(String, String)> {
-    space_events(project, change)
-        .into_iter()
-        .map(|(event, payload)| {
-            (
-                event.to_string(),
-                payload["spaceId"].as_str().unwrap().into(),
-            )
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn spaces_another_process_adds_open_their_pools_and_leave_the_root_index() {
     let project = Project::new(GitUserPolicy::default()).await;
@@ -237,7 +308,8 @@ async fn spaces_another_process_adds_open_their_pools_and_leave_the_root_index()
     let independent = project.create("ext-indep", SpaceGitType::Independent).await;
     let submodule = project.create("ext-sub", SpaceGitType::Submodule).await;
 
-    let (change, rebuild) = project.reconcile().await;
+    let (change, effects) = project.pick_up().await;
+    let rebuild = effects.rebuilt();
 
     let mut added = change
         .added
@@ -273,15 +345,22 @@ async fn spaces_another_process_adds_open_their_pools_and_leave_the_root_index()
         assert!(routine_keys.contains(&project.key(id)), "{routine_keys:?}");
     }
 
+    // Each ready Space gets its local Git policy.
+    let mut repaired = effects.repaired.lock().unwrap().clone();
+    repaired.sort();
+    assert_eq!(
+        repaired,
+        ["ext-indep", "ext-inline", "ext-sub"].map(|folder| project.root.join(folder))
+    );
+
     // The window hears of each Space and reads its lists again.
-    let mut events = event_ids(&change, &project.root);
-    events.sort();
+    let events = effects.events();
     let mut expected_events = [&inline, &independent, &submodule]
         .map(|id| ("space:added".to_string(), id.clone()))
         .to_vec();
     expected_events.sort();
     assert_eq!(events, expected_events);
-    let payload = &space_events(&project.root, &change)[0].1;
+    let payload = effects.events.lock().unwrap()[0].1.clone();
     assert_eq!(
         payload["projectPath"].as_str(),
         Some(project.root.to_str().unwrap())
@@ -301,15 +380,15 @@ async fn spaces_another_process_adds_open_their_pools_and_leave_the_root_index()
             .contains(&"probe.md".to_string())
     );
 
+    // The pickup asks for the creation commits of the added Spaces.
+    assert_eq!(effects.commit_requests(), 1);
+
     // Observing the same `spaces` again changes nothing.
-    assert!(
-        project
-            .index
-            .spaces_change(&project.root)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    let (again, effects) = project.pick_up().await;
+    assert!(again.is_empty());
+    assert!(effects.rebuilt().is_empty());
+    assert!(effects.events().is_empty());
+    assert_eq!(effects.commit_requests(), 0);
 }
 
 #[tokio::test]
@@ -317,6 +396,7 @@ async fn a_removed_space_ref_closes_its_pools_and_an_unreadable_config_keeps_the
     let project = Project::new(GitUserPolicy::default()).await;
     let kept = project.create("kept", SpaceGitType::Inline).await;
     let gone = project.create("gone", SpaceGitType::Inline).await;
+    let lost = project.create("lost", SpaceGitType::Inline).await;
     std::fs::write(project.root.join("gone/page.md"), "# Page\n").unwrap();
     project.open().await;
     assert!(
@@ -333,18 +413,20 @@ async fn a_removed_space_ref_closes_its_pools_and_an_unreadable_config_keeps_the
         .as_array()
         .unwrap()
         .iter()
-        .filter(|entry| entry["id"] == kept.as_str())
+        .filter(|entry| entry["id"] != gone.as_str())
         .cloned()
         .collect::<Vec<_>>();
     project.write_spaces(serde_json::Value::Array(remaining));
 
-    let (change, rebuild) = project.reconcile().await;
+    let (change, effects) = project.pick_up().await;
+    let rebuild = effects.rebuilt();
     assert_eq!(change.removed, vec![gone.clone()]);
     assert!(change.added.is_empty() && change.changed.is_empty());
     assert_eq!(
-        event_ids(&change, &project.root),
+        effects.events(),
         [("space:removed".to_string(), gone.clone())]
     );
+    assert_eq!(effects.commit_requests(), 0);
     assert!(
         project
             .index
@@ -363,13 +445,41 @@ async fn a_removed_space_ref_closes_its_pools_and_an_unreadable_config_keeps_the
             .contains(&"gone/page.md".to_string())
     );
 
+    // A Space whose folder disappeared stops being served until it returns.
+    std::fs::remove_dir_all(project.root.join("lost")).unwrap();
+    let (change, effects) = project.pick_up().await;
+    assert_eq!(change.changed.len(), 1);
+    assert_eq!(change.changed[0].new, SpaceStatus::Broken);
+    assert_eq!(
+        effects.events(),
+        [("space:status_changed".to_string(), lost.clone())]
+    );
+    assert_eq!(*effects.unready.lock().unwrap(), [project.key(&lost)]);
+    assert!(
+        project
+            .index
+            .core
+            .existing_pool(&project.key(&lost))
+            .await
+            .is_none()
+    );
+    assert!(!project.routine_keys().await.contains(&project.key(&lost)));
+
     // A config in the middle of a merge closes nothing.
     std::fs::write(
         project.root.join(".svode/config.json"),
         "<<<<<<< ours\n{\"name\":\"Root\"}\n=======\n",
     )
     .unwrap();
-    assert!(project.index.spaces_change(&project.root).await.is_err());
+    let effects = Recorded::default();
+    assert!(
+        project
+            .project_runtime
+            .pick_up_spaces_with(&project.index, &project.routines, &project.root, &effects)
+            .await
+            .is_err()
+    );
+    assert!(effects.events().is_empty() && effects.rebuilt().is_empty());
     assert!(
         project
             .index
@@ -388,9 +498,12 @@ async fn the_windows_own_creation_applies_once_and_commits_once() {
 
     // The command: the operation, its reconciliation and its commit.
     let id = project.create("clients", SpaceGitType::Inline).await;
-    let (change, rebuild) = project.reconcile().await;
+    let (change, effects) = project.reconcile_own().await;
     assert_eq!(change.added.len(), 1);
-    assert!(rebuild.contains(&project.key(&id)));
+    assert!(effects.rebuilt().contains(&project.key(&id)));
+    assert_eq!(effects.events(), [("space:added".to_string(), id.clone())]);
+    // The command makes its commit itself, not as a pickup.
+    assert_eq!(effects.commit_requests(), 0);
     assert_eq!(
         project
             .service()
@@ -402,10 +515,11 @@ async fn the_windows_own_creation_applies_once_and_commits_once() {
 
     // The watcher observes the same config: no rebuild, no event, no
     // pickup commit, and a commit attempt finds nothing to commit.
-    let (again, rebuild) = project.reconcile().await;
+    let (again, effects) = project.pick_up().await;
     assert!(again.is_empty());
-    assert!(rebuild.is_empty());
-    assert!(space_events(&project.root, &again).is_empty());
+    assert!(effects.rebuilt().is_empty());
+    assert!(effects.events().is_empty());
+    assert_eq!(effects.commit_requests(), 0);
     assert_eq!(
         project
             .service()
@@ -428,8 +542,10 @@ async fn a_picked_up_inline_space_gets_one_creation_commit_by_the_structural_fla
         std::fs::write(project.root.join("note.md"), "# Changed\n").unwrap();
 
         project.create("ext", SpaceGitType::Inline).await;
-        let (change, _) = project.reconcile().await;
-        assert!(!change.added.is_empty(), "the pickup asks for the commit");
+        let (change, effects) = project.pick_up().await;
+        assert_eq!(change.added.len(), 1);
+        // The pickup asks for the creation commit; the window runs it.
+        assert_eq!(*effects.commits.lock().unwrap(), [project.root.clone()]);
         let service = project.service();
         assert_eq!(
             service.commit_space_creations(&project.root).await.unwrap(),
@@ -437,8 +553,9 @@ async fn a_picked_up_inline_space_gets_one_creation_commit_by_the_structural_fla
         );
 
         // A second pickup of the same Space commits nothing more.
-        let (again, _) = project.reconcile().await;
+        let (again, effects) = project.pick_up().await;
         assert!(again.added.is_empty());
+        assert_eq!(effects.commit_requests(), 0);
         assert_eq!(
             service.commit_space_creations(&project.root).await.unwrap(),
             0

@@ -141,47 +141,13 @@ impl ProjectRuntimeState {
         app: &AppHandle,
         project: &Path,
     ) -> Result<SpacesChange, AppError> {
-        let _spaces = self.spaces.lock().await;
-        let index_state = app.state::<IndexState>();
-        let change = index_state.spaces_change(project).await?;
-        if change.is_empty() {
-            return Ok(change);
-        }
-        for dir in change_ready_dirs(project, &change) {
-            crate::git::delivery::repair_scope_best_effort(app, project, &dir).await;
-        }
-        for key in change_departed_keys(project, &change) {
-            self.stop_index_task(&key);
-        }
-        let rebuild = apply_spaces_change(
-            &index_state,
+        self.reconcile_spaces_with(
+            &app.state::<IndexState>(),
             &app.state::<Arc<RoutineStoreState>>(),
             project,
-            &change,
+            &WindowSpacesEffects { app, runtime: self },
         )
-        .await;
-        for space in &change.changed {
-            if matches!(space.new, SpaceStatus::Missing | SpaceStatus::Broken) {
-                let key = IndexKey::Space {
-                    project: project.to_path_buf(),
-                    space_id: space.id.clone(),
-                };
-                index_state
-                    .set_lfs_state_with(
-                        app,
-                        &key,
-                        svode_core::storage::lfs::LfsState::NotApplicable,
-                    )
-                    .await;
-            }
-        }
-        for key in rebuild {
-            self.spawn_full_reindex(app, key);
-        }
-        for (event, payload) in space_events(project, &change) {
-            let _ = app.emit(event, payload);
-        }
-        Ok(change)
+        .await
     }
 
     /// Picks up a change of `spaces` the window did not make itself: another
@@ -192,9 +158,68 @@ impl ProjectRuntimeState {
         app: &AppHandle,
         project: &Path,
     ) -> Result<SpacesChange, AppError> {
-        let change = self.reconcile_spaces(app, project).await?;
+        self.pick_up_spaces_with(
+            &app.state::<IndexState>(),
+            &app.state::<Arc<RoutineStoreState>>(),
+            project,
+            &WindowSpacesEffects { app, runtime: self },
+        )
+        .await
+    }
+
+    pub(crate) async fn reconcile_spaces_with(
+        &self,
+        index_state: &IndexState,
+        routine_stores: &RoutineStoreState,
+        project: &Path,
+        effects: &impl SpacesEffects,
+    ) -> Result<SpacesChange, AppError> {
+        let _spaces = self.spaces.lock().await;
+        let change = index_state.spaces_change(project).await?;
+        if change.is_empty() {
+            return Ok(change);
+        }
+        for dir in change_ready_dirs(project, &change) {
+            effects.repair_scope(project, &dir).await;
+        }
+        for key in change_departed_keys(project, &change) {
+            self.stop_index_task(&key);
+        }
+        let rebuild = index_state.apply_spaces_change(project, &change).await;
+        if let Err(error) = routine_stores.reconcile_project(index_state, project).await {
+            tracing::warn!("routine pools did not follow the spaces of the project: {error}");
+        }
+        for space in &change.changed {
+            if matches!(space.new, SpaceStatus::Missing | SpaceStatus::Broken) {
+                effects
+                    .space_unready(IndexKey::Space {
+                        project: project.to_path_buf(),
+                        space_id: space.id.clone(),
+                    })
+                    .await;
+            }
+        }
+        for key in rebuild {
+            effects.rebuild(key);
+        }
+        for (event, payload) in space_events(project, &change) {
+            effects.emit(event, payload);
+        }
+        Ok(change)
+    }
+
+    pub(crate) async fn pick_up_spaces_with(
+        &self,
+        index_state: &IndexState,
+        routine_stores: &RoutineStoreState,
+        project: &Path,
+        effects: &impl SpacesEffects,
+    ) -> Result<SpacesChange, AppError> {
+        let change = self
+            .reconcile_spaces_with(index_state, routine_stores, project, effects)
+            .await?;
         if !change.added.is_empty() {
-            spawn_space_creation_commits(app, project);
+            effects.commit_creations(project);
         }
         Ok(change)
     }
@@ -283,19 +308,50 @@ impl ProjectRuntimeState {
     }
 }
 
-/// The index and Routine pools of `project` follow `change`; returns the
-/// pools to rebuild.
-async fn apply_spaces_change(
-    index_state: &IndexState,
-    routine_stores: &RoutineStoreState,
-    project: &Path,
-    change: &SpacesChange,
-) -> Vec<IndexKey> {
-    let rebuild = index_state.apply_spaces_change(project, change).await;
-    if let Err(error) = routine_stores.reconcile_project(index_state, project).await {
-        tracing::warn!("routine pools did not follow the spaces of the project: {error}");
+/// What only the window process does when the Spaces of an open project
+/// change: the local Git policy of a ready Space repository, the background
+/// rebuild of a pool, the LFS state of a Space that is no longer ready, the
+/// window events and the creation commit of a picked-up Space.
+pub(crate) trait SpacesEffects {
+    fn repair_scope(&self, project: &Path, dir: &Path) -> impl Future<Output = ()> + Send;
+    fn rebuild(&self, key: IndexKey);
+    fn space_unready(&self, key: IndexKey) -> impl Future<Output = ()> + Send;
+    fn emit(&self, event: &'static str, payload: serde_json::Value);
+    fn commit_creations(&self, project: &Path);
+}
+
+struct WindowSpacesEffects<'a> {
+    app: &'a AppHandle,
+    runtime: &'a ProjectRuntimeState,
+}
+
+impl SpacesEffects for WindowSpacesEffects<'_> {
+    async fn repair_scope(&self, project: &Path, dir: &Path) {
+        crate::git::delivery::repair_scope_best_effort(self.app, project, dir).await;
     }
-    rebuild
+
+    fn rebuild(&self, key: IndexKey) {
+        self.runtime.spawn_full_reindex(self.app, key);
+    }
+
+    async fn space_unready(&self, key: IndexKey) {
+        self.app
+            .state::<IndexState>()
+            .set_lfs_state_with(
+                self.app,
+                &key,
+                svode_core::storage::lfs::LfsState::NotApplicable,
+            )
+            .await;
+    }
+
+    fn emit(&self, event: &'static str, payload: serde_json::Value) {
+        let _ = self.app.emit(event, payload);
+    }
+
+    fn commit_creations(&self, project: &Path) {
+        spawn_space_creation_commits(self.app, project);
+    }
 }
 
 fn spawn_space_creation_commits(app: &AppHandle, project: &Path) {
