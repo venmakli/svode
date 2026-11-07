@@ -14,8 +14,28 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { isPageLink } from "../lib/page-link-utils";
+import { isMacKeyboardPlatform } from "@/shared/lib/keyboard-shortcuts";
+import { isPageLink, isProjectFileLink } from "../lib/page-link-utils";
 import { usePageLinkNavigation } from "../hooks/use-page-link-navigation";
+
+/** ⌘-click on macOS, Ctrl-click elsewhere: the gesture that opens a link. */
+function isLinkOpenClick(event: React.MouseEvent): boolean {
+  return isMacKeyboardPlatform() ? event.metaKey : event.ctrlKey;
+}
+
+/**
+ * A click the browser would turn into a new window or a download: it never
+ * gets the path of a project file (DF-317 R2).
+ */
+function isBrowserLinkClick(event: React.MouseEvent): boolean {
+  return (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  );
+}
 
 export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
   const { element, editor, children } = props;
@@ -27,9 +47,19 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
     .getApi(SuggestionPlugin)
     ?.suggestion?.suggestionData?.(element) as { type?: string } | undefined;
 
-  // External link — standard rendering
+  // External link or link to a project file — standard rendering. A project
+  // file opens with the neutral opening of an artifact, never in the browser.
   if (!isDoc) {
-    return (
+    const isFile = isProjectFileLink(url);
+    const handleFileClick = (e: React.MouseEvent) => {
+      if (!isBrowserLinkClick(e)) return;
+      e.preventDefault();
+      if (e.button === 0 && isLinkOpenClick(e)) {
+        e.stopPropagation();
+        void pageLink.openLink();
+      }
+    };
+    const link = (
       <PlateElement
         {...props}
         as="a"
@@ -45,10 +75,26 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
           onMouseOver: (e: React.MouseEvent) => {
             e.stopPropagation();
           },
+          ...(isFile
+            ? { onClick: handleFileClick, onAuxClick: handleFileClick }
+            : {}),
         }}
       >
         {children}
       </PlateElement>
+    );
+    if (!isFile) return link;
+    return (
+      <>
+        {link}
+        <GhostCloneDialog
+          open={pageLink.cloneTarget !== null}
+          spaceName={pageLink.cloneTarget?.spaceName ?? ""}
+          cloning={pageLink.isCloning}
+          onOpenChange={pageLink.onCloneDialogOpenChange}
+          onConfirm={pageLink.handleCloneMissing}
+        />
+      </>
     );
   }
 
@@ -56,7 +102,7 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
   const handleClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    await pageLink.openPageLink();
+    await pageLink.openLink();
   };
 
   const content = (

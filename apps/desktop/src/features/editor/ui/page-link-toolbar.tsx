@@ -30,10 +30,16 @@ import { buttonVariants } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import * as m from "@/paraglide/messages.js";
-import { isBrokenPageLink, relativeDocumentPath } from "../lib/page-link-utils";
+import {
+  isBrokenPageLink,
+  isProjectFileLink,
+  relativeDocumentPath,
+} from "../lib/page-link-utils";
+import { usePageLinkOpener } from "../hooks/use-page-link-navigation";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
 import { BrokenLinkRepair } from "./broken-link-repair";
+import { GhostCloneDialog } from "./ghost-clone-dialog";
 import { PageLinkTargetPicker } from "./page-link-target-picker";
 
 type LinkMode = "page" | "url";
@@ -101,8 +107,18 @@ export function PageLinkFloatingToolbar({
     preventDefaultOnEnterKeydown: true,
   });
   const [mode, setMode] = React.useState<LinkMode>("page");
-
-  if (hidden) return null;
+  // Owned by the toolbar root, which stays mounted while the popover hides,
+  // so the clone dialog of a missing Space outlives the popover.
+  const linkOpener = usePageLinkOpener();
+  const cloneDialog = (
+    <GhostCloneDialog
+      open={linkOpener.cloneTarget !== null}
+      spaceName={linkOpener.cloneTarget?.spaceName ?? ""}
+      cloning={linkOpener.isCloning}
+      onOpenChange={linkOpener.onCloneDialogOpenChange}
+      onConfirm={linkOpener.handleCloneMissing}
+    />
+  );
 
   const input = (
     <div className="flex w-[360px] flex-col gap-1" {...inputProps}>
@@ -138,18 +154,24 @@ export function PageLinkFloatingToolbar({
     <PageLinkEditContent
       editButtonProps={editButtonProps}
       unlinkButtonProps={unlinkButtonProps}
+      onOpenFileLink={linkOpener.openLink}
     />
   );
 
   return (
     <>
-      <div ref={insertRef} className={popoverClassName} {...insertProps}>
-        {input}
-      </div>
+      {hidden ? null : (
+        <>
+          <div ref={insertRef} className={popoverClassName} {...insertProps}>
+            {input}
+          </div>
 
-      <div ref={editRef} className={popoverClassName} {...editProps}>
-        {editContent}
-      </div>
+          <div ref={editRef} className={popoverClassName} {...editProps}>
+            {editContent}
+          </div>
+        </>
+      )}
+      {cloneDialog}
     </>
   );
 }
@@ -190,9 +212,11 @@ function LegacyUrlInput({
 function PageLinkEditContent({
   editButtonProps,
   unlinkButtonProps,
+  onOpenFileLink,
 }: {
   editButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement>;
   unlinkButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement>;
+  onOpenFileLink: (url: string) => Promise<void>;
 }) {
   const editor = useEditorRef();
   const selection = useEditorSelection();
@@ -243,7 +267,18 @@ function PageLinkEditContent({
         {m.page_link_edit_link()}
       </button>
       <Separator orientation="vertical" />
-      <LinkOpenButton />
+      {isProjectFileLink(url) ? (
+        <button
+          className={buttonVariants({ size: "sm", variant: "ghost" })}
+          type="button"
+          aria-label={m.page_link_open_link()}
+          onClick={() => void onOpenFileLink(url)}
+        >
+          <ExternalLink width={18} />
+        </button>
+      ) : (
+        <LinkOpenButton />
+      )}
       <Separator orientation="vertical" />
       <button
         className={buttonVariants({ size: "sm", variant: "ghost" })}

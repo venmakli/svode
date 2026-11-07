@@ -4,6 +4,7 @@ import {
   decodePageLinkPath,
   encodePageLinkPath,
   isBrokenPageLink,
+  isProjectFileLink,
   makeRelativePath,
   pageLinkPath,
   resolveRelativeDocPath,
@@ -87,4 +88,18 @@ test("a literal percent of a Page link is written as %25", () => {
     "../50%25 off.md",
   );
   expect(decodePageLinkPath(encodePageLinkPath("A%2B.md"))).toBe("A%2B.md");
+});
+
+test("a link to a project file is a path that is not a Page", () => {
+  expect(isProjectFileLink("reports/dashboard.html")).toBe(true);
+  expect(isProjectFileLink("../docs/spec.pdf#page=2")).toBe(true);
+  expect(isProjectFileLink("/abs/root.html")).toBe(true);
+  expect(isProjectFileLink("notes/plan.md")).toBe(false);
+  expect(isProjectFileLink("https://example.com/a.html")).toBe(false);
+  expect(isProjectFileLink("mailto:team@example.com")).toBe(false);
+  expect(isProjectFileLink("file:///tmp/a.html")).toBe(false);
+  expect(isProjectFileLink("//cdn.example.com/a.js")).toBe(false);
+  expect(isProjectFileLink("#goals")).toBe(false);
+  expect(isProjectFileLink("")).toBe(false);
+  expect(isProjectFileLink(undefined)).toBe(false);
 });

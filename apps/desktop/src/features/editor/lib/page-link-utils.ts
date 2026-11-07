@@ -11,6 +11,21 @@ export function isPageLink(url: string | undefined): boolean {
   return url.split("#")[0].endsWith(".md");
 }
 
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * A link to a file of the project that is not a Page: a path, neither an
+ * anchor nor a url with a scheme, that does not name a `.md` file. It opens
+ * with the neutral opening of an artifact, not with the browser.
+ */
+export function isProjectFileLink(url: string | undefined): boolean {
+  if (!url || isPageLink(url)) return false;
+  if (url.startsWith("#") || url.startsWith("//") || URL_SCHEME.test(url)) {
+    return false;
+  }
+  return stripAnchor(url).length > 0;
+}
+
 export function joinAbs(base: string, rel: string): string {
   if (!rel) return base;
   if (rel.startsWith("/")) return rel;
