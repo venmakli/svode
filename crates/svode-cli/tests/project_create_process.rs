@@ -3,7 +3,8 @@
 //! current directory, registered in the project list of the device, whose
 //! JSON result without the envelope is the `structuredContent` of
 //! `create_project`; later commands address the new Project from its
-//! folder; existing and nested Projects are refused before any write.
+//! folder; existing and nested Projects, and an existing repository with a
+//! remote whose write access is not verified, are refused before any write.
 
 #![cfg(unix)]
 
@@ -234,4 +235,60 @@ fn an_existing_or_nested_project_is_refused_before_any_write() {
 
     assert_eq!(snapshot(&fixture.base), before);
     assert_eq!(fixture.registered(), registered);
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}");
+}
+
+/// The current behavior for an existing repository with a remote and no
+/// access evidence on the device: the Stage 9 mutation policy refuses it,
+/// and since `git access verify` needs a Project, the hint names the step
+/// that is reachable: Open folder in the desktop app, or the user.
+#[test]
+fn an_existing_repository_with_an_unverified_remote_is_refused_with_a_reachable_hint() {
+    if !has_git() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let code_dir = fixture.work.join("code");
+    let remote = fixture.base.join("remote.git");
+    fs::create_dir_all(&code_dir).unwrap();
+    git(
+        &fixture.base,
+        &["init", "-q", "--bare", remote.to_str().unwrap()],
+    );
+    git(&code_dir, &["init", "-q"]);
+    git(&code_dir, &["config", "user.email", "agent@example.com"]);
+    git(&code_dir, &["config", "user.name", "Agent"]);
+    git(&code_dir, &["config", "commit.gpgsign", "false"]);
+    fs::write(code_dir.join("main.rs"), "fn main() {}\n").unwrap();
+    git(&code_dir, &["add", "-A"]);
+    git(&code_dir, &["commit", "-qm", "Code"]);
+    git(
+        &code_dir,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git(&code_dir, &["push", "-q", "-u", "origin", "HEAD"]);
+    let before = snapshot(&fixture.base);
+
+    let (exit, refused) = fixture.json(&fixture.work, &["project", "create", "code"]);
+    assert_eq!(exit, 1, "{refused}");
+    assert_eq!(code(&refused), "REPOSITORY_ACCESS_DENIED");
+    let error = &refused["error"];
+    assert_eq!(error["status"], "unknown", "{error}");
+    assert_eq!(error["reason"], "not_checked", "{error}");
+    assert_eq!(
+        error["hint"],
+        "Write access to this Git repository is not verified on this device. Create the project in Svode Desktop with Open folder, which creates and registers it there, or ask the user."
+    );
+
+    assert_eq!(snapshot(&fixture.base), before);
+    assert!(fixture.registered().is_empty());
 }

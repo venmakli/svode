@@ -104,7 +104,7 @@ pub(crate) struct CreateProjectArgs {
 
 /// Next step after an existing repository of a new Project was refused for
 /// missing write access evidence.
-const PROJECT_ACCESS_HINT: &str = "Write access to this Git repository is not verified on this device, and access is verified only for a Svode project. Ask the user to open the folder in Svode Desktop (Open folder), which makes it a project there and lets them verify access, then work in that project.";
+const PROJECT_ACCESS_HINT: &str = "Write access to this Git repository is not verified on this device. Create the project in Svode Desktop with Open folder, which creates and registers it there, or ask the user.";
 
 /// Next step of a caller whose next requests do not address the created
 /// Project.
