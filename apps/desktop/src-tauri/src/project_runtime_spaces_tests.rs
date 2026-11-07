@@ -19,7 +19,7 @@ use svode_core::project::space::{SpaceCreate, create};
 use svode_core::storage::config::SpaceGitType;
 
 use super::*;
-use crate::git::auto_versions::tests::QuietHost;
+use crate::git::auto_versions::QuietHost;
 use crate::index::update::test_update_state;
 
 fn git(dir: &Path, args: &[&str]) -> String {

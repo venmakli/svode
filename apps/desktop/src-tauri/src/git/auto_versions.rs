@@ -308,7 +308,10 @@ pub(crate) async fn commit_space_creations(app: &AppHandle, project: &Path) {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(crate) use tests::QuietHost;
+
+#[cfg(test)]
+mod tests {
     use std::process::Command;
 
     use svode_core::git::cli::GitCli;
