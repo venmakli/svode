@@ -1386,6 +1386,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       await pressEscape(terminal()!);
       expect(peek.openChanges).toEqual([]);
 
+      // Tab to a button of the top bar shows its tooltip; it does not hold
+      // the Esc.
+      await act(async () => buttonByLabel(m.external_open_with()).focus());
+      await settle();
+      expect(
+        Boolean(document.querySelector('[data-slot="tooltip-content"]')),
+      ).toBe(true);
       await pressEscape(buttonByLabel(m.external_open_with()));
       expect(peek.openChanges).toEqual([false]);
     },

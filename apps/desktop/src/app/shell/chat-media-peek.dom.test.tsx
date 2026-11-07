@@ -464,11 +464,16 @@ if (process.env.SVODE_CHAT_MEDIA_PEEK_DOM !== "1") {
     expect(identity()).toBe("photo.png");
     expect(Boolean(doc.querySelector("[data-session-peek]"))).toBe(true);
 
-    await pressEscape(
-      mediaPeek()!.querySelector<HTMLElement>(
-        `[aria-label="${m.peek_close()}"]`,
-      )!,
+    // Tab to Close shows its tooltip; it does not hold the Esc.
+    const close = mediaPeek()!.querySelector<HTMLElement>(
+      `[aria-label="${m.peek_close()}"]`,
+    )!;
+    await act(async () => close.focus());
+    await settle();
+    expect(Boolean(doc.querySelector('[data-slot="tooltip-content"]'))).toBe(
+      true,
     );
+    await pressEscape(close);
     expect(mediaPeek()).toBe(undefined);
     expect(Boolean(doc.querySelector("[data-session-peek]"))).toBe(true);
     expect(commands("media_revoke_source").length).toBe(1);
