@@ -214,6 +214,18 @@ fn target_falls_back_to_the_current_directory_and_explicit_selectors_win() {
     assert_eq!(exit, 1);
     assert_eq!(code(&value), "PROJECT_UNAVAILABLE");
     assert_eq!(value["error"]["target"], serde_json::json!({}));
+    // An explicit Project path is echoed normalized lexically, without `.`
+    // and `..`.
+    let (exit, value) = json(
+        &fixture.elsewhere,
+        &["--project", "./missing/../gone/.", "page", "list"],
+    );
+    assert_eq!(exit, 1);
+    assert_eq!(code(&value), "PROJECT_UNAVAILABLE");
+    assert_eq!(
+        value["error"]["target"],
+        serde_json::json!({ "projectPath": fixture.elsewhere.join("gone") })
+    );
     let (_, value) = json(&fixture.elsewhere, &["--space", "child", "page", "list"]);
     assert_eq!(
         value["error"]["target"],

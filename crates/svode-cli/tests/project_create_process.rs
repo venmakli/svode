@@ -5,6 +5,7 @@
 //! `create_project`; later commands address the new Project from its
 //! folder; existing and nested Projects, and an existing repository with a
 //! remote whose write access is not verified, are refused before any write.
+//! The envelope target names the path normalized, like the result.
 
 #![cfg(unix)]
 
@@ -133,6 +134,10 @@ async fn a_project_created_outside_a_project_is_registered_and_later_commands_ad
     let acme = fixture.work.join("acme");
     let path = acme.to_string_lossy().to_string();
     assert_eq!(value["project"]["path"], path);
+    assert_eq!(
+        value["target"]["path"], path,
+        "the target names it normalized"
+    );
     assert_eq!(value["project"]["name"], "Acme");
     assert_eq!(value["session"]["addressing"], "per_command");
     assert!(
@@ -217,7 +222,7 @@ fn an_existing_or_nested_project_is_refused_before_any_write() {
     assert_eq!(exit, 1, "{taken}");
     assert_eq!(code(&taken), "PROJECT_ALREADY_EXISTS");
 
-    let (exit, nested) = fixture.json(&acme, &["project", "create", "docs/notes"]);
+    let (exit, nested) = fixture.json(&acme, &["project", "create", "./docs/notes"]);
     assert_eq!(exit, 1, "{nested}");
     assert_eq!(code(&nested), "PROJECT_NESTED");
     assert_eq!(nested["error"]["project"], acme.to_string_lossy().as_ref());

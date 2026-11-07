@@ -4,7 +4,7 @@
 //! Creating never commits: the result names, per repository, who commits the
 //! creation.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -16,6 +16,7 @@ use svode_core::storage::config::SpaceGitType;
 
 use crate::error::ToolError;
 use crate::host::{NextRequests, RequestTarget, ToolHost};
+use crate::path::normalize_absolute;
 use crate::result::ToolCallResult;
 
 /// Where the settings a creation leaves at their defaults are changed.
@@ -209,17 +210,7 @@ fn absolute_project_path(path: &str) -> Result<PathBuf, ToolError> {
             format!("The project path must be absolute: {}", path.display()),
         ));
     }
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    Ok(normalized)
+    Ok(normalize_absolute(path))
 }
 
 fn project_repository_summary(repository: &ProjectRepository) -> &'static str {

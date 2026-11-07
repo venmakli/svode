@@ -123,6 +123,22 @@ fn has_windows_drive_prefix(path: &str) -> bool {
     bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }
 
+/// An absolute path with `.` and `..` resolved lexically, without
+/// following links; `..` at the root stays at the root.
+pub fn normalize_absolute(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
 fn normalize_path(path: &Path) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -171,6 +187,20 @@ mod tests {
             validate_public_rel_path("docs\\note.md", false).unwrap(),
             "docs/note.md"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalize_absolute_resolves_dots_without_following_links() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+
+        assert_eq!(
+            normalize_absolute(&root.path().join("./a/../link/./b/..")),
+            root.path().join("link")
+        );
+        assert_eq!(normalize_absolute(Path::new("/../a")), Path::new("/a"));
     }
 
     #[cfg(unix)]

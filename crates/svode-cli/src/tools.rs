@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use svode_tools::catalog;
 use svode_tools::dispatch::call_tool;
 use svode_tools::host::ToolHost;
+use svode_tools::path::normalize_absolute;
 
 use crate::error::CliError;
 use crate::grammar::{
@@ -167,14 +168,17 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             verb: ProjectVerb::Info,
         } => ToolCommand::new("get_project_info", render::project),
         // The shared operation takes an absolute path; a relative one is
-        // the caller's current directory.
+        // the caller's current directory. The target names it normalized,
+        // like the project path of the result.
         Noun::Project {
             verb: ProjectVerb::Create(args),
         } => ToolCommand::new("create_project", render::project_created)
             .selector(
                 "path",
                 "path",
-                cwd.join(&args.path).to_string_lossy().to_string(),
+                normalize_absolute(&cwd.join(&args.path))
+                    .to_string_lossy()
+                    .to_string(),
             )
             .optional("name", args.name)
             .optional("icon", args.icon)

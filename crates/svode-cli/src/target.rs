@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use svode_core::page::ResolvedSpaceTarget;
 use svode_tools::error::ToolError;
 use svode_tools::host::{RequestTarget, ToolHost};
+use svode_tools::path::normalize_absolute;
 use svode_tools::standalone::request_target;
 use svode_tools::target::{ROOT_SPACE_ID, project_for_cwd, resolve_default_space, resolve_project};
 
@@ -37,11 +38,15 @@ impl Selectors<'_> {
     }
 
     /// Selectors known before resolution; an explicit Project path is only
-    /// joined with the current directory, never resolved.
+    /// joined with the current directory and normalized lexically, never
+    /// resolved.
     pub fn known(&self) -> Map<String, Value> {
         let mut target = Map::new();
         if let Some(project) = self.project_dir() {
-            target.insert("projectPath".into(), json!(project.display().to_string()));
+            target.insert(
+                "projectPath".into(),
+                json!(normalize_absolute(&project).display().to_string()),
+            );
         }
         if let Some(space) = self.space {
             target.insert("spaceId".into(), json!(space));

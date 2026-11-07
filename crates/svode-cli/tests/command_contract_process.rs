@@ -93,10 +93,10 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
             assert!(error["message"].is_string(), "{}", case.name);
             if case.name == "project create" {
                 // A Project-free command resolves no target: the failure
-                // names the requested folder.
+                // names the requested folder, normalized lexically.
                 assert_eq!(
                     error["target"]["path"],
-                    fixture.input.join("../project/nested").to_str().unwrap(),
+                    fixture.project.join("nested").to_str().unwrap(),
                     "{}",
                     case.name
                 );
