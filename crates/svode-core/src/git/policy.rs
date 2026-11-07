@@ -64,10 +64,7 @@ pub use crate::routines::local::GitUserPolicy;
 /// Safe policy read for background side-effect gates. Invalid or missing local
 /// config disables automation rather than enabling background commits/sync.
 pub fn effective_user_policy(path: &std::path::Path) -> GitUserPolicy {
-    crate::routines::local::read(path)
-        .ok()
-        .and_then(|local| local.git)
-        .unwrap_or_default()
+    read_user_policy(path).unwrap_or_default()
 }
 
 /// Write the device-local Git automation policy of one repository.
@@ -81,11 +78,19 @@ pub fn write_user_policy(
     })
 }
 
-/// Per-user Git automation policy of one repository, as written on this device.
+/// Per-user Git automation policy of one repository on this device, as it
+/// acts: content commits include structural and system commits, so a stored
+/// combination with either of them off while content commits are on reads as
+/// on, and the next settings save writes it that way.
 pub fn read_user_policy(
     path: &std::path::Path,
 ) -> Result<GitUserPolicy, crate::routines::local::LocalConfigError> {
-    Ok(crate::routines::local::read(path)?.git.unwrap_or_default())
+    let mut policy = crate::routines::local::read(path)?.git.unwrap_or_default();
+    if policy.auto_commit_content {
+        policy.auto_commit_structural = true;
+        policy.auto_commit_system = true;
+    }
+    Ok(policy)
 }
 
 /// Excludes the device-local files of `repo`, a test repository Svode
@@ -136,5 +141,58 @@ mod tests {
                 .expect("read local")
                 .contains("autoSync")
         );
+    }
+
+    #[test]
+    fn content_commits_turn_on_structural_and_system_commits_as_read() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        for structural in [false, true] {
+            for system in [false, true] {
+                for sync in [false, true] {
+                    for content in [false, true] {
+                        let stored = GitUserPolicy {
+                            auto_sync: sync,
+                            auto_commit_structural: structural,
+                            auto_commit_system: system,
+                            auto_commit_content: content,
+                        };
+                        write_user_policy(temp.path(), &stored).expect("write policy");
+                        let expected = GitUserPolicy {
+                            auto_commit_structural: structural || content,
+                            auto_commit_system: system || content,
+                            ..stored.clone()
+                        };
+
+                        assert_eq!(
+                            read_user_policy(temp.path()).expect("read policy"),
+                            expected
+                        );
+                        assert_eq!(effective_user_policy(temp.path()), expected);
+                        // The read never rewrites the stored flags.
+                        let written: serde_json::Value = serde_json::from_str(
+                            &std::fs::read_to_string(temp.path().join(".svode/local.json"))
+                                .expect("read local"),
+                        )
+                        .expect("local json");
+                        assert_eq!(written["git"]["autoCommitStructural"], structural);
+                        assert_eq!(written["git"]["autoCommitSystem"], system);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unreadable_local_config_keeps_automation_off() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(temp.path().join(".svode")).expect("svode dir");
+        std::fs::write(
+            temp.path().join(".svode/local.json"),
+            r#"{"git":{"autoCommitContent":"#,
+        )
+        .expect("write broken local config");
+
+        assert!(read_user_policy(temp.path()).is_err());
+        assert_eq!(effective_user_policy(temp.path()), GitUserPolicy::default());
     }
 }

@@ -1472,6 +1472,51 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn content_commits_enable_structural_and_system_commits_of_their_own_paths() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        let tmp = repo(&cli, true).await;
+        let root = tmp.path();
+        super::super::policy::exclude_device_local(root);
+        write_local_git_policy(
+            root,
+            GitUserPolicy {
+                auto_sync: false,
+                auto_commit_structural: false,
+                auto_commit_system: false,
+                auto_commit_content: true,
+            },
+        );
+        write(root, "notes/draft.md", "unsaved draft\n");
+        for (intent, path) in [
+            (CommitIntent::StructuralLifecycle, "zadachi/lifecycle.md"),
+            (CommitIntent::SystemConfig, "research/.svode/config.json"),
+        ] {
+            write(root, path, "operation\n");
+            let head = git(&cli, root, &["rev-parse", "HEAD"]).await;
+            assert!(
+                commit_prepared_paths(&cli, root, &[path.to_string()], "Operation", intent, false)
+                    .await
+                    .unwrap()
+            );
+            assert_ne!(git(&cli, root, &["rev-parse", "HEAD"]).await, head);
+            assert_eq!(
+                git(&cli, root, &["show", "--name-only", "--format=", "HEAD"]).await,
+                format!("{path}\n")
+            );
+        }
+        assert_eq!(
+            git(
+                &cli,
+                root,
+                &["status", "--porcelain", "--untracked-files=all"]
+            )
+            .await,
+            "?? notes/draft.md\n"
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn staging_failure_stops_system_and_structural_commits_with_staged_siblings() {
