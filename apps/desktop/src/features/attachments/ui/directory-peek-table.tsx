@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import {
   CollectionHost,
   defineCollectionPresentation,
@@ -6,7 +7,9 @@ import {
   type CollectionActivationContext,
   type CollectionInstance,
 } from "@/features/collection";
+import * as m from "@/paraglide/messages.js";
 import { createAttachmentsPresentationDescriptor } from "../model/presentation";
+import type { AttachmentBranch } from "../model/source-session";
 import type { AttachmentItem } from "../model/types";
 import { AttachmentIcon } from "./attachment-icon";
 import {
@@ -51,13 +54,7 @@ export function DirectoryPeekTable({
           phase: "ready",
           items: branch.snapshot.items,
           diagnostics: branch.snapshot.items.length
-            ? [
-                <AttachmentBranchStatus
-                  key="branch"
-                  branch={branch}
-                  onRetry={() => void source.loadBranch(path)}
-                />,
-              ]
+            ? branchDiagnostics(branch, () => void source.loadBranch(path))
             : [],
           sourceEmpty: (
             <AttachmentBranchStatus
@@ -91,4 +88,27 @@ export function DirectoryPeekTable({
   return state.phase === "ready" ? (
     <CollectionHost instance={instance} state={state} />
   ) : null;
+}
+
+// The lines of the presentation's warning: only a partly read source or a
+// failed refresh of the listed branch, never its loading.
+function branchDiagnostics(
+  branch: AttachmentBranch,
+  onRetry: () => void,
+): ReactNode[] {
+  const diagnostics: ReactNode[] = [];
+  if (branch.error) {
+    diagnostics.push(
+      <div key="refresh" className="flex flex-col items-start gap-2">
+        <span>{branch.error}</span>
+        <Button size="sm" variant="outline" onClick={onRetry}>
+          {m.attachments_retry()}
+        </Button>
+      </div>,
+    );
+  }
+  for (const diagnostic of branch.snapshot?.diagnostics ?? []) {
+    diagnostics.push(m.attachments_source_partial({ path: diagnostic.path }));
+  }
+  return diagnostics;
 }
