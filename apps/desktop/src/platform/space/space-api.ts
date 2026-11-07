@@ -60,8 +60,7 @@ export type StrategyWarningCodeDto =
   | "lfs-agent-setup-failed"
   | "lfs-agent-teardown-failed"
   | "lfs-agent-config-cleanup-failed"
-  | "commit-skipped-changed-files"
-  | "commit-skipped-staged-changes";
+  | "commit-skipped-changed-files";
 
 export interface StrategyWarningDto {
   code: StrategyWarningCodeDto;

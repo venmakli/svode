@@ -238,18 +238,6 @@ async fn system_paths_dirty_before_strategy_apply(
     Ok(!out.stdout.is_empty())
 }
 
-async fn has_staged_changes(cli: &GitCli, repo: &Path) -> Result<bool, AppError> {
-    let out = cli.exec(repo, &["diff", "--cached", "--quiet"]).await?;
-    match out.exit_code {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(AppError::GitCommandFailed(format!(
-            "git diff --cached failed: {}",
-            out.stderr
-        ))),
-    }
-}
-
 async fn strategy_autocommit_blocker(
     cli: &GitCli,
     repo: &Path,
@@ -257,9 +245,6 @@ async fn strategy_autocommit_blocker(
 ) -> Result<Option<StrategyWarningCode>, AppError> {
     if system_paths_dirty_before_strategy_apply(cli, repo, paths).await? {
         return Ok(Some(StrategyWarningCode::CommitSkippedChangedFiles));
-    }
-    if has_staged_changes(cli, repo).await? {
-        return Ok(Some(StrategyWarningCode::CommitSkippedStagedChanges));
     }
     Ok(None)
 }
@@ -408,10 +393,6 @@ pub async fn set_assets_strategy(
     if should_autocommit_strategy {
         if let Some(code) = autocommit_blocker {
             result.warnings.push(StrategyWarning::new(code));
-        } else if has_staged_changes(&cli, &scope.repo_dir).await? {
-            result.warnings.push(StrategyWarning::new(
-                StrategyWarningCode::CommitSkippedStagedChanges,
-            ));
         } else if let Err(e) = autocommit
             .commit_system_now(
                 project.clone(),
@@ -738,22 +719,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn strategy_autocommit_blocker_detects_preexisting_staged_changes() -> Result<(), AppError>
-    {
+    async fn strategy_autocommit_ignores_foreign_staged_changes() -> Result<(), AppError> {
         let Some((cli, _temp, repo)) = setup_clean_repo().await? else {
             return Ok(());
         };
 
+        // The strategy commit takes only its own paths, so other staged
+        // changes no longer skip it.
         std::fs::write(repo.join("README.md"), "# Project\n\nstaged\n")?;
         git_ok(&cli, &repo, &["add", "README.md"]).await?;
 
         let blocker =
             strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
                 .await?;
-        assert_eq!(
-            blocker,
-            Some(StrategyWarningCode::CommitSkippedStagedChanges)
-        );
+        assert!(blocker.is_none());
         Ok(())
     }
 

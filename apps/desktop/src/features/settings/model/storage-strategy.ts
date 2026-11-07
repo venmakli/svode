@@ -245,8 +245,7 @@ export type StorageStrategyWarningCode =
   | "lfs-agent-setup-failed"
   | "lfs-agent-teardown-failed"
   | "lfs-agent-config-cleanup-failed"
-  | "commit-skipped-changed-files"
-  | "commit-skipped-staged-changes";
+  | "commit-skipped-changed-files";
 
 // A non-fatal warning of a strategy apply; `detail` is the technical cause.
 export interface StorageStrategyWarning {
@@ -266,8 +265,6 @@ const STRATEGY_WARNING_TEXT: Record<StorageStrategyWarningCode, () => string> =
       m.storage_warning_lfs_agent_config_cleanup_failed,
     "commit-skipped-changed-files":
       m.storage_warning_commit_skipped_changed_files,
-    "commit-skipped-staged-changes":
-      m.storage_warning_commit_skipped_staged_changes,
   };
 
 export function storageStrategyWarningText({

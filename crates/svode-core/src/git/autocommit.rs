@@ -591,13 +591,8 @@ async fn commit_prepared_paths(
     } else {
         scopes.extend_from_slice(paths);
     }
-    super::branch::prepare_existing(cli, repo).await?;
-    let concrete = super::staging::resolve(cli, repo, &scopes).await?;
-    if concrete.is_empty() {
-        return Ok(false);
-    }
-    super::staging::prepare(cli, repo, &concrete).await?;
-    ops::commit(cli, repo, message).await
+    // Only the operation's own paths: other staged changes stay staged.
+    super::versions::commit_exact(cli, repo, &scopes, message).await
 }
 
 async fn commit_parent_pointer(
@@ -1736,6 +1731,169 @@ mod tests {
                 .await
                 .trim(),
             "README.md"
+        );
+    }
+
+    #[tokio::test]
+    async fn immediate_operation_commits_leave_foreign_staged_changes_staged() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        let tmp = repo(&cli, true).await;
+        let root = tmp.path();
+        super::super::policy::exclude_device_local(root);
+        write_local_git_policy(
+            root,
+            GitUserPolicy {
+                auto_sync: false,
+                auto_commit_structural: true,
+                auto_commit_system: true,
+                auto_commit_content: false,
+            },
+        );
+        write(root, "README.md", "# Project\n");
+        git(&cli, root, &["add", "README.md"]).await;
+        git(&cli, root, &["commit", "-m", "Readme"]).await;
+        // Foreign changes: a staged edit, a staged new file and an unstaged
+        // edit on top of it.
+        write(root, "README.md", "# Project\n\nstaged edit\n");
+        write(root, "draft.md", "staged draft\n");
+        git(&cli, root, &["add", "README.md", "draft.md"]).await;
+        write(root, "draft.md", "staged draft\nunstaged tail\n");
+        async fn foreign(cli: &GitCli, root: &Path) -> (String, String) {
+            (
+                git(cli, root, &["ls-files", "--stage", "README.md", "draft.md"]).await,
+                git(cli, root, &["diff", "--cached", "--name-only"]).await,
+            )
+        }
+        let staged = foreign(&cli, root).await;
+        assert_eq!(staged.1, "README.md\ndraft.md\n");
+
+        let service =
+            AutocommitService::new(Arc::new(GitRuntime::new()), Arc::new(TestHost::default()));
+        let inline = |name: &str| root.join(name);
+        let cases: [(&[&str], &str); 8] = [
+            (&["zadachi/lifecycle.md"], "Structural operation"),
+            (&[".svode/config.json"], "Update space config"),
+            (&[".gitignore"], "Update .gitignore"),
+            (&[".lfsconfig", ".gitattributes"], "Update assets strategy"),
+            (&["notes/.svode/config.json"], "Scaffold .svode"),
+            (
+                &["clients/.svode/config.json", "clients/README.md"],
+                "Scaffold .svode",
+            ),
+            (&["later/README.md"], "Scaffold README"),
+            (&[".svode/config.json"], "Reorder spaces"),
+        ];
+        for (index, (paths, message)) in cases.into_iter().enumerate() {
+            for path in paths {
+                write(root, path, &format!("operation {index}\n"));
+            }
+            if paths.contains(&".gitignore") {
+                // Svode's own entries, so the later scaffold has none to add.
+                ops::ensure_svode_gitignore(root).unwrap();
+                ops::ensure_inline_gitignore(root).unwrap();
+            }
+            let head = git(&cli, root, &["rev-parse", "HEAD"]).await;
+            match index {
+                0 => service
+                    .commit_structural_paths_now(
+                        root.to_path_buf(),
+                        root.to_path_buf(),
+                        vec![root.join(paths[0])],
+                        "Structural operation",
+                    )
+                    .await
+                    .unwrap(),
+                1 => service
+                    .commit_system_now(
+                        root.to_path_buf(),
+                        root.to_path_buf(),
+                        SystemCommitKind::SpaceConfig,
+                    )
+                    .await
+                    .unwrap(),
+                2 => service
+                    .commit_system_manual_now(
+                        root.to_path_buf(),
+                        root.to_path_buf(),
+                        SystemCommitKind::Gitignore,
+                    )
+                    .await
+                    .unwrap(),
+                3 => service
+                    .commit_system_now(
+                        root.to_path_buf(),
+                        root.to_path_buf(),
+                        SystemCommitKind::AssetsStrategy,
+                    )
+                    .await
+                    .unwrap(),
+                4 => service
+                    .commit_scaffold(root.to_path_buf(), inline("notes"))
+                    .await
+                    .unwrap(),
+                5 => service
+                    .commit_scaffold_with_readme(root.to_path_buf(), inline("clients"))
+                    .await
+                    .unwrap(),
+                6 => service
+                    .commit_scope_readme(root.to_path_buf(), inline("later"))
+                    .await
+                    .unwrap(),
+                _ => service
+                    .commit_system_now(
+                        root.to_path_buf(),
+                        root.to_path_buf(),
+                        SystemCommitKind::ReorderSpaces,
+                    )
+                    .await
+                    .unwrap(),
+            }
+            assert_eq!(
+                git(
+                    &cli,
+                    root,
+                    &["rev-list", "--count", &format!("{}..HEAD", head.trim())]
+                )
+                .await
+                .trim(),
+                "1",
+                "{message}: one commit"
+            );
+            assert_eq!(
+                git(&cli, root, &["log", "-1", "--format=%s"]).await.trim(),
+                message
+            );
+            let mut committed = git(&cli, root, &["show", "--name-only", "--format=", "HEAD"])
+                .await
+                .lines()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            committed.sort();
+            let mut expected = paths
+                .iter()
+                .map(|path| path.to_string())
+                .collect::<Vec<_>>();
+            expected.sort();
+            assert_eq!(committed, expected, "{message}: only its own paths");
+            assert_eq!(
+                foreign(&cli, root).await,
+                staged,
+                "{message}: foreign index"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("draft.md")).unwrap(),
+                "staged draft\nunstaged tail\n"
+            );
+        }
+        assert_eq!(
+            git(
+                &cli,
+                root,
+                &["status", "--porcelain", "--untracked-files=all"]
+            )
+            .await,
+            "M  README.md\nAM draft.md\n"
         );
     }
 

@@ -1130,7 +1130,6 @@
   "storage_warning_lfs_agent_teardown_failed": "Не удалось отключить загрузку файлов Git LFS в S3.",
   "storage_warning_lfs_agent_config_cleanup_failed": "Не удалось удалить настройки подключения к S3 на этом устройстве.",
   "storage_warning_commit_skipped_changed_files": "В файлах хранения уже были незакоммиченные изменения, поэтому Svode не стал коммитить стратегию сам. Проверьте изменения и закоммитьте их.",
-  "storage_warning_commit_skipped_staged_changes": "В репозитории уже были изменения, подготовленные к коммиту, поэтому Svode не стал коммитить стратегию сам. Проверьте изменения и закоммитьте их.",
   "storage_warning_detail": "Подробности: {detail}",
   "storage_lfs_policy_update_title": "Нужно обновить",
   "storage_lfs_policy_update_description": "Репозиторий использует старое правило Svode. Обновите его, чтобы Git LFS покрывал подходящие медиафайлы всего репозитория.",

@@ -1130,7 +1130,6 @@
   "storage_warning_lfs_agent_teardown_failed": "Couldn't disconnect uploading Git LFS files to S3.",
   "storage_warning_lfs_agent_config_cleanup_failed": "Couldn't remove the S3 connection settings on this device.",
   "storage_warning_commit_skipped_changed_files": "Storage files already had uncommitted changes, so Svode didn't commit the strategy in the background. Review the changes and commit them.",
-  "storage_warning_commit_skipped_staged_changes": "The repository already had changes staged for commit, so Svode didn't commit the strategy in the background. Review the changes and commit them.",
   "storage_warning_detail": "Details: {detail}",
   "storage_lfs_policy_update_title": "Needs an update",
   "storage_lfs_policy_update_description": "The repository uses an older Svode rule. Update it so Git LFS covers matching media across the repository.",

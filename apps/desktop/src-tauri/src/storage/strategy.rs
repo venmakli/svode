@@ -45,7 +45,6 @@ pub enum StrategyWarningCode {
     LfsAgentTeardownFailed,
     LfsAgentConfigCleanupFailed,
     CommitSkippedChangedFiles,
-    CommitSkippedStagedChanges,
 }
 
 impl StrategyWarning {
