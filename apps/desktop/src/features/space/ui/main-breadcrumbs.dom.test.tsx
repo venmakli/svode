@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import type { TreeNode } from "../model/types";
 
 if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
   test("main breadcrumbs DOM", () => {
@@ -72,13 +73,16 @@ if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
   const calls = {
     guard: 0,
     pages: [] as [string, string | undefined][],
+    pageOptions: [] as unknown[],
     spaces: [] as string[],
     cleared: 0,
   };
   let allowNavigation = true;
   mock.module("@/features/page/navigation", () => ({
-    useOpenPage: () => (path: string, spaceId?: string) =>
-      calls.pages.push([path, spaceId]),
+    useOpenPage: () => (path: string, spaceId?: string, options?: unknown) => {
+      calls.pages.push([path, spaceId]);
+      calls.pageOptions.push(options);
+    },
   }));
 
   const { SidebarProvider } = await import("@/components/ui/sidebar");
@@ -135,6 +139,7 @@ if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
     await act(async () => root.render(null));
     calls.guard = 0;
     calls.pages = [];
+    calls.pageOptions = [];
     calls.spaces = [];
     calls.cleared = 0;
     allowNavigation = true;
@@ -408,5 +413,98 @@ if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
     await click(items()[2].querySelector("button")!);
     expect(tabs).toEqual(["routines"]);
     expect(items()[3].querySelector("button")).toBe(null);
+  });
+
+  test("an ordinary folder opens the Attachments of its owner with its peek past the guards", async () => {
+    await reset();
+    setProject([space("docs", "Docs", "📚")]);
+    const folder = (path: string, children: TreeNode[] = []): TreeNode => ({
+      name: path.split("/").at(-1)!,
+      path,
+      title: path.split("/").at(-1)!,
+      icon: null,
+      has_changes: false,
+      has_schema: false,
+      kind: "folder",
+      children,
+    });
+    const folders = [
+      folder("reports", [folder("reports/q3")]),
+      {
+        ...tree("Notes")[0],
+        name: "notes",
+        path: "notes/README.md",
+        icon: null,
+        children: [folder("notes/files")],
+      },
+    ];
+    useSpaceStore.setState({ fileTrees: { root: folders, docs: folders } });
+    const attachments = (itemId: string) => ({
+      kind: "target",
+      surfaceId: "attachments",
+      itemId,
+    });
+    artifact.openArtifact({
+      path: "reports/q3/probe.pdf",
+      sourceShape: "file",
+      spaceId: "root",
+    });
+    await render(<MainBreadcrumbs home={false} onBeforeNavigation={guard} />);
+
+    expect(texts()).toEqual(["reports", "q3", "probe.pdf"]);
+    expect(
+      items()
+        .slice(0, 2)
+        .every((item) => item.querySelector("button svg") !== null),
+    ).toBe(true);
+    allowNavigation = false;
+    await click(items()[1].querySelector("button")!);
+    expect(artifact.getActiveContentSelection().selection?.kind).toBe(
+      "artifact",
+    );
+    allowNavigation = true;
+    await click(items()[1].querySelector("button")!);
+    let selection = artifact.getActiveContentSelection().selection;
+    expect(
+      selection?.kind === "scope-owner"
+        ? [selection.request.owner, selection.request.intent]
+        : null,
+    ).toEqual([{ kind: "space", spaceId: "root" }, attachments("reports/q3")]);
+    expect(calls.pages).toEqual([]);
+
+    // A folder inside a folder Page opens the Page's Attachments.
+    artifact.openArtifact({
+      path: "notes/files/photo.png",
+      sourceShape: "file",
+      spaceId: "root",
+    });
+    await render(<MainBreadcrumbs home={false} onBeforeNavigation={guard} />);
+    expect(texts()).toEqual(["Notes", "files", "photo.png"]);
+    await click(items()[0].querySelector("button")!);
+    await click(items()[1].querySelector("button")!);
+    expect(calls.pages).toEqual([
+      ["notes/README.md", "root"],
+      ["notes/README.md", "root"],
+    ]);
+    expect(calls.pageOptions).toEqual([
+      undefined,
+      { scopeOpenIntent: attachments("notes/files") },
+    ]);
+
+    // In a child Space, its home opens.
+    artifact.openArtifact({
+      path: "reports/brief.html",
+      sourceShape: "file",
+      spaceId: "docs",
+    });
+    await render(<MainBreadcrumbs home={false} onBeforeNavigation={guard} />);
+    await click(items()[1].querySelector("button")!);
+    expect(calls.spaces).toEqual(["docs"]);
+    selection = artifact.getActiveContentSelection().selection;
+    expect(
+      selection?.kind === "scope-owner"
+        ? [selection.request.owner, selection.request.intent]
+        : null,
+    ).toEqual([{ kind: "space", spaceId: "docs" }, attachments("reports")]);
   });
 }

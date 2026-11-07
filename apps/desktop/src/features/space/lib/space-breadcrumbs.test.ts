@@ -257,3 +257,122 @@ test("the Space element lists Spaces only for two and more", () => {
     breadcrumbSpaceChoices([docs, space("ops", "Ops")]).map(({ id }) => id),
   ).toEqual(["docs", "ops"]);
 });
+
+test("an ordinary folder opens the Attachments of its nearest owner with its peek", () => {
+  const folderTree = [
+    node({
+      name: "reports",
+      path: "reports",
+      kind: "folder",
+      children: [node({ name: "q3", path: "reports/q3", kind: "folder" })],
+    }),
+    node({
+      name: "notes",
+      path: "notes/README.md",
+      title: "Notes",
+      kind: "page",
+      children: [
+        node({ name: "files", path: "notes/files", kind: "folder" }),
+        node({
+          name: "board",
+          path: "notes/board/README.md",
+          title: "Board",
+          kind: "app",
+        }),
+      ],
+    }),
+    node({
+      name: "tasks",
+      path: "tasks/README.md",
+      title: "Tasks",
+      has_schema: true,
+      kind: "collection",
+      children: [node({ name: "scans", path: "tasks/scans", kind: "folder" })],
+    }),
+  ];
+  const trail = (path: string, space: SpaceInfo | null = null) =>
+    buildMainBreadcrumbs({
+      home: false,
+      project,
+      space,
+      path,
+      tree: folderTree,
+    }).crumbs;
+
+  const report = trail("reports/artifact-fragment.html");
+  expect(report[0]).toEqual({
+    key: "segment:reports",
+    label: "reports",
+    icon: null,
+    fallback: "directory",
+    target: {
+      kind: "folder",
+      folderPath: "reports",
+      ownerPagePath: null,
+      spaceId: "root",
+    },
+  });
+  expect(report[1].target.kind).toBe("segment");
+
+  expect(
+    trail("reports/q3/probe.pdf", docs)
+      .slice(1, 3)
+      .map(({ target }) => target),
+  ).toEqual([
+    {
+      kind: "folder",
+      folderPath: "reports",
+      ownerPagePath: null,
+      spaceId: "docs",
+    },
+    {
+      kind: "folder",
+      folderPath: "reports/q3",
+      ownerPagePath: null,
+      spaceId: "docs",
+    },
+  ]);
+
+  const inPage = trail("notes/files/photo.png");
+  expect(inPage[0].target).toEqual({
+    kind: "segment",
+    segment: {
+      label: "Notes",
+      path: "notes/README.md",
+      ownerKind: null,
+      icon: null,
+      fallback: "page",
+    },
+    spaceId: "root",
+  });
+  expect([inPage[1].fallback, inPage[1].target]).toEqual([
+    "directory",
+    {
+      kind: "folder",
+      folderPath: "notes/files",
+      ownerPagePath: "notes/README.md",
+      spaceId: "root",
+    },
+  ]);
+
+  // A Collection has no Attachments: those of the Space show its folder.
+  const inCollection = trail("tasks/scans/scan.pdf");
+  const collection = inCollection[0].target;
+  expect(
+    collection.kind === "segment"
+      ? [collection.segment.path, collection.segment.ownerKind]
+      : null,
+  ).toEqual(["tasks", "collection"]);
+  expect(inCollection[1].target).toEqual({
+    kind: "folder",
+    folderPath: "tasks/scans",
+    ownerPagePath: null,
+    spaceId: "root",
+  });
+
+  const app = trail("notes/board/README.md");
+  expect(app.map(({ target }) => target.kind)).toEqual(["segment", "segment"]);
+  expect(
+    app[1].target.kind === "segment" ? app[1].target.segment.ownerKind : null,
+  ).toBe("app-directory");
+});

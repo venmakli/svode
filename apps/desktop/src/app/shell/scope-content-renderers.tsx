@@ -24,9 +24,10 @@ export function createScopeContentRenderers({
     app: ({ owner }) => (
       <AppWithVariables owner={appOwnerFromScopeOwner(owner)} name={name} />
     ),
-    attachments: ({ owner }) => (
+    attachments: ({ owner, openItem }) => (
       <AttachmentsSurface
         owner={attachmentOwnerFromScopeOwner(owner)}
+        openItem={openItem}
         readOnly={readOnly}
         renderOwnerPeek={(context) => (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>

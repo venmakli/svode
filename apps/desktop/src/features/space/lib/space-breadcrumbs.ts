@@ -1,6 +1,7 @@
 import { getDirectoryPresentationKind } from "@/features/artifact";
 import { mediaFamilyFromFormat, mediaFormatFromPath } from "@/features/media";
 import type { SpaceInfo, TreeNode } from "../model/types";
+import { treeNodeContentObject } from "./tree-node-content-object";
 
 /** What a breadcrumb shows when its object has no icon of its own. */
 export type BreadcrumbFallbackIcon =
@@ -21,6 +22,11 @@ export interface SpaceBreadcrumbSegment {
   ownerKind: "collection" | "app-directory" | null;
   icon: string | null;
   fallback: BreadcrumbFallbackIcon;
+  /**
+   * An ordinary folder, which is no owner: the folder Page above it whose
+   * Attachments show it, or null for those of the Space.
+   */
+  folderOwner?: { pagePath: string | null };
 }
 
 /** What a breadcrumb opens. */
@@ -30,6 +36,14 @@ export type MainBreadcrumbTarget =
   | {
       kind: "segment";
       segment: SpaceBreadcrumbSegment;
+      spaceId: string | null;
+    }
+  /** The Attachments of the folder's owner with the peek of the folder. */
+  | {
+      kind: "folder";
+      folderPath: string;
+      /** The folder Page whose Attachments open; null for the Space home. */
+      ownerPagePath: string | null;
       spaceId: string | null;
     };
 
@@ -93,6 +107,7 @@ export function buildSpaceBreadcrumbSegments(
 ): SpaceBreadcrumbSegment[] {
   const parts = docPath.split("/");
   const segments: SpaceBreadcrumbSegment[] = [];
+  let attachmentsOwnerPath: string | null = null;
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -107,6 +122,8 @@ export function buildSpaceBreadcrumbSegments(
       const path = isCollectionOwner
         ? cumPath
         : (node?.path ?? `${cumPath}/README.md`);
+      const object = node ? treeNodeContentObject(node) : null;
+      const folder = object?.kind === "folder";
       segments.push({
         label: node?.title ?? part,
         path,
@@ -117,7 +134,11 @@ export function buildSpaceBreadcrumbSegments(
             : null,
         icon: node?.icon ?? null,
         fallback: segmentFallback(node, node?.path ?? path, false),
+        ...(folder ? { folderOwner: { pagePath: attachmentsOwnerPath } } : {}),
       });
+      // Collections and Apps have no Attachments of their own.
+      if (object?.kind === "page" && object.form === "folder")
+        attachmentsOwnerPath = path;
     } else {
       const node = findNodeInTree(tree, cumPath);
       segments.push({
@@ -194,7 +215,14 @@ export function buildMainBreadcrumbs({
           label: segment.label,
           icon: segment.icon,
           fallback: segment.fallback,
-          target: { kind: "segment", segment, spaceId },
+          target: segment.folderOwner
+            ? {
+                kind: "folder",
+                folderPath: segment.path,
+                ownerPagePath: segment.folderOwner.pagePath,
+                spaceId,
+              }
+            : { kind: "segment", segment, spaceId },
         }),
       ),
     ],

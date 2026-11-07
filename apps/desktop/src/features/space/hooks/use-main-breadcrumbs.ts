@@ -114,6 +114,25 @@ export function useBreadcrumbNavigation({
       } else if (target.kind === "space-home") {
         openScopeOwner({ kind: "space", spaceId: target.spaceId });
         void openSpace(target.spaceId);
+      } else if (target.kind === "folder") {
+        const scopeOpenIntent = {
+          kind: "target",
+          surfaceId: "attachments",
+          itemId: target.folderPath,
+        } as const;
+        if (target.ownerPagePath) {
+          openPage(target.ownerPagePath, target.spaceId ?? undefined, {
+            scopeOpenIntent,
+          });
+        } else if (target.spaceId) {
+          if (target.spaceId === activeRootId) {
+            if (activeSpaceId) clearActiveSpace();
+          } else void openSpace(target.spaceId);
+          openScopeOwner(
+            { kind: "space", spaceId: target.spaceId },
+            { scopeOpenIntent },
+          );
+        }
       } else if (target.segment.ownerKind) {
         openScopeOwner({
           kind: target.segment.ownerKind,

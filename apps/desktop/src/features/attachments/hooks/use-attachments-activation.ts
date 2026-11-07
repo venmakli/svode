@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { CollectionActivationContext } from "@/features/collection";
+import type { ScopeOpenItem } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -13,9 +14,14 @@ import type {
   AttachmentItem,
   AttachmentsSnapshot,
 } from "../model/types";
+import { useAttachmentsOpenFolder } from "./use-attachments-open-folder";
 import { useAttachmentsSource } from "./use-attachments-source";
 
-export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
+export function useAttachmentsActivation(
+  owner: AttachmentOwnerRef,
+  /** A folder the open request of the surface addresses, by its path. */
+  openItem?: ScopeOpenItem,
+) {
   const [peekTarget, setPeekTarget] =
     useState<AttachmentActivationRequest | null>(null);
   const reconcile = useCallback((snapshot: AttachmentsSnapshot) => {
@@ -52,6 +58,7 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
     },
     [source],
   );
+  useAttachmentsOpenFolder(openItem, source, setPeekTarget);
   const retargetPeek = useCallback((path: string) => {
     setPeekTarget((current) => {
       if (!current || current.item.path === path) return current;

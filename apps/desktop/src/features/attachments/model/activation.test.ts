@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { reconcileAttachmentPeek } from "./activation";
+import {
+  attachmentOpenFolderStep,
+  reconcileAttachmentPeek,
+} from "./activation";
+import type { AttachmentBranch } from "./source-session";
 import type {
   AttachmentActivationRequest,
   AttachmentItem,
@@ -78,9 +82,9 @@ const other = item("other.md", "page");
 test("a document or media peek outlives its file in the snapshot and takes the returned item", () => {
   for (const file of [html, pdf, image, video]) {
     const current = peek(file);
-    expect(
-      reconcileAttachmentPeek(current, snapshot([other], "missing")),
-    ).toBe(current);
+    expect(reconcileAttachmentPeek(current, snapshot([other], "missing"))).toBe(
+      current,
+    );
 
     const returned = { ...file, modified: "later", sizeBytes: 42 };
     expect(
@@ -117,4 +121,44 @@ test("another owner closes a document or media peek", () => {
       }),
     ).toBe(null);
   }
+});
+
+test("a request to open a folder reads its ancestors and opens only an ordinary folder", () => {
+  const reports = item("reports", "directory");
+  const q3 = item("reports/q3", "directory");
+  const tasks = item("tasks", "collection");
+  const root = snapshot([reports, tasks, item("brief.pdf", "document")], "one");
+  const none = new Map<string, AttachmentBranch>();
+  const branch = (loading: boolean, error: string | null = null) =>
+    new Map<string, AttachmentBranch>([
+      ["reports", { target: reports, loading, error, request: 1 }],
+    ]);
+
+  expect(attachmentOpenFolderStep(root, none, "reports")).toEqual({
+    kind: "open",
+    item: reports,
+  });
+  expect(attachmentOpenFolderStep(root, none, "reports/q3")).toEqual({
+    kind: "load",
+    branchPath: "reports",
+  });
+  expect(attachmentOpenFolderStep(root, branch(true), "reports/q3")).toEqual({
+    kind: "wait",
+  });
+  expect(
+    attachmentOpenFolderStep(
+      snapshot([...root.items, q3], "two"),
+      branch(false),
+      "reports/q3",
+    ),
+  ).toEqual({ kind: "open", item: q3 });
+  for (const missing of [
+    attachmentOpenFolderStep(root, branch(false), "reports/q3"),
+    attachmentOpenFolderStep(root, branch(false, "gone"), "reports/q3"),
+    attachmentOpenFolderStep(root, none, "gone"),
+    attachmentOpenFolderStep(root, none, "report"),
+    // Other kinds of items do not open on request.
+    attachmentOpenFolderStep(root, none, "tasks"),
+  ])
+    expect(missing).toEqual({ kind: "missing" });
 });

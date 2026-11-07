@@ -17,6 +17,7 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
+import type { ScopeOpenItem } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useAttachmentsActivation } from "../hooks/use-attachments-activation";
@@ -36,17 +37,22 @@ import {
   SourceRefreshDiagnostic,
 } from "./attachments-source-states";
 
+interface AttachmentsSurfaceProps {
+  owner: AttachmentOwnerRef;
+  readOnly: boolean;
+  renderOwnerPeek: AttachmentOwnerPeekRenderer;
+  /** A folder the open request of the surface addresses. */
+  openItem?: ScopeOpenItem;
+}
+
 function AttachmentsOwnerSurface({
   owner,
   readOnly,
   renderOwnerPeek,
-}: {
-  owner: AttachmentOwnerRef;
-  readOnly: boolean;
-  renderOwnerPeek: AttachmentOwnerPeekRenderer;
-}) {
+  openItem,
+}: AttachmentsSurfaceProps) {
   const { source, onActivate, peekTarget, closePeek, retargetPeek } =
-    useAttachmentsActivation(owner);
+    useAttachmentsActivation(owner, openItem);
   const create = useAttachmentsCreate({
     owner,
     readOnly,
@@ -143,10 +149,6 @@ function AttachmentsEmpty() {
   );
 }
 
-export function AttachmentsSurface(props: {
-  owner: AttachmentOwnerRef;
-  readOnly: boolean;
-  renderOwnerPeek: AttachmentOwnerPeekRenderer;
-}) {
+export function AttachmentsSurface(props: AttachmentsSurfaceProps) {
   return <AttachmentsOwnerSurface key={props.owner.ownerKey} {...props} />;
 }
