@@ -67,6 +67,42 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
+/// A Space `spaces` on disk lists and the runtime does not serve yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddedSpace {
+    pub id: String,
+    pub folder: String,
+    pub status: SpaceStatus,
+}
+
+/// A served Space whose status on disk changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedSpace {
+    pub id: String,
+    pub folder: String,
+    pub old: SpaceStatus,
+    pub new: SpaceStatus,
+}
+
+/// The difference between `spaces` on disk and the Spaces a runtime serves.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpacesChange {
+    pub added: Vec<AddedSpace>,
+    pub removed: Vec<String>,
+    pub changed: Vec<ChangedSpace>,
+}
+
+impl SpacesChange {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
+    }
+
+    /// A Space folder joined or left the project.
+    pub fn moves_folders(&self) -> bool {
+        !self.added.is_empty() || !self.removed.is_empty()
+    }
+}
+
 /// Desktop runtime state for index orchestration and LFS notifications.
 #[derive(Clone)]
 pub struct IndexState {
@@ -443,7 +479,7 @@ impl IndexState {
     /// Handle `space:added`. Refreshes the resolver cache, opens the pool,
     /// schedules a `full_reindex`. No-op if `status != Ready` (pool stays
     /// closed, status_by_id records the ghost state for resolver errors).
-    pub async fn on_space_added(
+    async fn on_space_added(
         &self,
         project: &Path,
         space_id: &str,
@@ -474,7 +510,7 @@ impl IndexState {
 
     /// Handle `space:removed`. Drops cache + pool. Idempotent: ghost-state
     /// removals never had a pool open.
-    pub async fn on_space_removed(&self, project: &Path, space_id: &str) {
+    async fn on_space_removed(&self, project: &Path, space_id: &str) {
         self.core.remove_space(project, space_id).await;
         self.invalidate_project_backlinks(project).await;
         let key = IndexKey::Space {
@@ -486,7 +522,7 @@ impl IndexState {
 
     /// Handle `space:status_changed`. ready ↔ missing/broken transitions
     /// open/close the pool to match.
-    pub async fn on_space_status_changed(
+    async fn on_space_status_changed(
         &self,
         project: &Path,
         space_id: &str,
@@ -523,44 +559,82 @@ impl IndexState {
         }
     }
 
-    /// Reconcile the resolver cache against a fresh on-disk `SpaceConfig`.
-    ///
-    /// Called after a root-project git pull (Stage 3.5 Phase 5 §5.4): a pull
-    /// may have introduced new inline spaces (or removed some); this opens
-    /// pools for newcomers and closes them for departures, without disturbing
-    /// the pools that survived. Existing pools whose status is unchanged are
-    /// untouched (no reindex storm).
-    pub async fn refresh_after_root_pull(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
+    /// How the `spaces` of `project` on disk differ from the Spaces this
+    /// runtime serves: added ones, departed ones and status changes. A
+    /// project this runtime does not serve has no change. An unreadable
+    /// config is an error and leaves the served Spaces as they are.
+    pub async fn spaces_change(&self, project: &Path) -> Result<SpacesChange, AppError> {
+        let known = {
+            let cache = self.core.spaces_cache.lock().await;
+            let Some(item) = cache.get(project) else {
+                return Ok(SpacesChange::default());
+            };
+            item.status_by_id.clone()
+        };
         let fresh = ProjectSpacesCache::from_project(project)?;
-
-        let known = self.core.status_by_id(project).await;
-
-        let mut tasks = Vec::new();
+        let mut change = SpacesChange::default();
         for (id, status) in &fresh.status_by_id {
             match known.get(id) {
-                None => {
-                    let folder = fresh.folder_by_id.get(id).cloned().unwrap_or_default();
-                    if let Some(key) = self.on_space_added(project, id, &folder, *status).await {
-                        tasks.push(key);
-                    }
-                }
-                Some(prev) if prev != status => {
-                    if let Some(key) = self.on_space_status_changed(project, id, *status).await {
-                        tasks.push(key);
-                    }
-                }
+                None => change.added.push(AddedSpace {
+                    id: id.clone(),
+                    folder: fresh.folder_by_id.get(id).cloned().unwrap_or_default(),
+                    status: *status,
+                }),
+                Some(old) if old != status => change.changed.push(ChangedSpace {
+                    id: id.clone(),
+                    folder: fresh.folder_by_id.get(id).cloned().unwrap_or_default(),
+                    old: *old,
+                    new: *status,
+                }),
                 _ => {}
             }
         }
+        change.removed = known
+            .keys()
+            .filter(|id| !fresh.status_by_id.contains_key(*id))
+            .cloned()
+            .collect();
+        change.added.sort_by(|a, b| a.id.cmp(&b.id));
+        change.changed.sort_by(|a, b| a.id.cmp(&b.id));
+        change.removed.sort();
+        Ok(change)
+    }
 
-        for id in known.keys() {
-            if !fresh.status_by_id.contains_key(id) {
-                self.on_space_removed(project, id).await;
+    /// Applies `change` to the resolver cache and the pools: opens the pools
+    /// of new ready Spaces, closes departed ones, follows status changes and
+    /// returns the pools to rebuild. When the set of Space folders changed,
+    /// the root rebuilds too, so the pages of a folder that became a Space
+    /// leave the root index and those of a departed Space return to it.
+    pub async fn apply_spaces_change(
+        &self,
+        project: &Path,
+        change: &SpacesChange,
+    ) -> Vec<IndexKey> {
+        let mut rebuild = Vec::new();
+        for id in &change.removed {
+            self.on_space_removed(project, id).await;
+        }
+        for space in &change.added {
+            if let Some(key) = self
+                .on_space_added(project, &space.id, &space.folder, space.status)
+                .await
+            {
+                rebuild.push(key);
             }
         }
+        for space in &change.changed {
+            if let Some(key) = self
+                .on_space_status_changed(project, &space.id, space.new)
+                .await
+            {
+                rebuild.push(key);
+            }
+        }
+        if change.moves_folders() {
+            rebuild.push(IndexKey::Root(project.to_path_buf()));
+        }
         self.invalidate_project_backlinks(project).await;
-
-        Ok(tasks)
+        rebuild
     }
 
     /// Snapshot every `IndexKey` belonging to this project — the root key

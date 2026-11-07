@@ -14,6 +14,33 @@ export function listenSpaceSynced(
   );
 }
 
+/** A Space of a project was added, removed or changed its status. */
+export interface ProjectSpacesChangedEventDto {
+  projectPath: string;
+  spaceId: string;
+}
+
+const PROJECT_SPACES_EVENTS = [
+  "space:added",
+  "space:removed",
+  "space:status_changed",
+] as const;
+
+export async function listenProjectSpacesChanged(
+  handler: (payload: ProjectSpacesChangedEventDto) => void,
+): Promise<UnlistenFn> {
+  const unlisten = await Promise.all(
+    PROJECT_SPACES_EVENTS.map((name) =>
+      listen<ProjectSpacesChangedEventDto>(name, (event) =>
+        handler(event.payload),
+      ),
+    ),
+  );
+  return () => {
+    for (const dispose of unlisten) dispose();
+  };
+}
+
 /** A path a content move left and where the same content is after it. */
 export interface ContentRelocationDto {
   from: string;

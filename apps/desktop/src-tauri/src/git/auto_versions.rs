@@ -8,10 +8,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use svode_core::git::GitError;
+use svode_core::git::autocommit::AutocommitService;
 use svode_core::git::versions::auto::{self, AutoVersions, Closing};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -254,11 +256,7 @@ async fn run(app: &AppHandle, repo: PathBuf, closing: Closing) {
 /// What versions of `repo` made by a closing or a turn did: a refused
 /// commit becomes the commit stop, a success ends it, and open groups plan
 /// their next check.
-pub(crate) fn settle(
-    app: &AppHandle,
-    repo: PathBuf,
-    result: Result<AutoVersions, svode_core::git::GitError>,
-) {
+pub(crate) fn settle(app: &AppHandle, repo: PathBuf, result: Result<AutoVersions, GitError>) {
     let (next, error) = match result {
         Ok(AutoVersions::Done { next, .. }) => (next, None),
         Ok(AutoVersions::Off | AutoVersions::Held(_)) => return,
@@ -290,13 +288,29 @@ pub(crate) fn settle(
     start(app, repo, wake);
 }
 
-#[cfg(test)]
-mod tests {
-    use std::process::Command;
-    use std::sync::Arc;
+/// The creation commits of the Spaces of `project` whose `SpaceRef` is not
+/// committed yet, where structural commits are on (Stage 11 05 «Коммиты
+/// создания»). A refusal keeps the Spaces and becomes the commit stop
+/// (1.E n. 3); a writer of another process holding the project defers them
+/// to the next closing of groups, pickup or opening.
+pub(crate) async fn commit_space_creations(app: &AppHandle, project: &Path) {
+    let autocommit = app.state::<Arc<AutocommitService>>();
+    match autocommit.commit_space_creations(project).await {
+        Ok(_) => {}
+        Err(GitError::SourceBusy { .. }) => {
+            tracing::info!("creation commit deferred while another writer holds the project");
+        }
+        Err(error) => {
+            tracing::warn!(kind = error.kind(), "creation commit refused");
+            settle(app, project.to_path_buf(), Err(error));
+        }
+    }
+}
 
-    use svode_core::git::GitError;
-    use svode_core::git::autocommit::AutocommitService;
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::process::Command;
+
     use svode_core::git::cli::GitCli;
     use svode_core::git::flow::{ParentPublication, SyncReport};
     use svode_core::git::host::{GitHost, HostFuture};
@@ -361,7 +375,7 @@ mod tests {
     }
 
     /// A host that allows every mutation and delivers nothing.
-    struct QuietHost;
+    pub(crate) struct QuietHost;
 
     impl GitHost for QuietHost {
         fn authorize_repository<'a>(&'a self, _: &'a Path) -> HostFuture<'a, Result<(), GitError>> {

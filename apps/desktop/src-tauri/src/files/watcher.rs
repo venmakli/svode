@@ -246,6 +246,7 @@ fn process_published_events(
     let mut any_assets_changed = false;
     let mut any_tree_changed = false;
     let mut visibility_policy_changed = false;
+    let mut spaces_config_changed = false;
     let mut membership_only_paths: HashMap<PathBuf, ContentTreeEventKind> = HashMap::new();
     let mut variable_owners = BTreeSet::new();
     let mut agent_context_paths = BTreeSet::new();
@@ -314,6 +315,8 @@ fn process_published_events(
             }
             visibility_policy_changed =
                 visibility_policy_changed || is_visibility_policy_path(space_root, path);
+            spaces_config_changed = spaces_config_changed
+                || relative_watched_path(space_root, path).as_deref() == Some(".svode/config.json");
             if let Some(kind) =
                 classify_membership_index_event(space_root, &policy, &skip_dirs, path, &event_kind)
                 && classify_content_tree_event(space_root, &policy, &skip_dirs, path, &event_kind)
@@ -470,11 +473,15 @@ fn process_published_events(
         }
     }
 
+    // The Spaces of an open project follow its root config; a Space folder
+    // that joined or left rebuilds the root index already.
+    let root_rebuilds = spaces_config_changed && pick_up_spaces(space_root, app);
+
     let nonces = app.state::<Arc<WriteNonceRegistry>>();
     let membership_requires_rebuild = membership_only_paths
         .values()
         .any(|kind| *kind == ContentTreeEventKind::Schema);
-    if visibility_policy_changed || membership_requires_rebuild {
+    if (visibility_policy_changed && !root_rebuilds) || membership_requires_rebuild {
         sync_index_for_visibility_change(space_root, app, visibility_policy_changed);
     } else {
         for (path, kind) in membership_only_paths {
@@ -850,6 +857,34 @@ fn sync_index_for_vanished_directory(
             );
             Vec::new()
         })
+    })
+}
+
+/// Follows a change of `spaces` in the root config of an open project made
+/// by another process or outside Svode (Stage 11 05 «Открытый Desktop
+/// следует `spaces` на диске»). The config of a child Space lists no Spaces.
+/// Returns whether a Space folder joined or left, which rebuilds the root
+/// index.
+fn pick_up_spaces(space_root: &Path, app: &AppHandle) -> bool {
+    tauri::async_runtime::block_on(async {
+        let Some(IndexKey::Root(project)) = app
+            .state::<IndexState>()
+            .key_for_space_dir(space_root)
+            .await
+        else {
+            return false;
+        };
+        match app
+            .state::<crate::project_runtime::ProjectRuntimeState>()
+            .pick_up_spaces(app, &project)
+            .await
+        {
+            Ok(change) => change.moves_folders(),
+            Err(error) => {
+                tracing::info!("spaces of {} not picked up: {error}", project.display());
+                false
+            }
+        }
     })
 }
 

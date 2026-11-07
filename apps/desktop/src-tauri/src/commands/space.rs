@@ -55,10 +55,6 @@ impl ProjectEntry {
     }
 }
 
-fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
-    project::space_ref_status(parent, sp_ref)
-}
-
 async fn import_existing_submodules_if_possible(
     git_state: &GitState,
     project_path: &Path,
@@ -111,44 +107,12 @@ async fn allow_automatic_repository_repairs(app: &AppHandle, repository: &Path) 
     )
 }
 
-fn emit_space_added(app: &AppHandle, project: &Path, info: &SpaceInfo, folder: &str) {
-    let _ = app.emit(
-        "space:added",
-        serde_json::json!({
-            "projectPath": system_path::user_facing_path(project),
-            "spaceId": info.id,
-            "spacePath": system_path::user_facing_path(&project.join(folder)),
-            "status": info.status,
-        }),
-    );
-}
-
-fn emit_space_removed(app: &AppHandle, project: &Path, space_id: &str) {
-    let _ = app.emit(
-        "space:removed",
-        serde_json::json!({
-            "projectPath": system_path::user_facing_path(project),
-            "spaceId": space_id,
-        }),
-    );
-}
-
-fn emit_space_status_changed(
-    app: &AppHandle,
-    project: &Path,
-    space_id: &str,
-    old: SpaceStatus,
-    new: SpaceStatus,
-) {
-    let _ = app.emit(
-        "space:status_changed",
-        serde_json::json!({
-            "projectPath": system_path::user_facing_path(project),
-            "spaceId": space_id,
-            "oldStatus": old,
-            "newStatus": new,
-        }),
-    );
+/// The window follows a change of `spaces` it made itself; the watcher
+/// observing the same change later finds nothing to do.
+async fn reconcile_spaces(app: &AppHandle, project_runtime: &ProjectRuntimeState, project: &Path) {
+    if let Err(error) = project_runtime.reconcile_spaces(app, project).await {
+        tracing::warn!("spaces reconciliation after a space operation failed: {error}");
+    }
 }
 
 fn refresh_recent_projects_menu(app: &AppHandle) {
@@ -736,7 +700,6 @@ pub async fn reorder_spaces(
 #[tauri::command]
 pub async fn create_space(
     app: AppHandle,
-    autocommit: State<'_, Arc<AutocommitService>>,
     project_runtime: State<'_, ProjectRuntimeState>,
     parent_path: String,
     name: String,
@@ -765,23 +728,11 @@ pub async fn create_space(
     };
     let info = project::ready_space_info(created.id, config, None, &created.path);
 
-    project_runtime
-        .on_space_added(&app, parent, &info.id, &created.folder, info.status)
-        .await;
-    emit_space_added(&app, parent, &info, &created.folder);
-
+    // The window follows its own creation at once; the watcher observing
+    // the same change later finds nothing to do (05 «Открытый Desktop»).
+    reconcile_spaces(&app, &project_runtime, parent).await;
     // The creation commit, where structural commits are on: only its paths.
-    // A refusal keeps the space and becomes the commit stop (1.E n. 3).
-    match autocommit.commit_space_creations(parent).await {
-        Ok(_) => {}
-        Err(svode_core::git::GitError::SourceBusy { .. }) => {
-            tracing::info!("creation commit deferred while another writer holds the project");
-        }
-        Err(error) => {
-            tracing::warn!(kind = error.kind(), "creation commit refused");
-            crate::git::auto_versions::settle(&app, parent.to_path_buf(), Err(error));
-        }
-    }
+    crate::git::auto_versions::commit_space_creations(&app, parent).await;
 
     Ok(info)
 }
@@ -847,10 +798,7 @@ pub async fn delete_space(
         }
     }
 
-    project_runtime
-        .on_space_removed(&app, parent, &space_id)
-        .await;
-    emit_space_removed(&app, parent, &space_id);
+    reconcile_spaces(&app, &project_runtime, parent).await;
 
     Ok(())
 }
@@ -911,10 +859,7 @@ pub async fn register_cloned_space(
         }
     }
 
-    project_runtime
-        .on_space_added(&app, path, &info.id, &folder_name, info.status)
-        .await;
-    emit_space_added(&app, path, &info, &folder_name);
+    reconcile_spaces(&app, &project_runtime, path).await;
 
     Ok(info)
 }
@@ -1191,7 +1136,6 @@ pub async fn clone_missing_space(
         .ok_or_else(|| AppError::SpaceNotFound(space_id.clone()))?
         .clone();
 
-    let old_status = detect_status_for_ref(&parent, &space_ref);
     let space_dir = parent.join(&space_ref.path);
 
     if let Some(url) = &space_ref.repo {
@@ -1255,10 +1199,7 @@ pub async fn clone_missing_space(
         }
     }
 
-    project_runtime
-        .on_space_status_changed(&app, &parent, &space_id, SpaceStatus::Ready)
-        .await;
-    emit_space_status_changed(&app, &parent, &space_id, old_status, SpaceStatus::Ready);
+    reconcile_spaces(&app, &project_runtime, &parent).await;
 
     // Spawn a background LFS probe — if the cloned space uses an LFS-flavoured
     // strategy, the frontend will see the right CTA without polling. We
@@ -1299,10 +1240,7 @@ pub async fn remove_missing_space(
     let parent = Path::new(&project_path);
     require_repository_mutation(&app, parent).await?;
     project::remove_missing_space(parent, &space_id)?;
-    project_runtime
-        .on_space_removed(&app, parent, &space_id)
-        .await;
-    emit_space_removed(&app, parent, &space_id);
+    reconcile_spaces(&app, &project_runtime, parent).await;
     Ok(())
 }
 

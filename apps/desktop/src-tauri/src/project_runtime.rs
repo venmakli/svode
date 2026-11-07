@@ -2,20 +2,28 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Semaphore;
 
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
-use crate::index::{IndexKey, IndexState};
+use crate::index::{IndexKey, IndexState, SpacesChange};
 use crate::project_sessions::ProjectSessions;
 use crate::routines::RoutineStoreState;
 use crate::space::types::SpaceStatus;
+use svode_core::system_path;
 
 #[derive(Default)]
 pub struct ProjectRuntimeState {
     index_tasks: Mutex<HashMap<IndexKey, tauri::async_runtime::JoinHandle<()>>>,
+    /// One reconciliation of `spaces` at a time, so a change observed twice
+    /// applies once.
+    spaces: tokio::sync::Mutex<()>,
 }
+
+#[cfg(test)]
+#[path = "project_runtime_spaces_tests.rs"]
+mod spaces_tests;
 
 #[cfg(test)]
 mod tests {
@@ -105,6 +113,9 @@ impl ProjectRuntimeState {
         }
         let keys = prepared?;
         self.spawn_reconciliation(app, keys);
+        // A Space created while the project was closed gets its creation
+        // commit now (05 «Коммиты создания» n. 2).
+        spawn_space_creation_commits(app, &project_path);
         Ok(())
     }
 
@@ -117,96 +128,44 @@ impl ProjectRuntimeState {
         app.state::<ProjectSessions>().close(project_path).await;
     }
 
-    pub async fn on_space_added(
+    /// Brings the runtime of an open project in line with `spaces` in its
+    /// root config on disk (Stage 11 05 «Открытый Desktop следует `spaces`
+    /// на диске»): the pools of the index and Routines, the local Git policy
+    /// of ready Space repositories and the Space lists of the window. The
+    /// same reconciliation follows the window's own Space operations, a root
+    /// pull and a change by another process, so a change applies once: a
+    /// second observation of it finds nothing to do. An unreadable config is
+    /// an error and leaves the served Spaces as they are.
+    pub async fn reconcile_spaces(
         &self,
         app: &AppHandle,
         project: &Path,
-        space_id: &str,
-        folder_name: &str,
-        status: SpaceStatus,
-    ) {
-        if matches!(status, SpaceStatus::Ready) {
-            crate::git::delivery::repair_scope_best_effort(
-                app,
-                project,
-                &project.join(folder_name),
-            )
-            .await;
-        }
+    ) -> Result<SpacesChange, AppError> {
+        let _spaces = self.spaces.lock().await;
         let index_state = app.state::<IndexState>();
-        let prepared = index_state
-            .on_space_added(project, space_id, folder_name, status)
-            .await;
-        if matches!(status, SpaceStatus::Ready) {
-            let key = IndexKey::Space {
-                project: project.to_path_buf(),
-                space_id: space_id.to_string(),
-            };
-            if let Ok(dir) = index_state.dir_for_key(&key).await
-                && let Err(error) = app
-                    .state::<Arc<RoutineStoreState>>()
-                    .get_or_create(&key, &dir)
-                    .await
-            {
-                tracing::warn!(?key, "open routines pool for added space failed: {error}");
-            }
+        let change = index_state.spaces_change(project).await?;
+        if change.is_empty() {
+            return Ok(change);
         }
-        if let Some(key) = prepared {
-            self.spawn_full_reindex(app, key);
-        }
-    }
-
-    pub async fn on_space_removed(&self, app: &AppHandle, project: &Path, space_id: &str) {
-        let key = IndexKey::Space {
-            project: project.to_path_buf(),
-            space_id: space_id.to_string(),
-        };
-        self.stop_index_task(&key);
-        app.state::<Arc<RoutineStoreState>>().close_key(&key).await;
-        app.state::<IndexState>()
-            .on_space_removed(project, space_id)
-            .await;
-    }
-
-    pub async fn on_space_status_changed(
-        &self,
-        app: &AppHandle,
-        project: &Path,
-        space_id: &str,
-        status: SpaceStatus,
-    ) {
-        let key = IndexKey::Space {
-            project: project.to_path_buf(),
-            space_id: space_id.to_string(),
-        };
-        if matches!(status, SpaceStatus::Missing | SpaceStatus::Broken) {
-            self.stop_index_task(&key);
-        }
-        if matches!(status, SpaceStatus::Ready) {
-            let dir = app
-                .state::<IndexState>()
-                .dir_for_key(&key)
-                .await
-                .unwrap_or_else(|_| project.to_path_buf());
+        for dir in change_ready_dirs(project, &change) {
             crate::git::delivery::repair_scope_best_effort(app, project, &dir).await;
         }
-        let index_state = app.state::<IndexState>();
-        let prepared = index_state
-            .on_space_status_changed(project, space_id, status)
-            .await;
-        let routine_stores = app.state::<Arc<RoutineStoreState>>();
-        match status {
-            SpaceStatus::Ready => {
-                if let Ok(dir) = index_state.dir_for_key(&key).await
-                    && let Err(error) = routine_stores.get_or_create(&key, &dir).await
-                {
-                    tracing::warn!(
-                        ?key,
-                        "open routines pool after status change failed: {error}"
-                    );
-                }
-            }
-            SpaceStatus::Missing | SpaceStatus::Broken => {
+        for key in change_departed_keys(project, &change) {
+            self.stop_index_task(&key);
+        }
+        let rebuild = apply_spaces_change(
+            &index_state,
+            &app.state::<Arc<RoutineStoreState>>(),
+            project,
+            &change,
+        )
+        .await;
+        for space in &change.changed {
+            if matches!(space.new, SpaceStatus::Missing | SpaceStatus::Broken) {
+                let key = IndexKey::Space {
+                    project: project.to_path_buf(),
+                    space_id: space.id.clone(),
+                };
                 index_state
                     .set_lfs_state_with(
                         app,
@@ -214,12 +173,30 @@ impl ProjectRuntimeState {
                         svode_core::storage::lfs::LfsState::NotApplicable,
                     )
                     .await;
-                routine_stores.close_key(&key).await;
             }
         }
-        if let Some(key) = prepared {
+        for key in rebuild {
             self.spawn_full_reindex(app, key);
         }
+        for (event, payload) in space_events(project, &change) {
+            let _ = app.emit(event, payload);
+        }
+        Ok(change)
+    }
+
+    /// Picks up a change of `spaces` the window did not make itself: another
+    /// process, a change outside Svode or a pull. A Space it added gets its
+    /// creation commit (05 «Коммиты создания» n. 2).
+    pub async fn pick_up_spaces(
+        &self,
+        app: &AppHandle,
+        project: &Path,
+    ) -> Result<SpacesChange, AppError> {
+        let change = self.reconcile_spaces(app, project).await?;
+        if !change.added.is_empty() {
+            spawn_space_creation_commits(app, project);
+        }
+        Ok(change)
     }
 
     pub async fn refresh_after_root_pull(
@@ -229,17 +206,7 @@ impl ProjectRuntimeState {
     ) -> Result<(), AppError> {
         self.stop_project_index_tasks(project);
         crate::git::delivery::repair_project(app, project).await;
-        let tasks = app
-            .state::<IndexState>()
-            .refresh_after_root_pull(project)
-            .await?;
-        app.state::<Arc<RoutineStoreState>>()
-            .reconcile_project(&app.state::<IndexState>(), project)
-            .await?;
-        for key in tasks {
-            self.spawn_full_reindex(app, key);
-        }
-        Ok(())
+        self.pick_up_spaces(app, project).await.map(|_| ())
     }
 
     fn spawn_reconciliation(&self, app: &AppHandle, keys: Vec<IndexKey>) {
@@ -314,4 +281,100 @@ impl ProjectRuntimeState {
             }
         }
     }
+}
+
+/// The index and Routine pools of `project` follow `change`; returns the
+/// pools to rebuild.
+async fn apply_spaces_change(
+    index_state: &IndexState,
+    routine_stores: &RoutineStoreState,
+    project: &Path,
+    change: &SpacesChange,
+) -> Vec<IndexKey> {
+    let rebuild = index_state.apply_spaces_change(project, change).await;
+    if let Err(error) = routine_stores.reconcile_project(index_state, project).await {
+        tracing::warn!("routine pools did not follow the spaces of the project: {error}");
+    }
+    rebuild
+}
+
+fn spawn_space_creation_commits(app: &AppHandle, project: &Path) {
+    let app = app.clone();
+    let project = project.to_path_buf();
+    tauri::async_runtime::spawn(async move {
+        crate::git::auto_versions::commit_space_creations(&app, &project).await;
+    });
+}
+
+/// Directories of the Spaces `change` makes ready.
+fn change_ready_dirs(project: &Path, change: &SpacesChange) -> Vec<PathBuf> {
+    let added = change
+        .added
+        .iter()
+        .filter(|space| space.status == SpaceStatus::Ready)
+        .map(|space| &space.folder);
+    let ready = change
+        .changed
+        .iter()
+        .filter(|space| space.new == SpaceStatus::Ready)
+        .map(|space| &space.folder);
+    added
+        .chain(ready)
+        .map(|folder| project.join(folder))
+        .collect()
+}
+
+/// Pools whose background tasks stop: departed Spaces and Spaces that are
+/// no longer ready.
+fn change_departed_keys(project: &Path, change: &SpacesChange) -> Vec<IndexKey> {
+    let departed = change.removed.iter().cloned();
+    let unready = change
+        .changed
+        .iter()
+        .filter(|space| space.new != SpaceStatus::Ready)
+        .map(|space| space.id.clone());
+    departed
+        .chain(unready)
+        .map(|space_id| IndexKey::Space {
+            project: project.to_path_buf(),
+            space_id,
+        })
+        .collect()
+}
+
+/// The window events of `change`; the Space lists of the window follow them.
+fn space_events(project: &Path, change: &SpacesChange) -> Vec<(&'static str, serde_json::Value)> {
+    let project_path = system_path::user_facing_path(project);
+    let added = change.added.iter().map(|space| {
+        (
+            "space:added",
+            serde_json::json!({
+                "projectPath": project_path,
+                "spaceId": space.id,
+                "spacePath": system_path::user_facing_path(&project.join(&space.folder)),
+                "status": space.status,
+            }),
+        )
+    });
+    let removed = change.removed.iter().map(|space_id| {
+        (
+            "space:removed",
+            serde_json::json!({
+                "projectPath": project_path,
+                "spaceId": space_id,
+            }),
+        )
+    });
+    let changed = change.changed.iter().map(|space| {
+        (
+            "space:status_changed",
+            serde_json::json!({
+                "projectPath": project_path,
+                "spaceId": space.id,
+                "oldStatus": space.old,
+                "newStatus": space.new,
+            }),
+        )
+    });
+    removed.chain(added).chain(changed).collect()
 }

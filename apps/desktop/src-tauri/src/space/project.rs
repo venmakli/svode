@@ -100,18 +100,6 @@ pub fn open_project_folder(config_dir: &Path, path: &Path) -> Result<Registered,
     register_project(config_dir, path, &fallback_name, "", "")
 }
 
-pub fn space_ref_status(parent_path: &Path, space_ref: &SpaceRef) -> SpaceStatus {
-    match svode_core::page::space_reference_status(
-        parent_path,
-        &space_ref.path,
-        space_ref.repo.as_deref(),
-    ) {
-        svode_core::page::SpaceReadiness::Ready => SpaceStatus::Ready,
-        svode_core::page::SpaceReadiness::Missing => SpaceStatus::Missing,
-        svode_core::page::SpaceReadiness::Broken => SpaceStatus::Broken,
-    }
-}
-
 /// Return the Collection capability signal for a directory-backed Space.
 ///
 /// Capability depends only on a direct child `schema.yaml` file. Schema
@@ -311,10 +299,10 @@ mod tests {
     use super::{
         create_project, delete_space, has_schema_capability, import_existing_submodule_spaces,
         list_spaces, open_project_folder, read_registered_config, reconcile_space_url,
-        remove_missing_space, space_ref_status,
+        remove_missing_space,
     };
     use crate::space::registry;
-    use crate::space::types::{SpaceRef, SpaceStatus, Unreadable};
+    use crate::space::types::{SpaceStatus, Unreadable};
     use std::path::Path;
     use svode_core::git::ops::SubmoduleConfig;
     use svode_core::project::scaffold::{self, Storage};
@@ -706,17 +694,9 @@ mod tests {
         )
         .expect("gitmodules");
 
-        let status = space_ref_status(
-            project_path,
-            &SpaceRef {
-                id: "foo-id".to_string(),
-                path: "foo".to_string(),
-                repo: None,
-                extensions: Default::default(),
-            },
-        );
+        let status = svode_core::page::space_reference_status(project_path, "foo", None);
 
-        assert_eq!(status, SpaceStatus::Broken);
+        assert_eq!(status, svode_core::page::SpaceReadiness::Broken);
     }
 
     #[test]

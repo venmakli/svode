@@ -142,7 +142,6 @@ fn ancestor_svode_project_root(cwd: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::project;
     use std::fs;
 
     fn write_project(project: &Path, children: &[(&str, &str, Option<&str>)]) {
@@ -217,14 +216,15 @@ mod tests {
 
         let config = space_config::read_space_config(&project).unwrap();
         let spaces = config.spaces.unwrap();
-        assert_eq!(
-            project::space_ref_status(&project, &spaces[0]),
-            crate::space::types::SpaceStatus::Missing
-        );
-        assert_eq!(
-            project::space_ref_status(&project, &spaces[1]),
-            crate::space::types::SpaceStatus::Broken
-        );
+        let status = |index: usize| {
+            svode_core::page::space_reference_status(
+                &project,
+                &spaces[index].path,
+                spaces[index].repo.as_deref(),
+            )
+        };
+        assert_eq!(status(0), svode_core::page::SpaceReadiness::Missing);
+        assert_eq!(status(1), svode_core::page::SpaceReadiness::Broken);
 
         let unrelated = unrelated.canonicalize().unwrap();
         let context = context_for_project_cwd(&project, Some(&unrelated)).unwrap();

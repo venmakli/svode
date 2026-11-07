@@ -324,7 +324,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       folderName,
       gitType,
     });
-    set((s) => ({ spaces: [...s.spaces, ws] }));
+    // The list may hold it already: the window follows its own creation.
+    set((s) => ({ spaces: upsertSpaceSnapshot(s.spaces, ws) }));
     await get().openSpace(ws.id);
     return ws;
   },

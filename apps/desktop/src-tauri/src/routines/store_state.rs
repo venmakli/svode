@@ -41,10 +41,6 @@ impl RoutineStoreState {
         self.get_or_create(key, &space_dir).await
     }
 
-    pub async fn close_key(&self, key: &IndexKey) {
-        self.core.close_key(key).await;
-    }
-
     pub async fn close_project(&self, project: &Path) {
         self.core.close_project(project).await;
     }

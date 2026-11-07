@@ -7,7 +7,9 @@ import {
 } from "@/platform/space/space-api";
 import {
   listenContentRelocation,
+  listenProjectSpacesChanged,
   type ContentRelocationEventDto,
+  type ProjectSpacesChangedEventDto,
 } from "@/platform/space/space-events-api";
 import type {
   SpaceDirtyEvent,
@@ -53,4 +55,10 @@ export function listenAgentContentRelocation(
   handler: (event: ContentRelocationEventDto) => void,
 ): Promise<() => void> {
   return listenContentRelocation(handler);
+}
+
+export function listenProjectSpaceChanges(
+  handler: (event: ProjectSpacesChangedEventDto) => void,
+): Promise<() => void> {
+  return listenProjectSpacesChanged(handler);
 }
