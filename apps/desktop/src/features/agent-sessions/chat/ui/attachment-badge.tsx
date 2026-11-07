@@ -22,18 +22,24 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 /**
- * An attachment in the composer or a user message: icon and name. Hover
- * previews it, a click opens it; a file that is gone is marked and opens
- * nothing.
+ * An attachment in the composer or a user message, or an object agent text
+ * names: icon and name. Hover previews it, a click opens it; a file that
+ * is gone is marked and opens nothing.
  */
 export function AttachmentBadge({
   attachment,
   variant = "secondary",
   className,
+  onOpen,
 }: {
   attachment: Attachment;
   variant?: "secondary" | "outline";
   className?: string;
+  /**
+   * How the owner of the text opens it; without it the app shell opens it
+   * by the badge rule.
+   */
+  onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const available = useAttachmentAvailable(attachment.path);
@@ -71,7 +77,9 @@ export function AttachmentBadge({
                 : attachment.name
             }
             onClick={() => {
-              if (available !== false) openAttachment?.(attachment);
+              if (available === false) return;
+              if (onOpen) onOpen();
+              else openAttachment?.(attachment);
             }}
           >
             <Icon data-icon="inline-start" />

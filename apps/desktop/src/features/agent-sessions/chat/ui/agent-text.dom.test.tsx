@@ -34,6 +34,10 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
 
   const files = new Set([
     "/work/project/notes.md",
+    "/work/project/reports/dashboard.html",
+    "/work/project/reports/a-very-long-name-of-a-generated-report-page.html",
+    "/work/project/img/chart.png",
+    "/abs/a.html",
     "/work/project/src/main.rs",
     "/Users/me/todo.txt",
     "C:\\work\\project\\notes.md",
@@ -61,6 +65,11 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
       if (files.has(payload.path!)) return { kind: "file", readable };
       if (folders.has(payload.path!)) return { kind: "directory", readable };
       return null;
+    }
+    if (command === "path_exists") {
+      // A folder badge names its directory with the separator.
+      const path = payload.path!.replace(/(?<=.)[\\/]+$/, "");
+      return files.has(path) || folders.has(path);
     }
     if (command === "plugin:path|resolve_directory") return "/Users/me";
     if (command === "plugin:shell|open") {
@@ -104,6 +113,39 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     return withAttribute("data-markdown-reader-link", target);
   }
 
+  /** Badges of objects, by their accessible names. */
+  function badgeNames(): string[] {
+    return Array.from(
+      doc.querySelectorAll<HTMLElement>('[data-slot="hover-card-trigger"]'),
+    ).map((badge) => badge.getAttribute("aria-label") ?? "");
+  }
+
+  function badge(name: string): HTMLElement {
+    return withAttribute("aria-label", name)!;
+  }
+
+  function iconOf(element: HTMLElement): string {
+    return (
+      Array.from(element.querySelector("svg")?.classList ?? []).find(
+        (name) => name.startsWith("lucide-"),
+      ) ?? ""
+    );
+  }
+
+  /** The hover card of a badge, opened by the pointer after its delay. */
+  async function hoverCard(element: HTMLElement): Promise<string> {
+    await act(async () => {
+      element.dispatchEvent(
+        new dom.window.MouseEvent("pointerover", { bubbles: true }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await settle();
+    return (
+      doc.querySelector('[data-slot="hover-card-content"]')?.textContent ?? ""
+    );
+  }
+
   /** By the value as is: a Windows path holds what CSS reads as escapes. */
   function withAttribute(name: string, value: string): HTMLElement | null {
     return (
@@ -138,7 +180,7 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
       [
         "[notes](notes.md) [main](src/main.rs:42) [lines](./src/main.rs#L10-L20)",
         "[uri](file:///work/project/notes.md) [home](~/todo.txt)",
-        "[docs](docs/) [downloads](~/Downloads)",
+        "[the docs](docs/) [downloads](~/Downloads)",
       ].join("\n"),
     );
     try {
@@ -229,19 +271,13 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     }
   });
 
-  test("a path in inline code opens only when it names an existing object, and looks like code", async () => {
+  test("a path in inline code is a badge only when it names an existing object, else code", async () => {
     checked.length = 0;
     const root = await render(
       "Edit `/work/project/notes.md`, then `~/Downloads`; not `/work/project/gone.md`, `src/main.rs` or `npm test`.",
     );
     try {
-      const codePaths = Array.from(
-        doc.querySelectorAll<HTMLElement>("[data-agent-text-code-path]"),
-      ).map((element) => element.getAttribute("data-agent-text-code-path"));
-      expect(codePaths).toEqual([
-        "/work/project/notes.md",
-        "/Users/me/Downloads",
-      ]);
+      expect(badgeNames()).toEqual(["notes.md", "Downloads"]);
       // Only absolute and `~` paths are checked.
       expect(checked.sort()).toEqual([
         "/Users/me/Downloads",
@@ -251,7 +287,11 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
       const codes = Array.from(
         doc.querySelectorAll<HTMLElement>('[data-streamdown="inline-code"]'),
       );
-      expect(codes.length).toBe(5);
+      expect(codes.map((code) => code.textContent)).toEqual([
+        "/work/project/gone.md",
+        "src/main.rs",
+        "npm test",
+      ]);
       expect(
         codes.every(
           (code) =>
@@ -260,17 +300,9 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
         ),
       ).toBe(true);
 
-      const notes = doc.querySelector<HTMLElement>(
-        '[data-agent-text-code-path="/work/project/notes.md"]',
-      )!;
-      expect(notes.getAttribute("role")).toBe("link");
-      await click(notes);
+      await click(badge("notes.md"));
       expect(opened).toEqual(["/work/project/notes.md"]);
-      await click(
-        doc.querySelector<HTMLElement>(
-          '[data-agent-text-code-path="/Users/me/Downloads"]',
-        )!,
-      );
+      await click(badge("Downloads"));
       expect(shellOpened).toEqual(["/Users/me/Downloads"]);
     } finally {
       await act(async () => root.unmount());
@@ -298,9 +330,7 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
       expect(await hover(linkTo("C:\\work\\project\\src\\main.rs")!)).toBe(
         "C:\\work\\project\\src\\main.rs:42",
       );
-      await click(
-        withAttribute("data-agent-text-code-path", "C:\\Users\\me\\Downloads")!,
-      );
+      await click(badge("Downloads"));
       expect(shellOpened).toEqual(["C:\\Users\\me\\Downloads"]);
       expect(checked.sort()).toEqual([
         "C:\\Users\\me\\Downloads",
@@ -315,6 +345,95 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     }
   });
 
+  test("paths in inline code are badges of their objects, named without the path", async () => {
+    const root = await render(
+      [
+        "Created `/work/project/reports/dashboard.html`, `/work/project/notes.md`,",
+        "`/work/project/img/chart.png`, `/work/project/docs` and `/work/project/src/main.rs:42`.",
+      ].join(" "),
+    );
+    try {
+      expect(badgeNames()).toEqual([
+        "dashboard.html",
+        "notes.md",
+        "chart.png",
+        "docs",
+        "main.rs:42",
+      ]);
+      expect(badge("dashboard.html").tagName).toBe("BUTTON");
+      expect(iconOf(badge("dashboard.html"))).toBe("lucide-file");
+      expect(iconOf(badge("notes.md"))).toBe("lucide-file-text");
+      expect(iconOf(badge("chart.png"))).toBe("lucide-image");
+      expect(iconOf(badge("docs"))).toBe("lucide-folder");
+      const text = doc.getElementById("app")!.textContent ?? "";
+      expect(text.includes("/work/project")).toBe(false);
+      expect(doc.querySelector('[data-streamdown="inline-code"]')).toBeNull();
+
+      await click(badge("dashboard.html"));
+      await click(badge("main.rs:42"));
+      expect(opened).toEqual([
+        "/work/project/reports/dashboard.html",
+        "/work/project/src/main.rs",
+      ]);
+      await click(badge("docs"));
+      expect(shellOpened).toEqual(["/work/project/docs"]);
+      expect(opened.length).toBe(2);
+
+      const card = await hoverCard(badge("dashboard.html"));
+      expect(card.includes("/work/project/reports/dashboard.html")).toBe(true);
+      expect(card.includes(m.sessions_chat_attachment_file_type({ type: "HTML" }))).toBe(
+        true,
+      );
+    } finally {
+      await act(async () => root.unmount());
+      opened.length = 0;
+      shellOpened.length = 0;
+    }
+  });
+
+  test("a link that only names its object is its badge; a link with a name of its own stays a link", async () => {
+    const root = await render(
+      [
+        "[/abs/a.html](/abs/a.html) and [a.html](/abs/a.html), [`notes.md`](notes.md)",
+        "[Отчёт](notes.md), [gone.md](gone.md)",
+        "[a-very-long-name-of-a-generated-report-page.html is the report of this week](reports/a-very-long-name-of-a-generated-report-page.html)",
+        "[https://example.com/a/very/long/address/that/does/not/fit/on/one/line](https://example.com/a/very/long/address/that/does/not/fit/on/one/line)",
+      ].join("\n"),
+    );
+    try {
+      expect(badgeNames()).toEqual(["a.html", "a.html", "notes.md"]);
+      await click(badge("notes.md"));
+      expect(opened).toEqual(["/work/project/notes.md"]);
+
+      const report = linkTo("/work/project/notes.md")!;
+      expect(report.textContent).toBe("Отчёт");
+      // A missing target is its text with the reason, as before.
+      expect(
+        doc
+          .querySelector("[data-agent-text-missing-link]")
+          ?.getAttribute("data-agent-text-missing-link"),
+      ).toBe("/work/project/gone.md");
+
+      // Labelled links wrap as text: from the start of the line, a long
+      // word anywhere.
+      for (const link of [
+        linkTo(
+          "/work/project/reports/a-very-long-name-of-a-generated-report-page.html",
+        )!,
+        linkTo(
+          "https://example.com/a/very/long/address/that/does/not/fit/on/one/line",
+        )!,
+      ]) {
+        const classes = link.className.split(" ");
+        expect(classes.includes("text-start")).toBe(true);
+        expect(classes.includes("[overflow-wrap:anywhere]")).toBe(true);
+      }
+    } finally {
+      await act(async () => root.unmount());
+      opened.length = 0;
+    }
+  });
+
   test("a path on a network share is plain text that nothing looks at", async () => {
     checked.length = 0;
     const root = await render(
@@ -326,7 +445,7 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     );
     try {
       expect(doc.querySelector("[data-markdown-reader-link]")).toBeNull();
-      expect(doc.querySelector("[data-agent-text-code-path]")).toBeNull();
+      expect(doc.querySelector('[data-slot="hover-card-trigger"]')).toBeNull();
       expect(doc.querySelector("[data-agent-text-missing-link]")).toBeNull();
       expect(
         doc.querySelectorAll("[data-markdown-reader-blocked-link]").length,
@@ -357,6 +476,7 @@ function installDomGlobals(dom: JSDOM) {
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
     Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
     ResizeObserver: class {
       observe() {}
       unobserve() {}

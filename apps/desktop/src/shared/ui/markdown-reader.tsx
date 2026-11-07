@@ -65,8 +65,11 @@ export interface MarkdownReaderImage {
 }
 
 export interface MarkdownReaderPolicy {
-  /** A link as the policy shows it; nothing leaves its text. */
-  renderLink?(href: string, children: ReactNode): ReactNode;
+  /**
+   * A link as the policy shows it; nothing leaves its text. `label` is that
+   * text as plain text, without its markup.
+   */
+  renderLink?(href: string, children: ReactNode, label: string): ReactNode;
   /** Inline code as the policy shows it; nothing leaves the code as is. */
   renderInlineCode?(code: string, element: ReactNode): ReactNode;
   /**
@@ -80,7 +83,8 @@ export interface MarkdownReaderPolicy {
 
 /**
  * A link of the policy: it acts through `onOpen`, never by navigation.
- * Other props reach the button, as a tooltip trigger passes them.
+ * Other props reach the button, as a tooltip trigger passes them. A long
+ * label wraps as text: from the start of the line, a long word anywhere.
  */
 export function MarkdownReaderLink({
   children,
@@ -99,7 +103,7 @@ export function MarkdownReaderLink({
       role="link"
       {...props}
       className={cn(
-        "inline cursor-pointer border-0 bg-transparent p-0 text-primary underline underline-offset-4",
+        "inline cursor-pointer border-0 bg-transparent p-0 text-start text-primary underline underline-offset-4 [overflow-wrap:anywhere]",
         className,
       )}
       data-markdown-reader-link={target}
@@ -136,8 +140,10 @@ export function MarkdownReader({
   const colorScheme = useDocumentColorScheme();
   const components = useMemo<StreamdownProps["components"]>(
     () => ({
-      a: ({ children, href }) => {
-        const shown = href ? policy.renderLink?.(href, children) : null;
+      a: ({ node, children, href }) => {
+        const shown = href
+          ? policy.renderLink?.(href, children, textOf(node as HastNode))
+          : null;
         return (
           shown ?? <span data-markdown-reader-blocked-link>{children}</span>
         );
@@ -403,6 +409,12 @@ function imageRunOf(node: HastNode | undefined): MarkdownReaderImage[] | null {
     source: String(image.properties?.src ?? ""),
     alt: String(image.properties?.alt ?? ""),
   }));
+}
+
+function textOf(node: HastNode | undefined): string {
+  if (!node) return "";
+  if (node.type === "text") return node.value ?? "";
+  return (node.children ?? []).map(textOf).join("");
 }
 
 function isElement(node: HastNode, tagName: string): boolean {

@@ -1,7 +1,8 @@
-import { fileUriToPath } from "./attachments";
+import { fileName, fileUriToPath } from "./attachments";
 import {
   isDrivePath,
   isNetworkPath,
+  pathKey,
   withoutVerbatimPrefix,
 } from "@/shared/lib/local-paths";
 
@@ -123,6 +124,48 @@ export function inlineCodeReference(
   const reference = localReference(code, base, { relative: false });
   if (!reference || isRoot(reference.path)) return null;
   return reference;
+}
+
+/**
+ * The object a local link shows as a badge (DF-321 R1): its label names
+ * only its target — empty, the target in any form a link reads, or the
+ * name of the target, with or without a line suffix or backticks. Null
+ * when the label is a name of its own. The line is the target's, else the
+ * label's.
+ */
+export function labelledReference(
+  label: string,
+  href: string,
+  reference: LocalReference,
+  base: PathBase,
+): LocalReference | null {
+  const text = label.trim().replace(/^`+|`+$/g, "").trim();
+  if (!text || text === href.trim()) return reference;
+  const named = linkTarget(text, base);
+  if (
+    named?.kind === "local" &&
+    pathKey(named.reference.path) === pathKey(reference.path)
+  ) {
+    return withLine(reference, named.reference.line);
+  }
+  const split = splitLineSuffix(text);
+  if (split.path.replace(/[\\/]+$/, "") === fileName(reference.path)) {
+    return withLine(reference, split.line);
+  }
+  return null;
+}
+
+/** What a badge of the object is called: its name with the line suffix. */
+export function referenceName(reference: LocalReference): string {
+  const name = fileName(reference.path);
+  return reference.line ? `${name}${formatLineSuffix(reference.line)}` : name;
+}
+
+function withLine(
+  reference: LocalReference,
+  line: LineSuffix | null,
+): LocalReference {
+  return reference.line || !line ? reference : { ...reference, line };
 }
 
 /** `:42`, `:42:7`, `:10-20`, `#L10` and `#L10-L20` split off the path. */

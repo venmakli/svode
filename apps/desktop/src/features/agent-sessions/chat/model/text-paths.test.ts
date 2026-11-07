@@ -3,8 +3,10 @@ import {
   formatLineSuffix,
   inlineCodeReference,
   isAbsolute,
+  labelledReference,
   linkTarget,
   localReference,
+  referenceName,
   splitLineSuffix,
   type PathBase,
 } from "./text-paths";
@@ -210,4 +212,92 @@ test("a reference resolves relative paths only when asked", () => {
   expect(
     localReference("file:///abs/a.png", base, { relative: false })?.path,
   ).toBe("/abs/a.png");
+});
+
+/** The badge a local link shows, or null when its label is its own name. */
+function badgeOf(label: string, href: string, at: PathBase = base) {
+  const reference = localPath(href, at);
+  if (!reference) return null;
+  const named = labelledReference(label, href, reference, at);
+  return named && { path: named.path, name: referenceName(named) };
+}
+
+test("a link whose label only names its target is that object", () => {
+  const page = { path: "/work/project/reports/a.html", name: "a.html" };
+  // Empty, the same path in every form a link reads, the target's name.
+  expect(badgeOf("", "/work/project/reports/a.html")).toEqual(page);
+  for (const label of [
+    "/work/project/reports/a.html",
+    "reports/a.html",
+    "./reports/../reports/a.html",
+    "file:///work/project/reports/a.html",
+    "`/work/project/reports/a.html`",
+    "a.html",
+    "`a.html`",
+  ]) {
+    expect(badgeOf(label, "/work/project/reports/a.html")).toEqual(page);
+    expect(badgeOf(label, "reports/a.html")).toEqual(page);
+  }
+  expect(badgeOf("~/todo.txt", "/Users/me/todo.txt")).toEqual({
+    path: "/Users/me/todo.txt",
+    name: "todo.txt",
+  });
+  expect(badgeOf("docs/", "docs")).toEqual({
+    path: "/work/project/docs",
+    name: "docs",
+  });
+  // A relative label without a cwd still names its target by its name.
+  expect(
+    badgeOf("a.html", "/abs/a.html", { cwd: null, home: null }),
+  ).toEqual({ path: "/abs/a.html", name: "a.html" });
+});
+
+test("the badge of a link shows the line of its target, else of its label", () => {
+  const line = { path: "/work/project/src/app.rs", name: "app.rs:42" };
+  expect(badgeOf("src/app.rs:42", "src/app.rs:42")).toEqual(line);
+  expect(badgeOf("app.rs", "src/app.rs:42")).toEqual(line);
+  expect(badgeOf("app.rs:42", "src/app.rs")).toEqual(line);
+  expect(badgeOf("app.rs:7", "src/app.rs#L42")).toEqual(line);
+  expect(badgeOf("app.rs:10-20", "/work/project/src/app.rs")).toEqual({
+    path: "/work/project/src/app.rs",
+    name: "app.rs:10-20",
+  });
+});
+
+test("a link with a name of its own, another file's name or a web label stays a link", () => {
+  expect(badgeOf("Отчёт", "reports/weekly.md")).toBe(null);
+  expect(badgeOf("weekly", "reports/weekly.md")).toBe(null);
+  expect(badgeOf("monthly.md", "reports/weekly.md")).toBe(null);
+  expect(badgeOf("reports/monthly.md", "reports/weekly.md")).toBe(null);
+  expect(badgeOf("https://example.com/weekly.md", "reports/weekly.md")).toBe(
+    null,
+  );
+  expect(badgeOf("weekly.md report", "reports/weekly.md")).toBe(null);
+  // A network share is no local object: nothing to show.
+  expect(badgeOf("", "//server/share/a.md")).toBe(null);
+  expect(badgeOf("a.md", "file:////server/share/a.md")).toBe(null);
+});
+
+test("Windows paths name the same object whatever their case and separators", () => {
+  const windows: PathBase = { cwd: "C:\\work\\project", home: null };
+  expect(
+    badgeOf("c:/WORK/project/notes.md", "notes.md", windows),
+  ).toEqual({ path: "C:\\work\\project\\notes.md", name: "notes.md" });
+  expect(badgeOf("notes.md", "C:/work/project/notes.md", windows)).toEqual({
+    path: "C:\\work\\project\\notes.md",
+    name: "notes.md",
+  });
+});
+
+test("a badge is named by the object and its line suffix", () => {
+  expect(
+    referenceName({ path: "/abs/dir/app.rs", line: null }),
+  ).toBe("app.rs");
+  expect(
+    referenceName({
+      path: "/abs/dir/app.rs",
+      line: { line: 42, column: 7, endLine: null },
+    }),
+  ).toBe("app.rs:42:7");
+  expect(referenceName({ path: "C:\\work\\docs", line: null })).toBe("docs");
 });

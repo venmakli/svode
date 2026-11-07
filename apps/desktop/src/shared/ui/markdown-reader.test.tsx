@@ -56,6 +56,42 @@ test("Reader applies explicit link policy and blocks HTML and all automatic medi
   expect(markup.includes("javascript:alert")).toBe(false);
 });
 
+test("Reader gives the policy the label of a link as plain text", () => {
+  const labels: string[] = [];
+  renderToStaticMarkup(
+    <MarkdownReader
+      content={[
+        "[/abs/a.html](/abs/a.html) [`b.md`](b.md) [**Weekly** report](c.md)",
+        "[](d.md) [~/e.txt:3](~/e.txt)",
+      ].join("\n")}
+      policy={{
+        renderLink: (_href, _children, label) => {
+          labels.push(label);
+          return null;
+        },
+      }}
+    />,
+  );
+
+  expect(labels).toEqual([
+    "/abs/a.html",
+    "b.md",
+    "Weekly report",
+    "",
+    "~/e.txt:3",
+  ]);
+});
+
+test("A reader link wraps as text from the start of the line", () => {
+  const markup = renderToStaticMarkup(
+    <MarkdownReaderLink target="t" onOpen={() => undefined}>
+      label
+    </MarkdownReaderLink>,
+  );
+  expect(markup.includes("text-start")).toBe(true);
+  expect(markup.includes("[overflow-wrap:anywhere]")).toBe(true);
+});
+
 test("Reader gives the policy link URLs as written and inline code to wrap", () => {
   const hrefs: string[] = [];
   const codes: string[] = [];
