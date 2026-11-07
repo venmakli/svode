@@ -3,6 +3,7 @@ pub(crate) mod app_process;
 pub(crate) mod apps;
 pub(crate) mod collections;
 pub(crate) mod content;
+pub(crate) mod creation;
 pub(crate) mod import;
 pub(crate) mod pages;
 pub(crate) mod project;

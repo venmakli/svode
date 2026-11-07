@@ -238,6 +238,37 @@ impl ProjectSession {
             .map(|_| ())
     }
 
+    /// Records proof that `repository` is writable in the shared evidence
+    /// store, after a write of this process reached it.
+    pub async fn record_writable_evidence(&self, repository: &Path) -> Result<(), GitError> {
+        self.access
+            .record_writable_evidence(self.git().cli()?, repository, &access_store()?)
+            .await
+            .map(|_| ())
+    }
+
+    /// Drops the access evidence the session caches for `repository`, so
+    /// the next authorization reads the shared store again.
+    pub async fn invalidate_repository_access(&self, repository: &Path) -> Result<(), GitError> {
+        self.access
+            .invalidate(self.git().cli()?, repository)
+            .await
+            .map(|_| ())
+    }
+
+    /// Reads the Spaces of the bound Project again after this process
+    /// changed them, so the index resolves paths of a new Space to its own
+    /// pool and no longer to the root. An unbound session has nothing to
+    /// read.
+    pub async fn reload_spaces(&self) -> Result<(), PageSourceError> {
+        let Some(project) = self.project() else {
+            return Ok(());
+        };
+        let cache = ProjectSpacesCache::from_project(project)?;
+        self.index.replace_project_cache(project, cache).await;
+        Ok(())
+    }
+
     /// Closes every Routine store and index pool the session opened. The
     /// session stays bound; closing twice is harmless.
     pub async fn close(&self) {
@@ -334,6 +365,42 @@ mod tests {
             session.project(),
             Some(first.canonicalize().unwrap().as_path())
         );
+    }
+
+    #[tokio::test]
+    async fn reloading_spaces_resolves_a_new_space_to_its_own_pool() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        project(&root);
+        let session = ProjectSession::new();
+        session.reload_spaces().await.unwrap();
+        session.open_project(&root).await.unwrap();
+        let page = root.join("clients/plan.md");
+        let (before, _) = session.index().resolve(&root, &page).await.unwrap();
+        assert_eq!(before, IndexKey::Root(root.clone()));
+
+        fs::create_dir_all(root.join("clients/.svode")).unwrap();
+        fs::write(
+            root.join("clients/.svode/config.json"),
+            r#"{"name":"Clients"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".svode/config.json"),
+            r#"{"name":"Project","spaces":[{"id":"child","path":"child","repo":null},{"id":"clients","path":"clients","repo":null}]}"#,
+        )
+        .unwrap();
+        session.reload_spaces().await.unwrap();
+
+        let (after, relative) = session.index().resolve(&root, &page).await.unwrap();
+        assert_eq!(
+            after,
+            IndexKey::Space {
+                project: root.clone(),
+                space_id: "clients".to_string(),
+            }
+        );
+        assert_eq!(relative, "plan.md");
     }
 
     #[tokio::test]

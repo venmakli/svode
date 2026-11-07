@@ -15,6 +15,7 @@ use svode_core::actors::resolver::ActorCatalogState;
 use svode_core::apps::manifest::AppProcessRuntime;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::RepositoryAccessSnapshot;
+use svode_core::git::host::GitHost;
 use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
 use svode_core::index::freshness::IndexFreshness;
@@ -22,6 +23,7 @@ use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::project::space::SpaceCreated;
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineDispatchResult, RoutineLiveEvidence,
 };
@@ -315,6 +317,26 @@ pub trait ToolHost: Sync {
     /// published nor dispatched.
     fn app_process(&self) -> Option<&dyn AppProcessHost> {
         None
+    }
+
+    /// Git host of an operation that applies the shared Git policy itself,
+    /// such as creating a Space: it authorizes repositories from the access
+    /// evidence of the host and delivers the notifications the host has
+    /// consumers for. `None` means the host serves no such operation, so
+    /// `create_space` is neither published nor dispatched.
+    fn git_host(&self) -> Option<&dyn GitHost> {
+        None
+    }
+
+    /// A Space was created as a child of `project`: the host takes it into
+    /// the runtime that serves the Project. The result of the creation does
+    /// not depend on it.
+    fn space_created(
+        &self,
+        _project: &Path,
+        _created: &SpaceCreated,
+    ) -> impl Future<Output = ()> + Send {
+        async {}
     }
 
     /// A content move of `space` starts: the host holds what shows content of

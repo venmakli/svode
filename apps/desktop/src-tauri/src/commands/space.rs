@@ -715,14 +715,22 @@ pub async fn create_space(
         ..SpaceConfig::named(&created.name)
     };
     let info = project::ready_space_info(created.id, config, None, &created.path);
-
-    // The window follows its own creation at once; the watcher observing
-    // the same change later finds nothing to do (05 «Открытый Desktop»).
-    reconcile_spaces(&app, &project_runtime, parent).await;
-    // The creation commit, where structural commits are on: only its paths.
-    crate::git::auto_versions::commit_space_creations(&app, parent).await;
-
+    space_created(&app, &project_runtime, parent).await;
     Ok(info)
+}
+
+/// What Desktop does after a Space was created in its process, from the
+/// dialog or through the MCP bridge alike: the window follows the creation
+/// at once, and the watcher observing the same change later finds nothing
+/// to do (05 «Открытый Desktop»); then the creation commit, where
+/// structural commits are on, with only its paths.
+pub(crate) async fn space_created(
+    app: &AppHandle,
+    project_runtime: &ProjectRuntimeState,
+    project: &Path,
+) {
+    reconcile_spaces(app, project_runtime, project).await;
+    crate::git::auto_versions::commit_space_creations(app, project).await;
 }
 
 #[tauri::command]

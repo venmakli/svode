@@ -81,7 +81,7 @@ pub enum Noun {
     },
     /// Spaces of the Project.
     #[command(
-        after_help = "Examples:\n  svode --project ~/Notes space list\n  svode --project ~/Notes space readme read --space research"
+        after_help = "Examples:\n  svode --project ~/Notes space list\n  svode --project ~/Notes space readme read --space research\n  svode --project ~/Notes space create clients --name Clients --git-type independent"
     )]
     Space {
         #[command(subcommand)]
@@ -270,6 +270,50 @@ pub enum SpaceVerb {
     /// Set the complete order of the child Spaces of the Project.
     #[command(after_help = structural_help("svode --project ~/Notes space reorder --id research --id archive"))]
     Reorder(SpaceReorderArgs),
+    /// Create a child Space of the Project with the defaults of the desktop
+    /// app.
+    #[command(after_help = SPACE_CREATE)]
+    Create(SpaceCreateArgs),
+}
+
+const SPACE_CREATE: &str = "The Space is always a child of the root Project (--space is not used) and gets the scaffold, Git effects and storage defaults of a Space created in the desktop app. --git-type inline (default) is a folder in the Project repository; independent is its own repository, for example for personal or client data; submodule is its own repository registered as a submodule of the Project. The folder must not exist: a taken folder fails with FILE_ALREADY_EXISTS, a folder that is not one segment of ASCII letters, digits, '-' and '_' with INVALID_PATH, independent or submodule without Git with GIT_NOT_FOUND. Every affected repository is authorized before the first write, and a failure removes what the command created. The command does not commit or sync: the result names per repository who commits the creation, the desktop app by the structural commit setting of the user or a manual commit. Remote, storage and commit settings are changed in Svode Desktop → Settings → Git / Storage.\n\nExamples:\n  svode --project ~/Notes space create clients --name Clients --git-type independent --json\n  svode space create research --name Research --icon 🔬";
+
+#[derive(Debug, Args)]
+pub struct SpaceCreateArgs {
+    /// New folder in the Project root: one segment of ASCII letters,
+    /// digits, `-` and `_`.
+    #[arg(value_name = "FOLDER")]
+    pub folder: String,
+    /// Space name, also the title of its README.
+    #[arg(long)]
+    pub name: String,
+    /// Git type of the Space.
+    #[arg(long, value_enum, default_value_t = SpaceGitType::Inline)]
+    pub git_type: SpaceGitType,
+    #[arg(long)]
+    pub icon: Option<String>,
+    #[arg(long)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SpaceGitType {
+    /// A folder in the Project repository.
+    Inline,
+    /// Its own repository.
+    Independent,
+    /// Its own repository registered as a submodule of the Project.
+    Submodule,
+}
+
+impl SpaceGitType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Independent => "independent",
+            Self::Submodule => "submodule",
+        }
+    }
 }
 
 #[derive(Debug, Args)]

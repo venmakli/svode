@@ -15,10 +15,13 @@ use svode_core::git::GitError;
 use svode_core::index::IndexError;
 use svode_core::index::freshness::IndexUnavailable;
 use svode_core::page::{PageError, PageSourceError, TitledContent};
+use svode_core::project::ProjectError;
+use svode_core::project::registry::RegistryError;
 use svode_core::routines::RoutineStoreError;
 use svode_core::routines::local::LocalConfigError;
 use svode_core::routines::observation::ObservationError;
 use svode_core::routines::service::RoutineServiceError;
+use svode_core::space_config::SpaceConfigError;
 
 use crate::error::ToolError;
 
@@ -352,6 +355,91 @@ impl From<PageError> for ToolError {
     }
 }
 
+impl From<SpaceConfigError> for ToolError {
+    fn from(error: SpaceConfigError) -> Self {
+        match error {
+            error @ SpaceConfigError::Unreadable(_) => {
+                ToolError::new("INVALID_PROJECT_CONFIG", error.to_string())
+            }
+            SpaceConfigError::Missing(path) => {
+                ToolError::new("PROJECT_UNAVAILABLE", format!("File not found: {path}"))
+            }
+            SpaceConfigError::Io(error) => io(error),
+            SpaceConfigError::Serde(error) => serde(error),
+            SpaceConfigError::Storage(error) => general(format!("Storage: {error}")),
+            error @ SpaceConfigError::Exists => general(error.to_string()),
+        }
+    }
+}
+
+/// The project list of the device: another process holding it past the
+/// bounded wait is busy like a held source.
+impl From<RegistryError> for ToolError {
+    fn from(error: RegistryError) -> Self {
+        match error {
+            RegistryError::Busy(path) => source_refused(
+                "SOURCE_BUSY",
+                format!("The project list is busy in another Svode process: {path}"),
+                path,
+            ),
+            RegistryError::Io(error) => io(error),
+            RegistryError::Json(error) => serde(error),
+            error @ (RegistryError::NotRegistered | RegistryError::Ambiguous) => {
+                general(error.to_string())
+            }
+        }
+    }
+}
+
+/// A refused or failed creation of a Project or Space (Stage 11 05 «Ошибки
+/// и stable codes»). A rollback that left paths keeps the code of its cause
+/// and names the paths in `remaining`.
+impl From<ProjectError> for ToolError {
+    fn from(error: ProjectError) -> Self {
+        match error {
+            ProjectError::InvalidFolder(folder) => ToolError::new(
+                "INVALID_PATH",
+                format!(
+                    "The space folder must be one segment of ASCII letters, digits, '-' and '_': {folder}"
+                ),
+            ),
+            ProjectError::FileAlreadyExists(path) => file_already_exists(path),
+            ProjectError::PathNotAccessible(path) => path_not_accessible(path),
+            error @ ProjectError::ProjectAlreadyExists(_) => {
+                ToolError::new("PROJECT_ALREADY_EXISTS", error.to_string())
+            }
+            ProjectError::ProjectNested { path, project } => ToolError::new(
+                "PROJECT_NESTED",
+                format!("{path} is inside the Svode project {project}"),
+            )
+            .with_evidence("path", path.into())
+            .with_evidence("project", project.into())
+            .with_evidence(
+                "hint",
+                "Create a space in that project with create_space (CLI: svode space create) instead of a new project.".into(),
+            ),
+            ProjectError::Registry(error) => error.into(),
+            error @ ProjectError::NoProjectRepository => general(format!(
+                "{error}: create an inline or independent space, or initialize Git in the project first"
+            )),
+            error @ ProjectError::NameRequired => general(error.to_string()),
+            ProjectError::Config(error) => error.into(),
+            ProjectError::LocalConfig(error) => error.into(),
+            ProjectError::Git(error) => error.into(),
+            ProjectError::Io(error) => io(error),
+            ProjectError::RollbackIncomplete { cause, remaining } => {
+                let cause = ToolError::from(*cause);
+                let message = format!(
+                    "{}; the rollback left {}",
+                    cause.message,
+                    remaining.join(", ")
+                );
+                ToolError { message, ..cause }.with_evidence("remaining", remaining.into())
+            }
+        }
+    }
+}
+
 impl From<CollectionError> for ToolError {
     fn from(error: CollectionError) -> Self {
         match error {
@@ -451,10 +539,80 @@ mod tests {
                 .into(),
                 "GIT_CONFLICT",
             ),
+            (
+                ProjectError::InvalidFolder("Клиенты".into()).into(),
+                "INVALID_PATH",
+            ),
+            (
+                ProjectError::FileAlreadyExists("/p/clients".into()).into(),
+                "FILE_ALREADY_EXISTS",
+            ),
+            (
+                ProjectError::PathNotAccessible("/p".into()).into(),
+                "PATH_NOT_ACCESSIBLE",
+            ),
+            (
+                ProjectError::Git(GitError::GitNotFound).into(),
+                "GIT_NOT_FOUND",
+            ),
+            (
+                ProjectError::Git(GitError::SourceBusy {
+                    path: "/p/.svode/config.json".into(),
+                })
+                .into(),
+                "SOURCE_BUSY",
+            ),
+            (
+                ProjectError::Git(GitError::RepositoryAccessDenied {
+                    repository_id: "repo".into(),
+                    status: "read_only".into(),
+                    reason: "none".into(),
+                })
+                .into(),
+                "REPOSITORY_ACCESS_DENIED",
+            ),
+            (
+                ProjectError::Config(SpaceConfigError::Unreadable(
+                    svode_core::space_config::Unreadable::Conflict,
+                ))
+                .into(),
+                "INVALID_PROJECT_CONFIG",
+            ),
+            (
+                ProjectError::ProjectAlreadyExists("/p".into()).into(),
+                "PROJECT_ALREADY_EXISTS",
+            ),
+            (
+                ProjectError::Registry(RegistryError::Busy("/c/spaces.json".into())).into(),
+                "SOURCE_BUSY",
+            ),
+            (ProjectError::NoProjectRepository.into(), SVODE_ERROR),
+            (ProjectError::NameRequired.into(), SVODE_ERROR),
         ];
         for (error, code) in cases {
             assert_eq!(error.code, code, "{}", error.message);
         }
+    }
+
+    #[test]
+    fn a_nested_project_names_the_enclosing_project_and_the_next_step() {
+        let nested: ToolError = ProjectError::ProjectNested {
+            path: "/work/acme/docs".into(),
+            project: "/work/acme".into(),
+        }
+        .into();
+        assert_eq!(nested.code, "PROJECT_NESTED");
+        assert_eq!(nested.evidence["path"], "/work/acme/docs");
+        assert_eq!(nested.evidence["project"], "/work/acme");
+        assert!(
+            nested.evidence["hint"]
+                .as_str()
+                .unwrap()
+                .contains("create_space")
+        );
+        let busy: ToolError =
+            ProjectError::Registry(RegistryError::Busy("/c/spaces.json".into())).into();
+        assert_eq!(busy.evidence["path"], "/c/spaces.json");
     }
 
     #[test]

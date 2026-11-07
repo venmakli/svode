@@ -64,6 +64,11 @@ pub const CASES: &[Case] = &[
         &["space", "reorder", "--id", "wiki", "--id", "child"],
         &["reorder_spaces"],
     ),
+    case(
+        "space create",
+        &["space", "create", "clients", "--name", "Clients"],
+        &["create_space"],
+    ),
     case("page list", &["page", "list"], &["list_pages"]),
     case(
         "page read",

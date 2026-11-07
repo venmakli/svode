@@ -357,6 +357,30 @@ pub fn routine_change(value: &Value) -> String {
     out + &changes(value)
 }
 
+/// A created Space: its id, one line per repository with who commits the
+/// creation, where settings change, then each changed path.
+pub fn space_created(value: &Value) -> String {
+    let mut out = format!("spaceId {}\n", text(&value["space"]["id"]));
+    for repository in value["repositories"].as_array().into_iter().flatten() {
+        let commit = &repository["commit"];
+        let by = match commit["message"].as_str() {
+            Some(message) => format!("commit by desktop: {message}"),
+            None => format!("commit {}", text(&commit["by"])),
+        };
+        let created = if repository["created"] == true {
+            " (new)"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "repository {}{created}: {by}\n",
+            text(&repository["path"])
+        ));
+    }
+    out.push_str(&format!("settings {}\n", text(&value["settings"])));
+    out + &changes(value)
+}
+
 /// Changed paths of a mutation, one per line.
 pub fn changes(value: &Value) -> String {
     lines(

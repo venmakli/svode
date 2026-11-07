@@ -8,8 +8,8 @@ use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
 use crate::result::ToolCallResult;
 use crate::tools::{
-    agent_actors, app_process, apps, collections, content, import, pages, project, routines,
-    search, structure,
+    agent_actors, app_process, apps, collections, content, creation, import, pages, project,
+    routines, search, structure,
 };
 
 /// Whether the host serves a catalog tool: it declares the tool and has the
@@ -19,6 +19,7 @@ fn serves(host: &impl ToolHost, name: &str) -> bool {
         && match name {
             "run_routine" => host.routine_runner().is_some(),
             "get_app_status" | "control_app" => host.app_process().is_some(),
+            "create_space" => host.git_host().is_some(),
             _ => true,
         }
 }
@@ -248,6 +249,12 @@ async fn call(
         "reorder_content" => {
             let args = decode(args)?;
             structure::reorder_content(host, require(target)?, args).await
+        }
+        "create_space" => {
+            let args = decode(args)?;
+            // Boxed: the creation future is large, and inlined it would grow
+            // the future of every tool call.
+            Box::pin(creation::create_space(host, require(target)?, args)).await
         }
         "reorder_spaces" => {
             let args = decode(args)?;

@@ -531,6 +531,75 @@ async fn the_windows_own_creation_applies_once_and_commits_once() {
     assert_eq!(project.subjects(), ["Add inline space clients", "Base"]);
 }
 
+/// The Tauri-free part of a Space created through the MCP bridge: the
+/// shared `create_space` capability, then the same reconciliation and
+/// commit the dialog command runs (`commands::space::space_created`, which
+/// the bridge host calls for a project a window has open): the pool of the
+/// new Space opens, `space:added` names it, and the creation commit lands
+/// once with only its paths.
+#[tokio::test]
+async fn a_space_created_through_the_bridge_capability_is_followed_like_the_windows_own() {
+    let project = Project::new(structural()).await;
+    project.open().await;
+
+    let host = svode_tools::standalone::StandaloneHost::new("test");
+    let root = project.root.to_string_lossy().to_string();
+    let target = svode_tools::host::RequestTarget {
+        project_path: root.clone(),
+        default_space_id: None,
+        default_space_path: root,
+        routine_caller: None,
+    };
+    let result = svode_tools::dispatch::call_tool(
+        &host,
+        Some(&target),
+        "create_space",
+        serde_json::json!({ "name": "Clients", "folder": "clients" }),
+    )
+    .await;
+    assert!(!result.is_error, "{:?}", result.structured_content);
+    let structured = result.structured_content.unwrap();
+    let id = structured["space"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        structured["repositories"][0]["commit"],
+        serde_json::json!({ "by": "desktop", "message": "Add inline space clients" })
+    );
+    assert_eq!(
+        project.subjects(),
+        ["Base"],
+        "the capability commits nothing"
+    );
+
+    let (change, effects) = project.reconcile_own().await;
+    assert_eq!(change.added.len(), 1);
+    assert_eq!(effects.events(), [("space:added".to_string(), id.clone())]);
+    assert!(
+        project
+            .index
+            .core
+            .existing_pool(&project.key(&id))
+            .await
+            .is_some()
+    );
+    assert!(project.routine_keys().await.contains(&project.key(&id)));
+    assert_eq!(
+        project
+            .service()
+            .commit_space_creations(&project.root)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(project.subjects(), ["Add inline space clients", "Base"]);
+    let committed = project.committed("HEAD");
+    for path in [".svode/config.json", "clients/README.md"] {
+        assert!(committed.contains(&path.to_string()), "{committed:?}");
+    }
+    assert!(committed.iter().all(|path| path.starts_with("clients/")
+        || path == ".svode/config.json"
+        || path == ".gitignore"));
+}
+
 #[tokio::test]
 async fn a_picked_up_inline_space_gets_one_creation_commit_by_the_structural_flag() {
     for (policy, commits) in [(structural(), 1), (GitUserPolicy::default(), 0)] {

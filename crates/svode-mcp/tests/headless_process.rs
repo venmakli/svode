@@ -22,7 +22,7 @@ const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 56] = [
+const SERVED: [&str; 57] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
@@ -30,6 +30,7 @@ const SERVED: [&str; 56] = [
     "create_collection",
     "create_page",
     "create_routine",
+    "create_space",
     "delete_collection",
     "delete_collection_column",
     "delete_collection_item",
@@ -1052,6 +1053,76 @@ fn a_change_without_access_evidence_is_a_typed_refusal_with_the_next_step() {
 }
 
 #[test]
+fn a_space_created_in_a_session_is_the_shared_result_and_the_session_writes_into_it() {
+    let (fixture, same) = (fixture(), fixture());
+    if !fixture.git || !same.git {
+        return;
+    }
+    let project = &fixture.project;
+    let head_before = head(project);
+    let args = json!({ "name": "Clients", "folder": "clients", "gitType": "independent" });
+    let mut live = Live::start(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+    );
+    let created = live.ok("create_space", args.clone());
+    let id = created["space"]["id"].as_str().unwrap().to_string();
+
+    // The same capability in process on the same fixture: one result for
+    // `svode-mcp` and the `svode` CLI, which prints it under its envelope.
+    let mut shared = shared_result(&same.project, "create_space", args);
+    shared["space"]["id"] = json!(id);
+    assert_eq!(created, shared);
+    assert_eq!(
+        created["repositories"][0]["commit"],
+        json!({ "by": "manual", "reason": "structural_commits_off" })
+    );
+
+    // The session addresses the new Space at once: its Pages are its own.
+    let page = live.ok(
+        "create_page",
+        json!({ "spaceId": id, "parentPath": "", "title": "Kickoff", "content": "Quarterly kickoff agenda" }),
+    );
+    assert_eq!(page["path"], "Kickoff.md", "{page}");
+    assert!(project.join("clients/Kickoff.md").is_file());
+    let spaces = live.ok("list_spaces", json!({}));
+    assert!(
+        spaces["spaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|space| space["spaceId"] == id.as_str()),
+        "{spaces}"
+    );
+    let found = live.ok("search_pages", json!({ "spaceId": id, "query": "kickoff" }));
+    assert_eq!(found["items"].as_array().unwrap().len(), 1, "{found}");
+    let root = live.ok(
+        "search_pages",
+        json!({ "spaceId": "root", "query": "kickoff" }),
+    );
+    assert_eq!(root["items"], json!([]), "{root}");
+
+    let taken = live.call(
+        "create_space",
+        json!({ "name": "Again", "folder": "clients" }),
+    );
+    assert_eq!(business_code(&taken), "FILE_ALREADY_EXISTS", "{taken}");
+    live.finish();
+
+    assert_eq!(head(project), head_before, "no commit");
+    assert!(
+        !Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(project.join("clients"))
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "the new repository has no commit"
+    );
+}
+
+#[test]
 fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
     let fixture = fixture();
     if !fixture.git {
@@ -1868,6 +1939,12 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
         "reorder_spaces",
         json!({ "orderedSpaceIds": ["child"] }),
     );
+    let created = ok(
+        &mut live,
+        "create_space",
+        json!({ "name": "Clients", "folder": "clients" }),
+    );
+    assert_eq!(created["space"]["gitType"], "inline", "{created}");
 
     // Routine definitions, without execution.
     let tasks = json!({ "spaceId": "root", "collectionPath": "tasks" });

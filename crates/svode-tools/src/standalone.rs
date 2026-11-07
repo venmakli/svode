@@ -14,16 +14,23 @@
 //! operational store of their owner, opened on the first Routine operation;
 //! the process has no execution evidence and never runs a Routine.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sqlx::SqlitePool;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
-use svode_core::git::access::RepositoryAccessSnapshot;
+use svode_core::git::GitError;
+use svode_core::git::access::{RepositoryAccessSnapshot, local_repository_root};
+use svode_core::git::cli::GitCli;
+use svode_core::git::flow::{ParentPublication, SyncReport};
+use svode_core::git::host::{GitHost, HostFuture};
+use svode_core::git::operations::SharedError;
 use svode_core::index::IndexKey;
 use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::page::ResolvedSpaceTarget;
+use svode_core::project::space::SpaceCreated;
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineLiveEvidence};
 use svode_core::runtime::session::ProjectSession;
 
@@ -36,7 +43,7 @@ use crate::host::{
 /// Catalog tools a standalone process serves: every data and guidance
 /// capability. An explicit Routine launch and App process state and control
 /// need the Desktop execution owner and are never served.
-const SERVED_TOOLS: [&str; 56] = [
+const SERVED_TOOLS: [&str; 57] = [
     "get_svode_guide",
     "validate_app_manifest",
     "list_apps",
@@ -85,6 +92,7 @@ const SERVED_TOOLS: [&str; 56] = [
     "move_content",
     "reorder_content",
     "reorder_spaces",
+    "create_space",
     "convert_to_collection",
     "convert_page_to_leaf",
     "import_asset",
@@ -238,6 +246,121 @@ impl ToolHost for StandaloneHost {
 
     fn routine_runner(&self) -> Option<&dyn RoutineRunner> {
         None
+    }
+
+    fn git_host(&self) -> Option<&dyn GitHost> {
+        Some(self)
+    }
+
+    /// The session resolves paths of the new Space to its own index from
+    /// now on; nothing else in the process shows Spaces.
+    async fn space_created(&self, _project: &Path, _created: &SpaceCreated) {
+        if let Err(error) = self.session.reload_spaces().await {
+            tracing::warn!("the Spaces of the project could not be read again: {error}");
+        }
+    }
+}
+
+/// Git host of an operation that applies the shared Git policy itself in a
+/// standalone process: repositories are authorized from the access
+/// evidence the install shares, without a network probe. The process has
+/// no window or event consumers, never syncs and runs no background
+/// publication, so notifications have nobody to reach.
+impl GitHost for StandaloneHost {
+    fn authorize_repository<'a>(
+        &'a self,
+        repository: &'a Path,
+    ) -> HostFuture<'a, Result<(), GitError>> {
+        Box::pin(self.session.require_mutation(repository))
+    }
+
+    fn authorize_paths<'a>(&'a self, paths: Vec<PathBuf>) -> HostFuture<'a, Result<(), GitError>> {
+        Box::pin(async move {
+            let mut repositories = HashSet::new();
+            for path in paths {
+                let repository = local_repository_root(&path)?;
+                if repositories.insert(repository.clone()) {
+                    self.session.require_mutation(&repository).await?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    fn invalidate_repository_access<'a>(
+        &'a self,
+        _cli: &'a GitCli,
+        repository: &'a Path,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(async move {
+            if let Err(error) = self.session.invalidate_repository_access(repository).await {
+                tracing::warn!("repository access evidence not invalidated: {error}");
+            }
+        })
+    }
+
+    fn record_write_evidence<'a>(
+        &'a self,
+        _cli: &'a GitCli,
+        repository: &'a Path,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(async move {
+            if let Err(error) = self.session.record_writable_evidence(repository).await {
+                tracing::warn!("repository write evidence not recorded: {error}");
+            }
+        })
+    }
+
+    /// A pulled change reaches the index through the check every
+    /// index-backed read runs first; only the write evidence is recorded.
+    fn refresh_synced_repository<'a>(
+        &'a self,
+        cli: &'a GitCli,
+        repository: &'a Path,
+    ) -> HostFuture<'a, ()> {
+        self.record_write_evidence(cli, repository)
+    }
+
+    fn invalidate_actor_space<'a>(&'a self, space: &'a Path) -> HostFuture<'a, ()> {
+        Box::pin(async move {
+            let marked = match self.session.git().cli() {
+                Ok(cli) => match svode_core::actors::resolver::resolve_repository(cli, space).await
+                {
+                    Ok(repository) => self
+                        .session
+                        .actors()
+                        .mark_repository_dirty(&repository)
+                        .map(|_| ()),
+                    Err(error) => Err(error),
+                },
+                Err(error) => Err(error.into()),
+            };
+            if let Err(error) = marked {
+                tracing::warn!("actor catalog not invalidated: {error}");
+            }
+        })
+    }
+
+    fn publish_commit(&self, _space: &Path, _repository: &Path) {}
+
+    fn schedule_auto_sync(&self, _repository: &Path) {}
+
+    fn publish_sync_state(
+        &self,
+        _repository: &Path,
+        _active: bool,
+        _background: bool,
+        _report: Option<&SyncReport>,
+        _error: Option<&SharedError>,
+    ) {
+    }
+
+    fn publish_publication(
+        &self,
+        _repository: &Path,
+        _child_head: &str,
+        _parent: Option<&ParentPublication>,
+    ) {
     }
 }
 

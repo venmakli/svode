@@ -785,6 +785,35 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "create_space",
+            "Create a child Space of the root project, with the same scaffold, Git effects and storage defaults as Svode Desktop: inline is a folder in the project repository, independent a separate repository (for example for personal or client data), submodule a separate repository registered in the project history. It never creates a Space inside a child Space. The folder must not exist yet; a taken folder fails with FILE_ALREADY_EXISTS, a folder that is not one segment of ASCII letters, digits, '-' and '_' with INVALID_PATH, independent or submodule without Git with GIT_NOT_FOUND. Every affected repository is authorized before the first write, and a failure removes what the call created. Does not commit or sync: the result names per repository who commits the creation, Svode Desktop by the user's structural commit setting or a manual commit, and where remote, storage and commit settings change (Svode Desktop Settings). Returns the Space, repositories, storage and changedPaths relative to the project.",
+            schema(
+                &[
+                    (
+                        "name",
+                        json!({ "type": "string", "description": "Space name, also the title of its README." }),
+                    ),
+                    (
+                        "folder",
+                        json!({ "type": "string", "description": "New folder in the project root: one segment of ASCII letters, digits, '-' and '_'." }),
+                    ),
+                    (
+                        "gitType",
+                        json!({
+                            "type": "string",
+                            "enum": ["inline", "independent", "submodule"],
+                            "description": "inline (default): a folder in the project repository; independent: its own repository; submodule: its own repository registered as a submodule of the project."
+                        }),
+                    ),
+                    str_opt("icon"),
+                    str_opt("description"),
+                ],
+                &["name", "folder"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        ),
+        def(
             "convert_page_to_leaf",
             "Convert a supported directory-backed Page at README.md into a leaf Page through Svode's managed structural backend. This is not a Collection demotion tool. Returns changed paths and does not autocommit.",
             schema(
@@ -2059,12 +2088,14 @@ mod tests {
     #[test]
     fn every_mutation_names_what_it_changes_by_its_own_arguments() {
         // Order, Routine launches and App process control change no Page,
-        // Collection or file.
+        // Collection or file; a created Space lies outside the Space a call
+        // addresses, so its files are not named relative to it.
         let without_objects = [
             "run_routine",
             "control_app",
             "reorder_content",
             "reorder_spaces",
+            "create_space",
         ];
         for definition in definitions() {
             let mutating = annotations_are_mutating(definition.annotations.as_ref());
@@ -2711,6 +2742,7 @@ mod tests {
                 "move_content",
                 "reorder_content",
                 "reorder_spaces",
+                "create_space",
                 "convert_page_to_leaf",
                 "add_collection_column",
                 "update_collection_column",

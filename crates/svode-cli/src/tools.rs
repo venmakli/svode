@@ -206,6 +206,15 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         } => ToolCommand::new("reorder_spaces", render::changes)
             .arg("orderedSpaceIds", args.ids)
             .project_scoped(),
+        Noun::Space {
+            verb: SpaceVerb::Create(args),
+        } => ToolCommand::new("create_space", render::space_created)
+            .selector("folder", "folder", args.folder)
+            .arg("name", args.name)
+            .arg("gitType", args.git_type.as_str())
+            .optional("icon", args.icon)
+            .optional("description", args.description)
+            .project_scoped(),
         Noun::Page {
             verb: PageVerb::Read(args),
         } => ToolCommand::new("read_page", |value| render::source(value, "page"))

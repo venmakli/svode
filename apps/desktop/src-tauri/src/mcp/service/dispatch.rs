@@ -184,6 +184,38 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
         Some(self)
     }
 
+    fn git_host(&self) -> Option<&dyn svode_core::git::host::GitHost> {
+        Some(
+            self.app
+                .state::<crate::git::delivery::GitHostState>()
+                .inner()
+                .handle()
+                .as_ref(),
+        )
+    }
+
+    /// The same Desktop effects as a Space created from the dialog. A
+    /// project no window has open takes the Space up when it opens; its
+    /// creation commit is made now all the same.
+    async fn space_created(
+        &self,
+        project: &Path,
+        _created: &svode_core::project::space::SpaceCreated,
+    ) {
+        if self.desktop_index().is_project_open(project).await {
+            crate::commands::space::space_created(
+                &self.app,
+                &self
+                    .app
+                    .state::<crate::project_runtime::ProjectRuntimeState>(),
+                project,
+            )
+            .await;
+        } else {
+            crate::git::auto_versions::commit_space_creations(&self.app, project).await;
+        }
+    }
+
     fn content_relocating(&self, space: &Path) {
         emit_content_relocation(&self.app, space, None);
     }
