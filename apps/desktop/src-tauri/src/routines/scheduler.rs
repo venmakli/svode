@@ -63,7 +63,7 @@ impl RoutineSchedulerState {
                 return;
             }
         };
-        let listed = match crate::space::registry::read_registry(&config_dir) {
+        let listed = match svode_core::project::registry::read(&config_dir) {
             Ok(registry) => registry
                 .spaces
                 .into_iter()

@@ -13,10 +13,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::error::AppError;
 use crate::navigation::NavigationItem;
-use crate::space::{
-    project, registry,
-    types::{LastView, RegistryEntry, SpaceRegistry},
-};
+use crate::space::project;
+use svode_core::project::registry::{self, LastView, ProjectRegistry, RegistryEntry};
 
 const MENU_NEW_WINDOW: &str = "app:new-window";
 const MENU_OPEN_FOLDER: &str = "app:open-folder";
@@ -290,7 +288,7 @@ pub fn get_window_open_intent(app: AppHandle, window: Window) -> WindowOpenInten
     if let Some(intent) = state.intent_for_window(window.label()) {
         return intent;
     }
-    let intent = match app_config_dir(&app).and_then(|dir| registry::read_registry(&dir)) {
+    let intent = match app_config_dir(&app).and_then(|dir| Ok(registry::read(&dir)?)) {
         Ok(registry) => launch_intent(&registry, |entry| {
             project::read_registered_config(Path::new(&entry.path)).is_ok()
         }),
@@ -309,13 +307,13 @@ pub fn get_window_open_intent(app: AppHandle, window: Window) -> WindowOpenInten
 /// The last view when its project is still listed and available, else Home. A
 /// registry without a known last view launches into the last active project.
 fn launch_intent(
-    registry: &SpaceRegistry,
+    registry: &ProjectRegistry,
     is_available: impl Fn(&RegistryEntry) -> bool,
 ) -> WindowOpenIntent {
     let project_id = match &registry.last_view {
         Some(LastView::Home) => None,
         Some(LastView::Project { project_id }) => Some(project_id),
-        Some(LastView::Unknown) | None => registry.last_active.as_ref(),
+        Some(LastView::Unknown(_)) | None => registry.last_active.as_ref(),
     };
     project_id
         .and_then(|id| registry.spaces.iter().find(|entry| &entry.id == id))
@@ -336,7 +334,8 @@ fn remember_last_view(app: &AppHandle) {
     let Some(view) = app.state::<AppWindowState>().view_to_remember() else {
         return;
     };
-    if let Err(error) = app_config_dir(app).and_then(|dir| registry::update_last_view(&dir, view)) {
+    if let Err(error) = app_config_dir(app).and_then(|dir| Ok(registry::set_last_view(&dir, view)?))
+    {
         tracing::warn!("failed to remember the last view: {error}");
     }
 }
@@ -643,7 +642,7 @@ fn stop_project_runtime(app: &AppHandle, project_id: &str) {
     let Ok(config_dir) = app_config_dir(app) else {
         return;
     };
-    let Ok(Some(project)) = registry::find_space(&config_dir, project_id) else {
+    let Ok(Some(project)) = registry::find(&config_dir, project_id) else {
         return;
     };
     app.state::<crate::apps::AppProcessState>()
@@ -675,7 +674,7 @@ fn open_or_focus_project_window(
     project_id: &str,
 ) -> Result<WebviewWindow, AppError> {
     let config_dir = app_config_dir(app)?;
-    let sp_ref = registry::find_space(&config_dir, project_id)?
+    let sp_ref = registry::find(&config_dir, project_id)?
         .ok_or_else(|| AppError::SpaceNotFound(project_id.to_string()))?;
     let project_path = PathBuf::from(&sp_ref.path);
     let (cfg, _) = project::read_registered_config(&project_path)?;
@@ -848,7 +847,7 @@ struct RecentProject {
 
 fn recent_projects(app: &AppHandle) -> Result<Vec<RecentProject>, AppError> {
     let config_dir = app_config_dir(app)?;
-    let reg = registry::read_registry(&config_dir)?;
+    let reg = registry::read(&config_dir)?;
     let mut projects = reg
         .spaces
         .iter()
@@ -1220,22 +1219,19 @@ mod tests {
         assert_eq!(state.view_to_remember(), None);
     }
 
-    fn registry(last_active: Option<&str>, last_view: Option<LastView>) -> SpaceRegistry {
-        SpaceRegistry {
+    fn registry(last_active: Option<&str>, last_view: Option<LastView>) -> ProjectRegistry {
+        ProjectRegistry {
             spaces: ["project-a", "project-b", "missing"]
                 .into_iter()
-                .map(|id| RegistryEntry {
-                    id: id.to_string(),
-                    last_opened: None,
-                    path: format!("/{id}"),
-                })
+                .map(|id| RegistryEntry::new(id, &format!("/{id}")))
                 .collect(),
             last_active: last_active.map(str::to_string),
             last_view,
+            extensions: Default::default(),
         }
     }
 
-    fn launch(registry: &SpaceRegistry) -> Option<String> {
+    fn launch(registry: &ProjectRegistry) -> Option<String> {
         match launch_intent(registry, |entry| entry.id != "missing") {
             WindowOpenIntent::Home => None,
             WindowOpenIntent::Project { project_id } => Some(project_id),
@@ -1273,7 +1269,10 @@ mod tests {
             Some("project-a".to_string())
         );
         assert_eq!(
-            launch(&registry(Some("project-b"), Some(LastView::Unknown))),
+            launch(&registry(
+                Some("project-b"),
+                Some(LastView::Unknown(serde_json::json!({ "kind": "board" })))
+            )),
             Some("project-b".to_string())
         );
         assert_eq!(launch(&registry(None, None)), None);

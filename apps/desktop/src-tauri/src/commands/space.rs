@@ -12,10 +12,12 @@ use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::project_runtime::ProjectRuntimeState;
 use crate::routines::RoutineSchedulerState;
-use crate::space::{config, content_tree, project, registry, settings, types::*};
+use crate::space::{config, content_tree, project, settings, types::*};
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
 use svode_core::git::path::normalize_space_folder;
 use svode_core::git::{local_repair, ops};
+use svode_core::project::registry::{self, RegistryEntry};
+use svode_core::project::root as project_create;
 use svode_core::project::scaffold::{self, Storage};
 use svode_core::project::space as space_create;
 use svode_core::storage::lfs::LfsState;
@@ -205,7 +207,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let reg = registry::read_registry(&config_dir)?;
+    let reg = registry::read(&config_dir)?;
     Ok(reg.spaces.iter().map(listed_project_info).collect())
 }
 
@@ -250,53 +252,39 @@ fn listed_project_info(entry: &RegistryEntry) -> SpaceInfo {
 #[tauri::command]
 pub async fn create_project(
     app: AppHandle,
-    git_state: State<'_, GitState>,
     name: String,
     icon: String,
     description: Option<String>,
     path: String,
 ) -> Result<SpaceInfo, AppError> {
-    let sp_path = Path::new(&path);
-
-    if sp_path.join(".git").symlink_metadata().is_ok() {
-        require_repository_mutation(&app, sp_path).await?;
-        crate::git::delivery::require_scope_repair(&app, sp_path, sp_path).await?;
-    }
-
-    // Check if project already exists at this path
-    if sp_path.join(".svode").join("config.json").exists() {
-        return Err(AppError::ProjectAlreadyExists(path.clone()));
-    }
-
     let config_dir = app
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let registered = project::create_project(
-        &config_dir,
-        &name,
-        &icon,
-        description.as_deref().unwrap_or(""),
-        sp_path,
-    )?;
+    let created = project_create::create(
+        &crate::git::delivery::runtime(&app),
+        crate::git::delivery::host(&app).as_ref(),
+        Some(&config_dir),
+        project_create::ProjectCreate {
+            path: PathBuf::from(&path),
+            name: Some(name),
+            icon: Some(icon),
+            description,
+        },
+    )
+    .await?;
+    let project_create::Registration::Registered { id } = created.registration else {
+        return Err(AppError::General("The project was not registered".into()));
+    };
     refresh_recent_projects_menu(&app);
     app.state::<RoutineSchedulerState>().sync(&app);
 
-    if let Some(cli) = git_state.detected() {
-        let lock = git_state.get_lock(sp_path).await;
-        let _guard = lock.lock().await;
-        if let Err(e) = init_repo_with_policy(cli, sp_path).await {
-            tracing::warn!("git init failed for new project: {e}");
-        }
-    }
-
-    Ok(root_project_info(
-        registered.id,
-        sp_path,
-        &registered.config,
-        None,
-        registered.config_unreadable,
-    ))
+    let config = SpaceConfig {
+        icon: created.icon,
+        description: created.description,
+        ..SpaceConfig::named(&created.name)
+    };
+    Ok(root_project_info(id, &created.path, &config, None, None))
 }
 
 #[tauri::command]
@@ -323,11 +311,11 @@ pub async fn open_project_folder(
     if preauthorized_readme_repair {
         require_repository_mutation(&app, sp_path).await?;
     }
-    let project::Registered {
+    let project_create::OpenedProject {
         id,
         config: mut cfg,
         config_unreadable,
-    } = project::open_project_folder(&config_dir, sp_path)?;
+    } = project_create::open_folder(&config_dir, sp_path)?;
     refresh_recent_projects_menu(&app);
     app.state::<RoutineSchedulerState>().sync(&app);
     let repairs_allowed = !had_git_before
@@ -431,7 +419,7 @@ pub async fn delete_project(
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
 
-    let project_ref = registry::find_space(&config_dir, &id)?;
+    let project_ref = registry::find(&config_dir, &id)?;
     if delete_files.unwrap_or(false)
         && let Some(sp_ref) = project_ref.as_ref()
     {
@@ -523,8 +511,8 @@ async fn enter_project(
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
 
-    let sp_ref = registry::find_space(&config_dir, &id)?
-        .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
+    let sp_ref =
+        registry::find(&config_dir, &id)?.ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
     let project_path = PathBuf::from(&sp_ref.path);
     // A missing project fails before it is prepared or bound; one whose config
     // cannot be read opens under its folder name.
@@ -549,8 +537,8 @@ async fn enter_project(
     }
 
     if entry.records_open() {
-        registry::update_last_active(&config_dir, &id)?;
-        registry::update_last_opened(&config_dir, &id)?;
+        registry::set_last_active(&config_dir, &id)?;
+        registry::touch_last_opened(&config_dir, &id)?;
         refresh_recent_projects_menu(app);
     }
 
@@ -890,11 +878,11 @@ pub async fn project_clone(
     let svode_existed_before = path.join(".svode").join("config.json").exists();
     let readme_existed_before = path.join("README.md").exists();
 
-    let project::Registered {
+    let project_create::OpenedProject {
         id,
         config: mut cfg,
         config_unreadable,
-    } = project::open_project_folder(&config_dir, &path)?;
+    } = project_create::open_folder(&config_dir, &path)?;
     refresh_recent_projects_menu(&app);
     app.state::<RoutineSchedulerState>().sync(&app);
     let gitignore_changed = crate::git::delivery::repair_scope(&app, &path, &path).await?
@@ -1388,9 +1376,8 @@ mod tests {
         std::fs::create_dir_all(unreadable_path.join(".svode")).expect("svode dir");
         std::fs::write(unreadable_path.join(".svode/config.json"), "{").expect("config");
         let entry = |id: &str, path: &Path| RegistryEntry {
-            id: id.to_string(),
             last_opened: Some("2026-10-01T00:00:00Z".to_string()),
-            path: path.to_string_lossy().into_owned(),
+            ..RegistryEntry::new(id, &path.to_string_lossy())
         };
 
         let ready = listed_project_info(&entry("ready", &ready));

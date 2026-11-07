@@ -20,7 +20,7 @@ impl SecretStore for Secrets {
 }
 fn project(path: &Path) {
     let config = path.parent().unwrap().join("library");
-    crate::space::registry::add_space(
+    svode_core::project::registry::add(
         &config,
         &ulid::Ulid::new().to_string(),
         path.to_str().unwrap(),
@@ -324,14 +324,14 @@ fn local_bindings_follow_scope_move_but_never_a_replacement_clone_at_the_same_pa
     );
     let moved = dir.path().join("renamed");
     fs::rename(&root, &moved).unwrap();
-    let mut registration = crate::space::registry::read_registry(&config).unwrap();
+    let mut registration = svode_core::project::registry::read(&config).unwrap();
     registration
         .spaces
         .iter_mut()
         .find(|s| Path::new(&s.path) == root)
         .unwrap()
         .path = moved.to_str().unwrap().into();
-    crate::space::registry::write_registry(&config, &registration).unwrap();
+    svode_core::project::registry::write(&config, &registration).unwrap();
     assert_eq!(
         run(&config, &app(&moved, false, &["KEY"]), &secrets).environment["KEY"],
         "synthetic"
@@ -425,7 +425,7 @@ fn app_runtime_reads_git_clone_checkout_and_collision_without_global_fallback() 
         dir.path(),
         &["clone", root.to_str().unwrap(), clone.to_str().unwrap()],
     );
-    crate::space::registry::add_space(&config, "clone", clone.to_str().unwrap()).unwrap();
+    svode_core::project::registry::add(&config, "clone", clone.to_str().unwrap()).unwrap();
     let cloned = app(&clone, false, &["PUBLIC", "KEY"]);
     assert_eq!(
         run(&config, &cloned, &secrets).missing[0].reference_name,

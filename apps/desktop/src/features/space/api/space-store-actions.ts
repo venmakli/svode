@@ -19,6 +19,7 @@ import {
   ensureAssetsScope,
   ensureSpaceScaffold,
   getWindowOpenIntent,
+  listenProjectListChanged,
   listProjects,
   listSpaces,
   openProjectWindow,
@@ -35,6 +36,10 @@ export type SpacePageDto = PageDto;
 
 export function listRootSpaces() {
   return listProjects();
+}
+
+export function listenRootSpacesChanged(handler: () => void) {
+  return listenProjectListChanged(handler);
 }
 
 export function openRootProject(id: string) {

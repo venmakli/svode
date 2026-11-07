@@ -39,7 +39,7 @@ pub(super) fn prepare_context(
     context: &AppVariableOwnerContext,
 ) -> Result<AppVariableOwnerContext, AppError> {
     read(config)?;
-    let project = crate::space::registry::find_project_by_path(
+    let project = svode_core::project::registry::find_by_path(
         config,
         Path::new(&context.scope.project_path),
     )?;

@@ -150,6 +150,9 @@ impl From<svode_core::project::ProjectError> for AppError {
                 Self::PathNotAccessible(path)
             }
             ProjectError::FileAlreadyExists(path) => Self::FileAlreadyExists(path),
+            ProjectError::ProjectAlreadyExists(path) => Self::ProjectAlreadyExists(path),
+            ProjectError::ProjectNested { path, project } => Self::ProjectNested { path, project },
+            ProjectError::Registry(error) => error.into(),
             ProjectError::Config(error) => error.into(),
             ProjectError::LocalConfig(error) => error.into(),
             ProjectError::Git(error) => error.into(),
@@ -157,6 +160,20 @@ impl From<svode_core::project::ProjectError> for AppError {
             error @ (ProjectError::NameRequired
             | ProjectError::NoProjectRepository
             | ProjectError::RollbackIncomplete { .. }) => Self::General(error.to_string()),
+        }
+    }
+}
+
+impl From<svode_core::project::registry::RegistryError> for AppError {
+    fn from(error: svode_core::project::registry::RegistryError) -> Self {
+        use svode_core::project::registry::RegistryError;
+        match error {
+            RegistryError::Io(error) => Self::Io(error),
+            RegistryError::Json(error) => Self::Serde(error),
+            RegistryError::Busy(path) => Self::SourceBusy { path },
+            error @ (RegistryError::NotRegistered | RegistryError::Ambiguous) => {
+                Self::Storage(error.to_string())
+            }
         }
     }
 }
@@ -495,6 +512,9 @@ pub enum AppError {
     #[error("Project already exists at: {0}")]
     ProjectAlreadyExists(String),
 
+    #[error("{path} is inside the Svode project {project}: create a space in that project instead")]
+    ProjectNested { path: String, project: String },
+
     #[error("Agent CLI not found: {0}")]
     AgentCliNotFound(String),
 
@@ -661,6 +681,7 @@ impl AppError {
             AppError::SpaceNotFound(_) => "space_not_found",
             AppError::PathNotAccessible(_) => "path_not_accessible",
             AppError::ProjectAlreadyExists(_) => "project_already_exists",
+            AppError::ProjectNested { .. } => "project_nested",
             AppError::AgentCliNotFound(_) => "agent_cli_not_found",
             AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
             AppError::GitNotFound => "git_not_found",
@@ -744,6 +765,9 @@ impl Serialize for AppError {
             | AppError::UnsupportedRenameTarget { path }
             | AppError::UnsupportedMoveParent { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
+            }
+            AppError::ProjectNested { path, project } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path, "project": project }).serialize(serializer)
             }
             AppError::GitPublicationBlocked { repository, reason } => {
                 svode_core::git::publication::BlockedTransport { kind: self.kind(), repository, reason }.serialize(serializer)

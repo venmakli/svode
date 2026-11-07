@@ -4,6 +4,5 @@ pub mod content_tree;
 pub mod merge;
 pub mod project;
 pub mod read;
-pub mod registry;
 pub mod settings;
 pub mod types;

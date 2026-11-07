@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDictatedDrafts } from "@/features/agent-sessions";
 import { GitGate } from "@/features/git/app-shell";
 import { RootProjectMenuBridge } from "@/features/home";
+import { RootSpacesFollower } from "@/features/space";
 import {
   AppPreferencesProvider,
   useAppLocale,
@@ -35,6 +36,7 @@ function LocalizedAppProviders() {
   return (
     <DogfoodUpdatesProvider version={version} buildCommit={buildCommit}>
       <RootProjectMenuBridge />
+      <RootSpacesFollower />
       <GitGate fallback={<AppBootstrapScreen />}>
         {(recheckGit) => <IdentityGate onGitUnavailable={recheckGit} />}
       </GitGate>

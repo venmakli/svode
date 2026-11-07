@@ -25,6 +25,7 @@ mod native_file_drop;
 mod navigation;
 mod page;
 mod process;
+mod project_list;
 mod project_runtime;
 mod project_sessions;
 mod properties;
@@ -77,6 +78,7 @@ pub fn run() {
         .manage(git::sync_rhythm::SyncRhythmState::new())
         .manage(identity::IdentityState::new())
         .manage(routines::RoutineSchedulerState::new())
+        .manage(project_list::ProjectListState::new())
         .manage(project_runtime::ProjectRuntimeState::new())
         .manage(app_windows::AppWindowState::new())
         .manage(space::settings::AppSettingsState::new())
@@ -174,6 +176,8 @@ pub fn run() {
             }
             app.state::<routines::RoutineSchedulerState>()
                 .sync(app.handle());
+            app.state::<project_list::ProjectListState>()
+                .follow(app.handle());
             #[cfg(target_os = "macos")]
             macos_fullscreen::install(app.handle());
             // ACP turns in a repository hold its content versions (Stage 11 1.E).

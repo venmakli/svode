@@ -336,7 +336,7 @@ async fn project_outcome(
     }
 }
 
-async fn current_branch(cli: &GitCli, repo: &Path) -> Option<String> {
+pub(super) async fn current_branch(cli: &GitCli, repo: &Path) -> Option<String> {
     let out = cli
         .exec(repo, &["symbolic-ref", "--short", "HEAD"])
         .await

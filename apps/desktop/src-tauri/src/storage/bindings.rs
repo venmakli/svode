@@ -281,7 +281,7 @@ mod tests {
         let project = dir.path().join("project");
         std::fs::create_dir_all(project.join(".svode")).unwrap();
         std::fs::write(project.join(".svode/config.json"), "{}").unwrap();
-        crate::space::registry::add_space(dir.path(), "project", project.to_str().unwrap())
+        svode_core::project::registry::add(dir.path(), "project", project.to_str().unwrap())
             .unwrap();
         let project = project.canonicalize().unwrap();
         std::fs::create_dir_all(project.join("app")).unwrap();

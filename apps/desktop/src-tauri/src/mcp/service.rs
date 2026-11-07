@@ -7,7 +7,7 @@ use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use crate::git::GitState;
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
-use crate::space::{config as space_config, registry};
+use crate::space::config as space_config;
 use svode_mcp::protocol::IpcContextOverride;
 use svode_tools::error::ToolError;
 use svode_tools::host::{RequestTarget, RoutineCaller};
@@ -59,7 +59,7 @@ mod tests {
         std::fs::create_dir_all(&nested).expect("nested dir");
         scaffold_test_space(&project, "Project");
         scaffold_test_space(&child, "Child");
-        registry::add_space(&config_dir, "project", &project.to_string_lossy())
+        svode_core::project::registry::add(&config_dir, "project", &project.to_string_lossy())
             .expect("register project");
 
         let root =

@@ -38,6 +38,8 @@ export interface SpaceState extends SpaceTreeState {
 
   // Root (project) methods
   loadRootSpaces: () => Promise<SpaceInfo[]>;
+  /** Reads the project list again after it changed on disk. */
+  refreshRootSpaces: () => Promise<void>;
   /** Opens the project's Space in this window; its active project only records the opening. */
   openRoot: (id: string) => Promise<RootEntry>;
   /** Makes the project the active project of Home; `request` goes to its other window. */
@@ -163,6 +165,17 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       return [];
     } finally {
       set({ isLoadingRoots: false });
+    }
+  },
+
+  // Another process or window changed the list: the shown list stays when
+  // it cannot be read.
+  refreshRootSpaces: async () => {
+    try {
+      const projects = await spaceActions.listRootSpaces();
+      set({ rootSpaces: projects, rootsLoaded: true });
+    } catch (err) {
+      console.warn("Failed to read the project list again:", err);
     }
   },
 

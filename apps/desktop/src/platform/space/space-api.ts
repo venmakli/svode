@@ -140,6 +140,13 @@ export function listProjectsInOtherWindows(): Promise<string[]> {
   return invokeCommand<string[]>("list_projects_in_other_windows");
 }
 
+/** The list of projects of the device changed on disk. */
+export function listenProjectListChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen("projects:changed", () => handler());
+}
+
 export function listenProjectWindowsChanged(
   handler: () => void,
 ): Promise<UnlistenFn> {

@@ -31,7 +31,9 @@ pub(super) fn resolve_context_override(
     };
 
     let cwd = canonical_caller_cwd(Some(caller_cwd))?.expect("non-empty caller cwd");
-    let config_dir = app.path().app_data_dir().ok();
+    // The list of Projects lives in the config directory, where Desktop
+    // writes it (`runtime::device`).
+    let config_dir = app.path().app_config_dir().ok();
     let root = match resolve_project_root_for_cwd(config_dir.as_deref(), &cwd) {
         Ok(root) => root,
         Err(error) if error.code == "PROJECT_CONTEXT_NOT_FOUND" => return Ok(None),
@@ -108,7 +110,8 @@ fn registry_project_root_for_cwd(
     config_dir: &Path,
     cwd: &Path,
 ) -> Result<Option<PathBuf>, ToolError> {
-    let registry = registry::read_registry(config_dir)?;
+    let registry =
+        svode_core::project::registry::read(config_dir).map_err(crate::error::AppError::from)?;
     let mut best: Option<PathBuf> = None;
 
     for entry in registry.spaces {

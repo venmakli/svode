@@ -66,51 +66,6 @@ impl Default for AppSettings {
     }
 }
 
-// --- Space Registry (spaces.json) ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpaceRegistry {
-    pub spaces: Vec<RegistryEntry>,
-    pub last_active: Option<String>,
-    /// The view of the window the user was in last; the launch opens it.
-    /// Earlier Svode versions ignore it and launch into `last_active`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_view: Option<LastView>,
-}
-
-impl Default for SpaceRegistry {
-    fn default() -> Self {
-        Self {
-            spaces: Vec::new(),
-            last_active: None,
-            last_view: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum LastView {
-    Home,
-    Project {
-        #[serde(rename = "projectId")]
-        project_id: String,
-    },
-    /// A view written by a later Svode version; the launch treats it as an
-    /// absent view.
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegistryEntry {
-    pub id: String,
-    pub last_opened: Option<String>,
-    pub path: String,
-}
-
 // --- Space Config (.svode/config.json) ---
 
 // The portable config model and its write rule are owned by `svode-core`.
