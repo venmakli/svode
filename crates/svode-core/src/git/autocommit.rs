@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,6 +11,7 @@ use super::host::GitHost;
 use super::ops;
 use super::pending::PendingPaths;
 pub use super::pending::{StructuralChange, StructuralOp};
+use super::space_creation::{self, PendingCreation};
 use super::state::GitRuntime;
 use crate::storage::config::SpaceGitType;
 
@@ -299,39 +301,6 @@ impl AutocommitService {
         Ok(())
     }
 
-    /// Commit a lifecycle-scoped set of paths. Used for project/space boundary
-    /// changes whose files look like config, but whose operation intent is
-    /// structural (for example importing submodule space refs).
-    pub async fn commit_structural_paths_now(
-        &self,
-        project_path: PathBuf,
-        space_path: PathBuf,
-        paths: Vec<PathBuf>,
-        message: &'static str,
-    ) -> Result<(), GitError> {
-        if paths.is_empty() || !space_path.exists() {
-            return Ok(());
-        }
-
-        let cli = self.runtime.require_cli()?;
-        let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
-        let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
-        if !background_commit_allowed(policy_path, CommitIntent::StructuralLifecycle) {
-            return Ok(());
-        }
-
-        do_commit_paths(
-            &self.runtime,
-            self.host.as_ref(),
-            &project_path,
-            &space_path,
-            git_type,
-            paths,
-            message,
-        )
-        .await
-    }
-
     /// Make the pending creation commits of the Spaces of `project_path`
     /// where structural commits are on for it (Stage 11 05 «Коммиты
     /// создания»): only their creation paths, one commit per Space.
@@ -556,16 +525,36 @@ fn classify_guarded_exact_path_preflight(
     }
 }
 
+/// What an immediate commit of an operation made: whether its own commit
+/// landed, and the refusal of the creation commits it made first, which
+/// leaves their paths, and the operation's paths among them, uncommitted.
+struct Immediate {
+    created: bool,
+    creation: Option<GitError>,
+}
+
+impl Immediate {
+    /// The refusal of the creation commits, once the operation's own commit
+    /// was delivered.
+    fn refusal(self) -> Result<(), GitError> {
+        self.creation.map_or(Ok(()), Err)
+    }
+}
+
 async fn commit_prepared_paths(
     cli: &GitCli,
+    host: &dyn GitHost,
     repo: &Path,
     paths: &[String],
     message: &str,
     intent: CommitIntent,
     optional: bool,
-) -> Result<bool, GitError> {
+) -> Result<Immediate, GitError> {
     if !background_commit_allowed(repo, intent) {
-        return Ok(false);
+        return Ok(Immediate {
+            created: false,
+            creation: None,
+        });
     }
     let missing = |path: &String| optional && !repo.join(path).exists();
     let mut scopes = Vec::new();
@@ -591,8 +580,71 @@ async fn commit_prepared_paths(
     } else {
         scopes.extend_from_slice(paths);
     }
+    let (scopes, creation) = after_pending_creations(cli, host, repo, scopes).await?;
     // Only the operation's own paths: other staged changes stay staged.
-    super::versions::commit_exact(cli, repo, &scopes, message).await
+    let created = super::versions::commit_exact(cli, repo, &scopes, message).await?;
+    Ok(Immediate { created, creation })
+}
+
+/// The scopes of an immediate commit once the Spaces of `repo` whose
+/// `SpaceRef` is not committed yet are taken care of (DF-323 R3, Stage 11
+/// 05 «Коммиты создания» n. 4): where the scopes take a path of such a
+/// creation, its creation commits come first where structural commits are
+/// on; the paths of a creation still pending after that — flag off, a
+/// refusal, another writer holding the repository — leave the commit and
+/// wait for the creation commit or a manual one. The caller holds the
+/// repository lock.
+async fn after_pending_creations(
+    cli: &GitCli,
+    host: &dyn GitHost,
+    repo: &Path,
+    scopes: Vec<String>,
+) -> Result<(Vec<String>, Option<GitError>), GitError> {
+    let held = |creations: &[PendingCreation], path: &str| {
+        creations.iter().any(|creation| creation.holds(path))
+    };
+    let creations = space_creation::pending(cli, repo).await?;
+    if creations.is_empty() {
+        return Ok((scopes, None));
+    }
+    let files = super::staging::resolve(cli, repo, &scopes).await?;
+    if !files.iter().any(|path| held(&creations, path)) {
+        return Ok((scopes, None));
+    }
+    let creation = match commit_creations_first(cli, host, repo).await {
+        Ok(_) => None,
+        // The creator still writing gets its creation commit at the next
+        // closing of groups, pickup or opening.
+        Err(GitError::SourceBusy { .. }) => None,
+        Err(error) => {
+            tracing::warn!(kind = error.kind(), "creation commit refused");
+            Some(error)
+        }
+    };
+    let creations = space_creation::pending(cli, repo).await?;
+    if creations.is_empty() {
+        return Ok((scopes, creation));
+    }
+    let files = files
+        .into_iter()
+        .filter(|path| !held(&creations, path))
+        .collect();
+    Ok((files, creation))
+}
+
+/// The pending creation commits of `repo` under its write guard; nothing
+/// where structural commits are off.
+async fn commit_creations_first(
+    cli: &GitCli,
+    host: &dyn GitHost,
+    repo: &Path,
+) -> Result<usize, GitError> {
+    if !super::policy::effective_user_policy(repo).auto_commit_structural {
+        return Ok(0);
+    }
+    let repository = super::access::local_repository_root(repo)?;
+    let _writes = super::write_guard::acquire(&BTreeSet::from([repository]), &[]).await?;
+    space_creation::commit_pending_locked(cli, host, repo).await
 }
 
 async fn commit_parent_pointer(
@@ -643,8 +695,9 @@ async fn do_commit_paths(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let created = commit_prepared_paths(
+    let immediate = commit_prepared_paths(
         &cli,
+        host,
         repo,
         &paths,
         message,
@@ -654,7 +707,7 @@ async fn do_commit_paths(
     .await?;
     drop(guard);
 
-    if created {
+    if immediate.created {
         finish_commit(
             runtime,
             host,
@@ -667,7 +720,7 @@ async fn do_commit_paths(
         .await?;
     }
 
-    Ok(())
+    immediate.refusal()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -698,8 +751,9 @@ async fn do_commit_system(
         .collect::<Result<Vec<_>, _>>()?;
     let lock = runtime.get_lock(&target_repo).await;
     let guard = lock.lock().await;
-    let created = commit_prepared_paths(
+    let immediate = commit_prepared_paths(
         &cli,
+        host,
         &target_repo,
         &paths,
         message,
@@ -708,7 +762,7 @@ async fn do_commit_system(
     )
     .await?;
     drop(guard);
-    if created {
+    if immediate.created {
         let pointer_intent = if matches!(intent, CommitIntent::ManualExplicit) {
             intent
         } else {
@@ -726,7 +780,7 @@ async fn do_commit_system(
         .await?;
     }
 
-    Ok(())
+    immediate.refusal()
 }
 
 async fn do_commit_scaffold(
@@ -777,8 +831,9 @@ async fn do_commit_scaffold(
                     paths.push(readme);
                 }
             }
-            let created = commit_prepared_paths(
+            let immediate = commit_prepared_paths(
                 &cli,
+                host,
                 project_path,
                 &paths,
                 message,
@@ -786,7 +841,7 @@ async fn do_commit_scaffold(
                 false,
             )
             .await?;
-            if created {
+            if immediate.created {
                 finish_commit(
                     runtime,
                     host,
@@ -798,6 +853,7 @@ async fn do_commit_scaffold(
                 )
                 .await?;
             }
+            immediate.refusal()
         }
         SpaceGitType::Independent => {
             let lock = runtime.get_lock(space_path).await;
@@ -809,8 +865,9 @@ async fn do_commit_scaffold(
             if include_readme && space_path.join("README.md").exists() {
                 paths.push("README.md".into());
             }
-            let created = commit_prepared_paths(
+            let immediate = commit_prepared_paths(
                 &cli,
+                host,
                 space_path,
                 &paths,
                 message,
@@ -818,7 +875,7 @@ async fn do_commit_scaffold(
                 false,
             )
             .await?;
-            if created {
+            if immediate.created {
                 finish_commit(
                     runtime,
                     host,
@@ -830,6 +887,7 @@ async fn do_commit_scaffold(
                 )
                 .await?;
             }
+            immediate.refusal()
         }
         SpaceGitType::Submodule => {
             let lock = runtime.get_lock(space_path).await;
@@ -841,8 +899,9 @@ async fn do_commit_scaffold(
             if include_readme && space_path.join("README.md").exists() {
                 paths.push("README.md".into());
             }
-            let created = commit_prepared_paths(
+            let immediate = commit_prepared_paths(
                 &cli,
+                host,
                 space_path,
                 &paths,
                 message,
@@ -851,7 +910,7 @@ async fn do_commit_scaffold(
             )
             .await?;
             drop(_guard);
-            if created {
+            if immediate.created {
                 finish_commit(
                     runtime,
                     host,
@@ -863,10 +922,9 @@ async fn do_commit_scaffold(
                 )
                 .await?;
             }
+            immediate.refusal()
         }
     }
-
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1338,6 +1396,21 @@ mod tests {
     use super::*;
     use crate::git::staging_tests::TestHost;
 
+    /// The immediate commit of `paths` alone: whether it landed.
+    async fn commit_prepared(
+        cli: &GitCli,
+        repo: &Path,
+        paths: &[String],
+        message: &str,
+        intent: CommitIntent,
+        optional: bool,
+    ) -> Result<bool, GitError> {
+        let host = TestHost::default();
+        commit_prepared_paths(cli, &host, repo, paths, message, intent, optional)
+            .await
+            .map(|immediate| immediate.created)
+    }
+
     #[tokio::test]
     async fn staging_consumers_execute_all_policy_combinations_and_routing() {
         use crate::git::staging_tests::{cli, git, repo, write};
@@ -1392,7 +1465,7 @@ mod tests {
                             let head = git(&cli, target, &["rev-parse", "HEAD"]).await;
                             let index = git(&cli, target, &["ls-files", "--stage", "-z"]).await;
                             assert_eq!(
-                                commit_prepared_paths(
+                                commit_prepared(
                                     &cli,
                                     target,
                                     &[path.clone()],
@@ -1436,7 +1509,7 @@ mod tests {
                             },
                         );
                         assert!(
-                            !commit_prepared_paths(
+                            !commit_prepared(
                                 &cli,
                                 target,
                                 &[path.clone()],
@@ -1457,7 +1530,7 @@ mod tests {
                             },
                         );
                         assert!(
-                            commit_prepared_paths(
+                            commit_prepared(
                                 &cli,
                                 target,
                                 &[path],
@@ -1498,7 +1571,7 @@ mod tests {
             write(root, path, "operation\n");
             let head = git(&cli, root, &["rev-parse", "HEAD"]).await;
             assert!(
-                commit_prepared_paths(&cli, root, &[path.to_string()], "Operation", intent, false)
+                commit_prepared(&cli, root, &[path.to_string()], "Operation", intent, false)
                     .await
                     .unwrap()
             );
@@ -1551,7 +1624,7 @@ mod tests {
                 "for arg in \"$@\"; do if [ \"$arg\" = add ]; then exit 31; fi; done",
             );
             assert!(
-                commit_prepared_paths(
+                commit_prepared(
                     &broken,
                     root,
                     &["Исследования/config.json".into()],
@@ -1771,8 +1844,7 @@ mod tests {
         let service =
             AutocommitService::new(Arc::new(GitRuntime::new()), Arc::new(TestHost::default()));
         let inline = |name: &str| root.join(name);
-        let cases: [(&[&str], &str); 8] = [
-            (&["zadachi/lifecycle.md"], "Structural operation"),
+        let cases: [(&[&str], &str); 7] = [
             (&[".svode/config.json"], "Update space config"),
             (&[".gitignore"], "Update .gitignore"),
             (&[".lfsconfig", ".gitattributes"], "Update assets strategy"),
@@ -1796,15 +1868,6 @@ mod tests {
             let head = git(&cli, root, &["rev-parse", "HEAD"]).await;
             match index {
                 0 => service
-                    .commit_structural_paths_now(
-                        root.to_path_buf(),
-                        root.to_path_buf(),
-                        vec![root.join(paths[0])],
-                        "Structural operation",
-                    )
-                    .await
-                    .unwrap(),
-                1 => service
                     .commit_system_now(
                         root.to_path_buf(),
                         root.to_path_buf(),
@@ -1812,7 +1875,7 @@ mod tests {
                     )
                     .await
                     .unwrap(),
-                2 => service
+                1 => service
                     .commit_system_manual_now(
                         root.to_path_buf(),
                         root.to_path_buf(),
@@ -1820,7 +1883,7 @@ mod tests {
                     )
                     .await
                     .unwrap(),
-                3 => service
+                2 => service
                     .commit_system_now(
                         root.to_path_buf(),
                         root.to_path_buf(),
@@ -1828,15 +1891,15 @@ mod tests {
                     )
                     .await
                     .unwrap(),
-                4 => service
+                3 => service
                     .commit_scaffold(root.to_path_buf(), inline("notes"))
                     .await
                     .unwrap(),
-                5 => service
+                4 => service
                     .commit_scaffold_with_readme(root.to_path_buf(), inline("clients"))
                     .await
                     .unwrap(),
-                6 => service
+                5 => service
                     .commit_scope_readme(root.to_path_buf(), inline("later"))
                     .await
                     .unwrap(),
@@ -1919,7 +1982,7 @@ mod tests {
             .map(|p| p.to_string())
             .collect::<Vec<_>>();
         assert!(
-            commit_prepared_paths(
+            commit_prepared(
                 &cli,
                 root,
                 &paths,
@@ -1935,7 +1998,7 @@ mod tests {
             "*.png filter=lfs\n"
         );
         assert!(
-            commit_prepared_paths(
+            commit_prepared(
                 &cli,
                 root,
                 &["expected-missing.md".into()],
@@ -1949,7 +2012,7 @@ mod tests {
         std::fs::remove_file(root.join(".gitattributes")).unwrap();
         ops::add(&cli, root, ".gitattributes").await.unwrap();
         assert!(
-            commit_prepared_paths(
+            commit_prepared(
                 &cli,
                 root,
                 &paths,
@@ -2011,7 +2074,7 @@ mod tests {
             );
             write(&child, ".svode/config.json", "child config\n");
             assert!(
-                commit_prepared_paths(
+                commit_prepared(
                     &cli,
                     &child,
                     &[".svode/config.json".into()],
@@ -2131,7 +2194,7 @@ mod tests {
                 let before = git(&cli, root, &["ls-files", "--stage", "-z"]).await;
                 let paths = vec![".gitignore".into(), format!("{prefix}.svode")];
                 assert_eq!(
-                    commit_prepared_paths(
+                    commit_prepared(
                         &cli,
                         root,
                         &paths,
@@ -2154,7 +2217,7 @@ mod tests {
                     );
                 }
                 assert_eq!(
-                    commit_prepared_paths(
+                    commit_prepared(
                         &cli,
                         root,
                         &[format!("{prefix}README.md")],

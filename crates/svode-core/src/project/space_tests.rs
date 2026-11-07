@@ -2,7 +2,8 @@
 //! создания», «Git-эффекты по типу», «Ошибки и stable codes», invariants
 //! 3–6): what each Git type writes, that the operation never commits, what
 //! a refusal and a rollback leave, concurrent creators, and the creation
-//! commit with the automatic versions that wait for it.
+//! commit with the automatic versions and the immediate commits of Desktop
+//! operations that wait for it (DF-323 R2, R3).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ use super::ProjectError;
 use super::scaffold::{self, Storage};
 use super::space::{CreationCommit, SpaceCreate, SpaceCreated, create};
 use super::test_host::{Host, cli};
+use crate::git::autocommit::{AutocommitService, SystemCommitKind};
 use crate::git::cli::GitCli;
 use crate::git::policy::{GitUserPolicy, write_user_policy};
 use crate::git::space_creation;
@@ -776,4 +778,385 @@ async fn a_pending_creation_holds_its_paths_and_its_inline_folder() {
     for path in ["notesbook.md", "README.md", "other/notes/Page.md"] {
         assert!(!creation.holds(path), "{path}");
     }
+}
+
+/// Desktop's immediate commits for the fixture project, with their own host.
+fn immediate(f: &Fixture) -> AutocommitService {
+    AutocommitService::new(
+        Arc::new(GitRuntime::with_cli(f.cli.clone())),
+        Arc::new(Host::default()),
+    )
+}
+
+fn structural_and_system() -> GitUserPolicy {
+    GitUserPolicy {
+        auto_commit_structural: true,
+        auto_commit_system: true,
+        ..GitUserPolicy::default()
+    }
+}
+
+/// A staged edit, a staged new file and an unstaged edit on top of it.
+async fn stage_foreign(f: &Fixture) -> String {
+    std::fs::write(f.root.join("README.md"), "# Root\n\nstaged edit\n").unwrap();
+    std::fs::write(f.root.join("draft.md"), "staged draft\n").unwrap();
+    git(&f.cli, &f.root, &["add", "README.md", "draft.md"]).await;
+    std::fs::write(f.root.join("draft.md"), "staged draft\nunstaged tail\n").unwrap();
+    foreign(f).await
+}
+
+/// The index entries of the foreign paths.
+async fn foreign(f: &Fixture) -> String {
+    git(
+        &f.cli,
+        &f.root,
+        &["ls-files", "--stage", "README.md", "draft.md"],
+    )
+    .await
+}
+
+fn reorder(f: &Fixture, folders: &[&str]) {
+    let ids = space_config::read(&f.root)
+        .unwrap()
+        .spaces
+        .unwrap_or_default();
+    let ordered = folders
+        .iter()
+        .map(|folder| {
+            ids.iter()
+                .find(|entry| entry.path == *folder)
+                .unwrap()
+                .id
+                .clone()
+        })
+        .collect();
+    assert!(
+        crate::structure::reorder_child_spaces(&f.root, ordered)
+            .unwrap()
+            .changed
+    );
+}
+
+fn write_assets_strategy(f: &Fixture) {
+    std::fs::write(f.root.join(".gitattributes"), "*.png filter=lfs\n").unwrap();
+    std::fs::write(f.root.join(".lfsconfig"), "[lfs]\n").unwrap();
+}
+
+#[tokio::test]
+async fn an_immediate_commit_makes_the_creation_commits_it_overlaps_first() {
+    let f = Fixture::new(structural_and_system()).await;
+    let staged = stage_foreign(&f).await;
+    let service = immediate(&f);
+
+    // The order of Spaces lives in the Project config that both creations
+    // take whole: the creation commits come first and carry it.
+    f.create("notes", SpaceGitType::Inline).await.unwrap();
+    f.create("later", SpaceGitType::Inline).await.unwrap();
+    reorder(&f, &["later", "notes"]);
+    service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::ReorderSpaces,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.subjects().await,
+        ["Add inline space notes", "Add inline space later", "Base"]
+    );
+    assert_eq!(
+        f.committed("HEAD~1").await,
+        [
+            ".gitignore",
+            ".svode/config.json",
+            "later/.svode/config.json",
+            "later/README.md"
+        ]
+    );
+    assert_eq!(
+        f.committed("HEAD").await,
+        ["notes/.svode/config.json", "notes/README.md"]
+    );
+    let committed = git(&f.cli, &f.root, &["show", "HEAD:.svode/config.json"]).await;
+    let order = space_config::parse(committed.as_bytes())
+        .unwrap()
+        .spaces
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["later", "notes"]);
+
+    // An operation with paths of its own commits them after the creation.
+    f.create("clients", SpaceGitType::Independent)
+        .await
+        .unwrap();
+    write_assets_strategy(&f);
+    service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::AssetsStrategy,
+        )
+        .await
+        .unwrap();
+    let subjects = f.subjects().await;
+    assert_eq!(
+        subjects[..2],
+        ["Update assets strategy", "Add independent space clients"]
+    );
+    assert_eq!(
+        f.committed("HEAD~1").await,
+        [".gitignore", ".svode/config.json"]
+    );
+    assert_eq!(f.committed("HEAD").await, [".gitattributes", ".lfsconfig"]);
+
+    assert!(
+        space_creation::pending(&f.cli, &f.root)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(foreign(&f).await, staged);
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("draft.md")).unwrap(),
+        "staged draft\nunstaged tail\n"
+    );
+    assert_eq!(
+        git(&f.cli, &f.root, &["status", "--porcelain"]).await,
+        "M  README.md\nAM draft.md\n"
+    );
+}
+
+#[tokio::test]
+async fn without_structural_commits_an_immediate_commit_leaves_a_pending_creation() {
+    let f = Fixture::new(GitUserPolicy {
+        auto_commit_system: true,
+        ..GitUserPolicy::default()
+    })
+    .await;
+    let service = immediate(&f);
+    let base = f.head().await;
+    f.create("notes", SpaceGitType::Inline).await.unwrap();
+    f.create("later", SpaceGitType::Inline).await.unwrap();
+
+    // The order of Spaces is in the Project config the creations wait with.
+    reorder(&f, &["later", "notes"]);
+    service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::ReorderSpaces,
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.head().await, base);
+
+    // The rest of an operation's paths still commit.
+    write_assets_strategy(&f);
+    service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::AssetsStrategy,
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.subjects().await, ["Update assets strategy", "Base"]);
+    assert_eq!(f.committed("HEAD").await, [".gitattributes", ".lfsconfig"]);
+
+    // A scaffold or an explicit save inside a pending Inline Space waits
+    // with it.
+    service
+        .commit_scope_readme(f.root.clone(), f.root.join("notes"))
+        .await
+        .unwrap();
+    std::fs::write(f.root.join("notes/.svode/AGENTS.md"), "Notes\n").unwrap();
+    service
+        .commit_system_manual_now(
+            f.root.clone(),
+            f.root.join("notes"),
+            SystemCommitKind::AgentInstructions,
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.subjects().await.len(), 2);
+
+    assert_eq!(
+        space_creation::pending(&f.cli, &f.root)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let status = git(
+        &f.cli,
+        &f.root,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )
+    .await;
+    assert!(status.contains(" M .svode/config.json"), "{status}");
+    assert!(status.contains(" M .gitignore"), "{status}");
+    assert!(status.contains("?? notes/README.md"), "{status}");
+}
+
+#[tokio::test]
+async fn a_refused_creation_commit_keeps_the_paths_it_shares_with_an_immediate_commit() {
+    let f = Fixture::new(structural_and_system()).await;
+    let service = immediate(&f);
+    svode_testkit::write_executable(
+        &f.hooks().join("commit-msg"),
+        "#!/bin/sh\nif grep -q '^Add ' \"$1\"; then exit 1; fi\n",
+    )
+    .unwrap();
+    let base = f.head().await;
+    f.create("notes", SpaceGitType::Inline).await.unwrap();
+    f.create("later", SpaceGitType::Inline).await.unwrap();
+
+    reorder(&f, &["later", "notes"]);
+    let error = service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::ReorderSpaces,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, GitError::SaveFailed { .. }), "{error}");
+    assert_eq!(f.head().await, base);
+
+    // The operation commits its other paths and returns the cause.
+    write_assets_strategy(&f);
+    let error = service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::AssetsStrategy,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, GitError::SaveFailed { .. }), "{error}");
+    assert_eq!(f.subjects().await, ["Update assets strategy", "Base"]);
+    assert_eq!(f.committed("HEAD").await, [".gitattributes", ".lfsconfig"]);
+    assert_eq!(
+        space_creation::pending(&f.cli, &f.root)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let tracked = git(&f.cli, &f.root, &["ls-tree", "-r", "--name-only", "HEAD"]).await;
+    assert!(!tracked.contains("notes/"), "{tracked}");
+
+    // Once the hook passes, the creation commits come first again.
+    std::fs::remove_file(f.hooks().join("commit-msg")).unwrap();
+    std::fs::write(f.root.join(".lfsconfig"), "[lfs]\n\turl = x\n").unwrap();
+    service
+        .commit_system_now(
+            f.root.clone(),
+            f.root.clone(),
+            SystemCommitKind::AssetsStrategy,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.subjects().await[..3],
+        [
+            "Update assets strategy",
+            "Add inline space notes",
+            "Add inline space later"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_imported_submodule_waits_for_its_creation_commit_with_the_other_spaces() {
+    let f = Fixture::new(structural_and_system()).await;
+    let staged = stage_foreign(&f).await;
+    let service = immediate(&f);
+    f.create("notes", SpaceGitType::Inline).await.unwrap();
+    f.create("clients", SpaceGitType::Independent)
+        .await
+        .unwrap();
+    f.create("code", SpaceGitType::Submodule).await.unwrap();
+    // Its `SpaceRef` is lost and Desktop imports the submodule of
+    // `.gitmodules` again under a new id.
+    space_config::mutate::<_, space_config::SpaceConfigError>(&f.root, |config| {
+        let spaces = config.spaces.as_mut().unwrap();
+        let index = spaces
+            .iter()
+            .position(|entry| entry.path == "code")
+            .unwrap();
+        let mut entry = spaces.remove(index);
+        entry.id = "imported-code".into();
+        spaces.push(entry);
+        Ok(())
+    })
+    .unwrap();
+    f.create("later", SpaceGitType::Inline).await.unwrap();
+    std::fs::write(f.root.join("later/Page.md"), "---\ntitle: Page\n---\n").unwrap();
+
+    // Opening the project: the `.gitignore` repair, then the creation
+    // commits of every pending Space.
+    service
+        .commit_system_now(f.root.clone(), f.root.clone(), SystemCommitKind::Gitignore)
+        .await
+        .unwrap();
+    service.commit_space_creations(&f.root).await.unwrap();
+
+    // The Project config and `.gitignore` go whole into the first creation
+    // commit of the batch; an Independent Space has no other creation paths,
+    // so `clients` is registered there without a commit of its own.
+    assert_eq!(
+        f.subjects().await,
+        [
+            "Add inline space later",
+            "Add submodule space code",
+            "Add inline space notes",
+            "Base"
+        ]
+    );
+    assert_eq!(
+        f.committed("HEAD~2").await,
+        [
+            ".gitignore",
+            ".svode/config.json",
+            "notes/.svode/config.json",
+            "notes/README.md"
+        ]
+    );
+    assert_eq!(f.committed("HEAD~1").await, [".gitmodules"]);
+    assert_eq!(
+        f.committed("HEAD").await,
+        ["later/.svode/config.json", "later/README.md"]
+    );
+    let committed = git(&f.cli, &f.root, &["show", "HEAD:.svode/config.json"]).await;
+    let ids = space_config::parse(committed.as_bytes())
+        .unwrap()
+        .spaces
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    assert!(ids.contains(&"imported-code".to_string()), "{ids:?}");
+    assert!(
+        space_creation::pending(&f.cli, &f.root)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(foreign(&f).await, staged);
+    let status = git(
+        &f.cli,
+        &f.root,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )
+    .await;
+    // The new submodule has no commit of its own yet, so the root sees no
+    // gitlink for it.
+    assert_eq!(
+        status,
+        "M  README.md\nAM draft.md\n?? code/\n?? later/Page.md\n"
+    );
 }

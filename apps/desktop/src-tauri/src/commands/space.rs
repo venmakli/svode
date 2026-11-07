@@ -367,32 +367,17 @@ pub async fn open_project_folder(
         if let Err(e) = commit_result {
             tracing::warn!("commit_scaffold failed for opened folder: {e}");
         }
-    } else if had_git_before {
-        if gitignore_changed {
-            if let Err(e) = autocommit
-                .commit_system_now(
-                    sp_path.to_path_buf(),
-                    sp_path.to_path_buf(),
-                    SystemCommitKind::Gitignore,
-                )
-                .await
-            {
-                tracing::warn!("commit .gitignore repair failed for opened folder: {e}");
-            }
-        }
-        if imported_submodules > 0 {
-            if let Err(e) = autocommit
-                .commit_structural_paths_now(
-                    sp_path.to_path_buf(),
-                    sp_path.to_path_buf(),
-                    vec![sp_path.join(".svode").join("config.json")],
-                    "Register submodule spaces",
-                )
-                .await
-            {
-                tracing::warn!("commit imported submodules failed for opened folder: {e}");
-            }
-        }
+    } else if had_git_before
+        && gitignore_changed
+        && let Err(e) = autocommit
+            .commit_system_now(
+                sp_path.to_path_buf(),
+                sp_path.to_path_buf(),
+                SystemCommitKind::Gitignore,
+            )
+            .await
+    {
+        tracing::warn!("commit .gitignore repair failed for opened folder: {e}");
     }
 
     crate::git::delivery::repair_project(&app, sp_path).await;
@@ -576,8 +561,8 @@ async fn enter_project(
 }
 
 /// Repairs a project before a window serves it, under the repository repair
-/// policy: `.gitignore`, existing submodules and the root README, each with its
-/// system commit.
+/// policy: `.gitignore` and the root README, each with its system commit, and
+/// existing submodules, which wait for their creation commits.
 async fn prepare_project(
     app: &AppHandle,
     git_state: &GitState,
@@ -594,11 +579,11 @@ async fn prepare_project(
     } else {
         false
     };
-    let imported_submodules = if repairs_allowed {
-        import_existing_submodules_if_possible(git_state, &project_path).await
-    } else {
-        0
-    };
+    // An imported submodule waits for its creation commit, which opening the
+    // project makes (05 «Коммиты создания» n. 2).
+    if repairs_allowed {
+        import_existing_submodules_if_possible(git_state, &project_path).await;
+    }
     if gitignore_changed {
         if let Err(e) = autocommit
             .commit_system_now(
@@ -609,19 +594,6 @@ async fn prepare_project(
             .await
         {
             tracing::warn!("commit .gitignore repair failed for project open: {e}");
-        }
-    }
-    if imported_submodules > 0 {
-        if let Err(e) = autocommit
-            .commit_structural_paths_now(
-                project_path.clone(),
-                project_path.clone(),
-                vec![project_path.join(".svode").join("config.json")],
-                "Register submodule spaces",
-            )
-            .await
-        {
-            tracing::warn!("commit imported submodules failed for project open: {e}");
         }
     }
 
@@ -917,28 +889,12 @@ pub async fn project_clone(
         if let Err(e) = commit_result {
             tracing::warn!("commit_scaffold failed after project clone: {e}");
         }
-    } else {
-        if gitignore_changed {
-            if let Err(e) = autocommit
-                .commit_system_now(path.clone(), path.clone(), SystemCommitKind::Gitignore)
-                .await
-            {
-                tracing::warn!("commit .gitignore repair failed after project clone: {e}");
-            }
-        }
-        if imported_submodules > 0 {
-            if let Err(e) = autocommit
-                .commit_structural_paths_now(
-                    path.clone(),
-                    path.clone(),
-                    vec![path.join(".svode").join("config.json")],
-                    "Register submodule spaces",
-                )
-                .await
-            {
-                tracing::warn!("commit imported submodules failed after project clone: {e}");
-            }
-        }
+    } else if gitignore_changed
+        && let Err(e) = autocommit
+            .commit_system_now(path.clone(), path.clone(), SystemCommitKind::Gitignore)
+            .await
+    {
+        tracing::warn!("commit .gitignore repair failed after project clone: {e}");
     }
 
     crate::git::delivery::repair_project(&app, &path).await;

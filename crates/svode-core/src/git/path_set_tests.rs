@@ -10,9 +10,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use super::GitError;
-use super::autocommit::AutocommitService;
 use super::cli::GitCli;
-use super::policy::{GitUserPolicy, write_user_policy};
 use super::save::save;
 use super::staging_tests::{TestHost, cli, git, repo, write};
 use super::state::GitRuntime;
@@ -130,20 +128,10 @@ async fn saving_all_beyond_the_command_line_limit_commits_deletions_and_a_case_o
 }
 
 #[tokio::test]
-async fn a_structural_commit_of_a_moved_folder_beyond_the_command_line_limit_is_one_commit() {
+async fn an_exact_commit_of_a_moved_folder_beyond_the_command_line_limit_is_one_commit() {
     let cli = cli();
     let tmp = repo(&cli, true).await;
     let root = tmp.path();
-    write_user_policy(
-        root,
-        &GitUserPolicy {
-            auto_sync: false,
-            auto_commit_structural: true,
-            auto_commit_system: false,
-            auto_commit_content: false,
-        },
-    )
-    .unwrap();
     let moved = bulk(root, "Source/Folder", 600, 60);
     assert!(length(&moved) > WINDOWS_LIMIT);
     commit_all(&cli, root, "Tracked").await;
@@ -151,15 +139,16 @@ async fn a_structural_commit_of_a_moved_folder_beyond_the_command_line_limit_is_
     std::fs::rename(root.join("Source/Folder"), root.join("Target/Folder")).unwrap();
     let before = commits(&cli, root).await;
 
-    AutocommitService::new(Arc::new(GitRuntime::new()), Arc::new(TestHost::default()))
-        .commit_structural_paths_now(
-            root.to_path_buf(),
-            root.to_path_buf(),
-            vec![root.join("Source/Folder"), root.join("Target/Folder")],
+    assert!(
+        super::versions::commit_exact(
+            &cli,
+            root,
+            &["Source/Folder".to_string(), "Target/Folder".to_string()],
             "Move Folder",
         )
         .await
-        .expect("structural commit");
+        .expect("exact commit")
+    );
 
     assert_eq!(commits(&cli, root).await, before + 1);
     assert_eq!(
