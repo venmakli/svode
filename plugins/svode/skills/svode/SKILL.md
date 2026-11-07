@@ -1,6 +1,6 @@
 ---
 name: svode
-description: Read and change Svode projects, which keep Pages, Collections of items with fields and relations, Spaces, Routine definitions and Apps as Markdown and YAML files in Git. Use when the task touches a directory tree with .svode/config.json, a Svode Page, Collection, item, field, relation, schema, view, attachment, Routine or App, or when the user mentions Svode.
+description: Read and change Svode projects, which keep Pages, Collections of items with fields and relations, Spaces, Routine definitions and Apps as Markdown and YAML files in Git. Use when the task touches a directory tree with .svode/config.json, a Svode Page, Collection, item, field, relation, schema, view, attachment, Routine or App, when the user asks to start a Svode project or add a Space, or when the user mentions Svode.
 ---
 
 # Svode
@@ -16,7 +16,7 @@ Both run the same operations with the same results and codes; finish one change 
 
 ## Rules of the installed version
 
-Run `svode guide` once before the first change in a session (in MCP: `get_svode_guide`). It prints the rules of the Svode version you run: structure choice, Space targeting, fields, schema, attachments, Routines and Apps. Its operation names are MCP tool names; the matching command is under `svode --help`, and `svode <noun> [<verb>] --help` gives exact flags with an example. Trust the guide and help over memory or this skill.
+Run `svode guide` once before the first change in a session (in MCP: `get_svode_guide`). It prints the rules of the Svode version you run: structure choice, creating projects and Spaces, Space targeting, fields, schema, attachments, Routines and Apps. Its operation names are MCP tool names; the matching command is under `svode --help`, and `svode <noun> [<verb>] --help` gives exact flags with an example. Trust the guide and help over memory or this skill.
 
 ## Files first
 
@@ -24,6 +24,10 @@ Run `svode guide` once before the first change in a session (in MCP: `get_svode_
 - Change the text below the frontmatter of an existing Page, Collection item or README with your own editing tools. Keep the frontmatter byte for byte, the line endings and the file location. A new plain Page in an existing folder without `schema.yaml` can be created as a file.
 - Everything else goes through Svode, because Svode applies effects a raw edit misses: frontmatter (title, icon, description, cover, fields, relations), new Collection items and Pages under a leaf Page, rename (by title for a Page, item or Collection), move, delete, convert and order, `schema.yaml` and views, attachments, Routine definitions and the `.svode/`, `.routines/` and `.templates/` folders.
 - With file access do not rewrite a body through Svode: the body-write commands and tools serve clients without file access.
+
+## Projects and Spaces
+
+Start a project with `svode project create <path>` and add a Space with `svode space create <folder> --name <name>` (MCP: `create_project`, `create_space`); never write `.svode/` yourself. Read the guide before you choose between a project and a Space or pick the Git type of a Space.
 
 ## Apps
 
@@ -38,6 +42,7 @@ Svode commands and tools never commit. Check the `changedPaths` of every result 
 
 ## Git in a Svode project
 
+- These rules apply in the repositories of the Svode project: its root and its Spaces. In a nested repository that is not a Space, for example a code clone in a folder that the root `.gitignore` excludes, work by the rules of that repository: branches, commits, push and PRs there are ordinary work.
 - The Svode app commits and syncs the project. Without an explicit request from the user in the current conversation, do not run `git commit`, `commit --amend`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `clean`, or `checkout` or `switch` of branches.
 - When the user asks for Git work: integrate with merge, not rebase; never force-push or rewrite published history; never skip hooks (`--no-verify`); never change Git config; do not delete branches or tags unless asked; add files by explicit paths.
 - For a conflict or Git operation that Svode handed over: change only the listed files; keep what each side added unless the user decided otherwise; keep JSON, YAML and frontmatter valid and free of conflict markers; finish a merge with a commit that adds the resolved files by explicit paths and nothing else; continue or abort another operation as the user asked; do not publish: Svode pushes.

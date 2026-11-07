@@ -158,7 +158,8 @@ fn usage() -> String {
       app running: its bridge, targeting SVODE_MCP_PROJECT_PATH, else the
       project of the current directory, else the active window. Without it:
       the Svode project containing the current directory, served headless;
-      outside a project, tool calls answer PROJECT_UNAVAILABLE.
+      outside a project, tools that need one answer PROJECT_UNAVAILABLE
+      until create_project gives the session the project it creates.
   svode-mcp --app desktop
   svode-mcp --project <path> [--space <root|space-id>]
   svode-mcp install --client <{ids}>

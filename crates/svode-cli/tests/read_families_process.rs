@@ -483,7 +483,7 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
         value["guide"]
             .as_str()
             .unwrap()
-            .contains("Git in a Svode project:\n- The Svode app commits and syncs the project.")
+            .contains("Git in a Svode project:\n- These rules apply in the repositories of the Svode project: its root and its Spaces.")
     );
     // The CLI launches no Routine: the guide says where run_routine lives.
     assert!(

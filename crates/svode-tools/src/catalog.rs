@@ -1048,6 +1048,7 @@ fn annotations_are_mutating(annotations: Option<&ToolAnnotations>) -> bool {
 macro_rules! git_rules {
     () => {
         r#"Git in a Svode project:
+- These rules apply in the repositories of the Svode project: its root and its Spaces. In a nested repository that is not a Space, for example a code clone in a folder that the root `.gitignore` excludes, work by the rules of that repository: branches, commits, push and PRs there are ordinary work.
 - The Svode app commits and syncs the project. Without an explicit request from the user in the current conversation, do not run `git commit`, `commit --amend`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `clean`, or `checkout` or `switch` of branches.
 - When the user asks for Git work: integrate with merge, not rebase; never force-push or rewrite published history; never skip hooks (`--no-verify`); never change Git config; do not delete branches or tags unless asked; add files by explicit paths.
 - For a conflict or Git operation that Svode handed over: change only the listed files; keep what each side added unless the user decided otherwise; keep JSON, YAML and frontmatter valid and free of conflict markers; finish a merge with a commit that adds the resolved files by explicit paths and nothing else; continue or abort another operation as the user asked; do not publish: Svode pushes.
@@ -1083,6 +1084,25 @@ Space targeting:
 - Use spaceId "root" to explicitly target the project root space.
 - Use a child space id from list_spaces to target a child space.
 - Omit spaceId or pass null only when you intentionally want the active/default space; null is not a stable alias for root when a child space is active.
+
+Projects and Spaces:
+- create_space (`svode space create <folder> --name <name> [--git-type inline|independent|submodule]`) adds a child Space to the target project; create_project (`svode project create <path> [--name <name>]`, in MCP an absolute path) starts a new project in a new folder or in an existing one without .svode/config.json, Git repositories included, and registers it in the project list of this device, so Svode Desktop shows it on Home. Both work in the CLI and in Svode MCP, with or without the desktop app, and give the files, Git effects and storage defaults of Svode Desktop. Create a project or a Space only with them: never write `.svode/` yourself.
+- Create a Space for a separate area of work with its own audience, access or sync boundary, Routine owner or README context. A part of the same work is a Page or a folder; repeated records are a Collection.
+- Git types of a Space:
+  - inline (default): a folder in the root repository that reaches the members together with it. In a project without Git it is created without Git effects.
+  - independent: its own repository, excluded from the root by a `.gitignore` line, without a remote: members do not get its content until a remote is set in Svode Desktop. For example personal or client data.
+  - submodule: a new empty repository registered in the root. The gitlink appears in the root after the first commit of the Space, and the new repository commits manually.
+  - A Git project has no Space type outside Git: the closest is independent, outside the root repository.
+- Choose inline by default. A separate repository is justified by a different circle of access, not by its topic: Git cannot hide a part of a repository. Choose independent or submodule when the user asked for a separate repository or the content is private, and independent for closed content: the root keeps only its address, without a pointer. When in doubt, ask the user: MCP and the CLI can neither delete a Space nor turn an inline Space into a separate repository, so you cannot undo a wrong choice yourself.
+- An existing content repository becomes a Space by clone, which the user does in Svode Desktop (New space → Clone). submodule never attaches an existing repository.
+- A code repository with its own process (branches, PRs, someone else's upstream) is never made a Space, neither by clone in Svode Desktop nor as a submodule: Svode would write `.svode/`, a README and a `.gitignore` block into it, automatic commits would bypass its PRs and a submodule pointer would change with every branch. Keep it an ordinary clone in a folder that the root `.gitignore` excludes.
+- Project or Space: inside a project create a Space (PROJECT_NESTED points there); outside any project create a project, best in the directory of this session. Put the root at the widest level of the user's work and its directions into its Spaces: Spaces do not nest, and a finished project cannot later become a Space of another one.
+- A project in an existing repository adds `.svode/`, a README and a `.gitignore` block to its history. Do it without asking only in the user's own repository. When the repository has an upstream (`git remote -v` shows it; the result reports repositories[].upstream) or is worked on through PRs, ask the user first; the alternative is a separate project with the code cloned into an excluded folder. Today a repository with a remote is refused with REPOSITORY_ACCESS_DENIED until write access is verified on this device: the user opens the folder in Svode Desktop (Open folder), or you ask the user.
+- Creation never commits. The result names per repository who commits it: commit.by "desktop" means Svode Desktop commits the creation by the user's structural commit setting, with the message it names, now or when it opens the project; commit.by "manual" (reason structural_commits_off or new_repository) means the changes wait for a manual commit, which you make only on the user's request under the Git rules above. A project without Git (gitNotFound true) has nothing to commit.
+- Remote, storage strategy, LFS and commit settings are changed in Svode Desktop → Settings → Git / Storage (the settings field of the result); MCP and the CLI have no such operations. The result reports the storage the creation applied and whether a repository has an upstream.
+- Session after create_project: an MCP session served without the desktop app (headless) and started outside any project addresses the created project from its next call (session.addressesCreatedProject true); a session that already had a project keeps it. Through the running desktop app each call addresses the project of the calling agent's directory, and a call from outside any project addresses the active window, so the next calls reach the new project only when it contains that directory. Otherwise follow session.hint: `svode --project <path>` or a new agent session in its folder. The CLI addresses every command by its directory or --project.
+- registration.registered false (reason no_device_directory) means the device has no Svode config directory: the user opens the folder in Svode Desktop to list the project.
+- Codes, each refusal writing nothing: INVALID_PATH (a Space folder that is not one segment of ASCII letters, digits, '-' and '_', or a relative project path in MCP: fix the input), FILE_ALREADY_EXISTS (the Space folder exists: choose another folder), PROJECT_ALREADY_EXISTS (the folder already holds a project: work in it), PROJECT_NESTED (the folder is inside the project named in project: create a Space there), PATH_NOT_ACCESSIBLE (not a writable folder), GIT_NOT_FOUND (independent and submodule need Git: install Git or use inline), REPOSITORY_ACCESS_DENIED (write access is not verified: for a Space verify it with `svode git access verify` or in the desktop app and retry; for a project see above), SOURCE_BUSY (another Svode process writes the root config or the project list: retry later), INVALID_PROJECT_CONFIG (the root config is unreadable, for example during a merge: resolve it first). A failure after the first write removes what the call created; remaining lists what it could not remove.
 
 Index-backed reads:
 - search_pages, query_collection_items and the Knowledge tools answer from the Svode index and return `index`: status fresh, or partial when some sources could not be read and their earlier rows are kept, plus verifiedAt and diagnostics.
@@ -2333,6 +2353,13 @@ mod tests {
         ] {
             assert!(GIT_RULES.contains(rule), "missing rule: {rule}");
         }
+        // The scope revised on 2026-11-07: the repositories of the project
+        // only; a nested repository that is not a Space keeps its own rules.
+        assert!(GIT_RULES.contains(
+            "These rules apply in the repositories of the Svode project: its root and its Spaces."
+        ));
+        assert!(GIT_RULES.contains("In a nested repository that is not a Space"));
+        assert!(GIT_RULES.contains("work by the rules of that repository"));
         // The rule revised on 2026-10-29: the agent finishes the merge itself.
         assert!(!GIT_RULES.contains("do not stage"));
 
@@ -2654,6 +2681,117 @@ mod tests {
         let plugin: Value =
             serde_json::from_str(include_str!("../../../plugins/svode/plugin.json")).unwrap();
         assert!(plugin["description"].as_str().unwrap().contains("Apps"));
+    }
+
+    #[test]
+    fn guide_and_skill_describe_project_and_space_creation() {
+        let guide = guide_text();
+        let section = &guide[guide
+            .find("Projects and Spaces:")
+            .expect("Projects and Spaces section")..];
+        let section = &section[..section.find("\n\n").unwrap_or(section.len())];
+        for part in [
+            // Both capabilities, their commands and modes.
+            "create_space",
+            "create_project",
+            "`svode space create <folder> --name <name> [--git-type inline|independent|submodule]`",
+            "`svode project create <path> [--name <name>]`",
+            "in MCP an absolute path",
+            "with or without the desktop app",
+            "never write `.svode/` yourself",
+            // When a Space, a Page or folder, or a Collection.
+            "own audience, access or sync boundary, Routine owner or README context",
+            "A part of the same work is a Page or a folder; repeated records are a Collection",
+            // The three Git types, their consequences and no type outside Git.
+            "inline (default): a folder in the root repository",
+            "In a project without Git it is created without Git effects",
+            "excluded from the root by a `.gitignore` line, without a remote",
+            "members do not get its content until a remote is set in Svode Desktop",
+            "The gitlink appears in the root after the first commit of the Space",
+            "the new repository commits manually",
+            "no Space type outside Git: the closest is independent",
+            // The choice of the type.
+            "Choose inline by default",
+            "different circle of access, not by its topic",
+            "independent for closed content",
+            "When in doubt, ask the user",
+            "neither delete a Space nor turn an inline Space into a separate repository",
+            // Clone of a content repository, a code repository is no Space.
+            "(New space → Clone)",
+            "submodule never attaches an existing repository",
+            "A code repository with its own process",
+            "is never made a Space, neither by clone in Svode Desktop nor as a submodule",
+            "an ordinary clone in a folder that the root `.gitignore` excludes",
+            // Project or Space, the widest root, existing repositories.
+            "inside a project create a Space (PROJECT_NESTED points there)",
+            "best in the directory of this session",
+            "widest level of the user's work",
+            "Spaces do not nest",
+            "Do it without asking only in the user's own repository",
+            "repositories[].upstream",
+            "ask the user first",
+            "Open folder",
+            // Commits, settings, the session.
+            "Creation never commits",
+            "commit.by \"desktop\"",
+            "commit.by \"manual\"",
+            "Svode Desktop → Settings → Git / Storage",
+            "session.addressesCreatedProject",
+            "a session that already had a project keeps it",
+            "session.hint",
+        ] {
+            assert!(section.contains(part), "the creation section misses {part}");
+        }
+        assert!(section.contains(crate::tools::creation::SETTINGS_LOCATION));
+        for code in [
+            "INVALID_PATH",
+            "FILE_ALREADY_EXISTS",
+            "PROJECT_ALREADY_EXISTS",
+            "PROJECT_NESTED",
+            "PATH_NOT_ACCESSIBLE",
+            "GIT_NOT_FOUND",
+            "REPOSITORY_ACCESS_DENIED",
+            "SOURCE_BUSY",
+            "INVALID_PROJECT_CONFIG",
+        ] {
+            assert!(
+                section.contains(&format!("{code} (")),
+                "the creation section misses the recovery of {code}"
+            );
+        }
+
+        let skill = include_str!("../../../plugins/svode/skills/svode/SKILL.md");
+        let description = skill
+            .lines()
+            .find_map(|line| line.strip_prefix("description: "))
+            .expect("skill description");
+        assert!(description.contains("start a Svode project or add a Space"));
+        let rule = &skill[skill
+            .find("## Projects and Spaces\n")
+            .expect("Projects and Spaces section of the skill")..];
+        let rule = &rule[..rule[1..].find("\n## ").map_or(rule.len(), |end| end + 1)];
+        for pointer in [
+            "`svode project create <path>`",
+            "`svode space create <folder> --name <name>`",
+            "`create_project`",
+            "`create_space`",
+            "never write `.svode/` yourself",
+            "Read the guide",
+        ] {
+            assert!(rule.contains(pointer), "the skill misses {pointer}");
+        }
+        // The skill points to the guide instead of repeating the choice.
+        for detail in [
+            "independent",
+            "submodule",
+            "inline",
+            "PROJECT_NESTED",
+            "Clone",
+            "upstream",
+            "circle of access",
+        ] {
+            assert!(!skill.contains(detail), "the skill repeats {detail}");
+        }
     }
 
     #[test]

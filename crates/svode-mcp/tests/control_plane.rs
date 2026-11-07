@@ -127,6 +127,7 @@ fn control_plane_reports_host_version_and_filtered_catalog() {
             && value.contains("canonical contentPath")
             && value.contains("validate_app_manifest")
             && value.contains("list_agent_actors for the same spaceId")
+            && value.contains("only with create_project and create_space, never by writing .svode/")
             && value.ends_with(svode_tools::catalog::GIT_RULES)
     }));
 
