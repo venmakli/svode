@@ -4,9 +4,14 @@
 //! and on quit. Desktop plans these moments; this owner decides which groups
 //! closed and commits them. A version never takes the paths of system or
 //! structural changes, and versions wait while the repository is in a Git
-//! operation, has files in conflict or a detached HEAD, and while an agent
-//! turn or a Routine run holds the repository ([`super::turns`]).
+//! operation, has files in conflict or a detached HEAD, while an agent turn
+//! or a Routine run holds the repository ([`super::turns`]) and while
+//! another writer holds its write guard. The pending creation commits of
+//! the repository land before its versions, and until they land no version
+//! takes their paths or a path inside an Inline Space they create
+//! ([`super::super::space_creation`]).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -17,7 +22,7 @@ use super::super::host::GitHost;
 use super::super::path::{RootMode, repo_relative_from_base};
 use super::super::pending::PendingSave;
 use super::super::state::GitRuntime;
-use super::super::{branch, ops, policy, staging};
+use super::super::{access, branch, ops, policy, space_creation, staging, write_guard};
 use super::changes::{ChangeStatus, PathChange, Sources};
 use super::group::{self, GroupKind, PendingOperation, VersionGroup, at_or_under};
 use super::{MessageLanguage, commit_grouped, commit_single};
@@ -65,6 +70,10 @@ pub enum Held {
     /// An agent turn or a Routine run is in progress in the repository; its
     /// end makes the version of the turn.
     Turn,
+    /// Another writer, such as a Space being created by another process,
+    /// holds the write guard of the repository past the bounded wait; the
+    /// next closing tries again.
+    Writer,
 }
 
 /// What a closing did to a repository.
@@ -139,16 +148,30 @@ pub(super) async fn version(
     let cli = runtime.require_cli()?;
     let lock = runtime.get_lock(repo).await;
     let guard = lock.lock().await;
+    // A version never commits what another writer is still writing.
+    let repository = access::local_repository_root(repo)?;
+    let writes = match write_guard::acquire(&BTreeSet::from([repository]), &[]).await {
+        Ok(writes) => writes,
+        Err(GitError::SourceBusy { .. }) => return Ok(AutoVersions::Held(Held::Writer)),
+        Err(error) => return Err(error),
+    };
     if branch::operation_in_progress(&cli, repo).await?.is_some() {
         return Ok(AutoVersions::Held(Held::Operation));
     }
-    let status = ops::full_status(&cli, repo).await?;
+    let mut status = ops::full_status(&cli, repo).await?;
     if status.has_conflicts {
         return Ok(AutoVersions::Held(Held::Conflicts));
     }
     if status.branch == "(detached)" || status.branch == "HEAD" {
         return Ok(AutoVersions::Held(Held::DetachedHead));
     }
+    // The creation commits come first; a refused one stops the closing and
+    // the next closing repeats it first.
+    if space_creation::commit_pending_locked(&cli, host, repo).await? > 0 {
+        status = ops::full_status(&cli, repo).await?;
+    }
+    let creations = space_creation::pending(&cli, repo).await?;
+    let created = |path: &str| creations.iter().any(|creation| creation.holds(path));
 
     let pending = runtime.pending();
     let peeked = pending
@@ -169,7 +192,9 @@ pub(super) async fn version(
     let changes = status
         .files
         .iter()
-        .filter(|file| file.state != "conflict" && !nested_repository(repo, &file.path))
+        .filter(|file| {
+            file.state != "conflict" && !nested_repository(repo, &file.path) && !created(&file.path)
+        })
         .map(|file| PathChange {
             status: match file.state.as_str() {
                 "untracked" => ChangeStatus::Added,
@@ -216,6 +241,7 @@ pub(super) async fn version(
             if let Ok(path) = repo_relative_from_base(repo, &path, RootMode::Reject)
                 && !paths.contains(&path)
                 && !derived.contains(&path)
+                && !created(&path)
             {
                 derived.push(path);
             }
@@ -259,6 +285,7 @@ pub(super) async fn version(
         },
     };
     drop(taken);
+    drop(writes);
     drop(guard);
     if commits > 0 {
         super::super::autocommit::finish_content_version(runtime, host, &cli, repo).await;

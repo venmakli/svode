@@ -12,6 +12,7 @@ pub mod default_agent;
 pub mod git;
 pub mod index;
 pub mod page;
+pub mod project;
 pub mod routines;
 pub mod runtime;
 pub mod space_config;

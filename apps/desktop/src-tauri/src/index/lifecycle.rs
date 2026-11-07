@@ -245,7 +245,7 @@ mod tests {
             sqlx::query("INSERT INTO routine_schedule_state VALUES (?, 'routine', 'fingerprint', 'checkpoint', 'next-run')")
                 .bind(format!("owner-{i}")).execute(&routines).await.unwrap();
             let dir = state.dir_for_key(key).await.unwrap();
-            crate::space::config::mutate_local_config(&dir, |local| {
+            svode_core::routines::local::mutate_with::<_, crate::error::AppError>(&dir, |local| {
                 local
                     .routines
                     .as_mut()

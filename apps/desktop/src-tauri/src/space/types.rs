@@ -124,7 +124,7 @@ pub use svode_core::storage::config::{
 
 // --- Local Config (.svode/local.json) ---
 
-pub use svode_core::routines::local::{GitUserPolicy, LocalConfig};
+pub use svode_core::routines::local::GitUserPolicy;
 
 // --- Git type & status ---
 
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn local_config_accepts_git_user_policy() {
-        let config: LocalConfig = serde_json::from_str(
+        let config: svode_core::routines::local::LocalConfig = serde_json::from_str(
             r#"{
                 "git": {
                     "autoSync": true,

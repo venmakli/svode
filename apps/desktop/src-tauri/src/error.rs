@@ -142,6 +142,25 @@ impl From<svode_core::space_config::SpaceConfigError> for AppError {
     }
 }
 
+impl From<svode_core::project::ProjectError> for AppError {
+    fn from(error: svode_core::project::ProjectError) -> Self {
+        use svode_core::project::ProjectError;
+        match error {
+            ProjectError::InvalidFolder(path) | ProjectError::PathNotAccessible(path) => {
+                Self::PathNotAccessible(path)
+            }
+            ProjectError::FileAlreadyExists(path) => Self::FileAlreadyExists(path),
+            ProjectError::Config(error) => error.into(),
+            ProjectError::LocalConfig(error) => error.into(),
+            ProjectError::Git(error) => error.into(),
+            ProjectError::Io(error) => Self::Io(error),
+            error @ (ProjectError::NameRequired
+            | ProjectError::NoProjectRepository
+            | ProjectError::RollbackIncomplete { .. }) => Self::General(error.to_string()),
+        }
+    }
+}
+
 impl From<svode_core::index::IndexError> for AppError {
     fn from(error: svode_core::index::IndexError) -> Self {
         match error {

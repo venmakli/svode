@@ -218,17 +218,6 @@ pub(crate) fn plan_global_identity_mutation(
     GlobalIdentityMutationPlan::Update
 }
 
-pub async fn get_local_identity(
-    cli: &GitCli,
-    repo_path: &Path,
-) -> Result<Option<GitIdentity>, AppError> {
-    let (name, email) = get_local_identity_fields(cli, repo_path).await?;
-    match (name, email) {
-        (Some(name), Some(email)) => Ok(Some(GitIdentity { name, email })),
-        _ => Ok(None),
-    }
-}
-
 pub async fn get_local_identity_fields(
     cli: &GitCli,
     repo_path: &Path,
@@ -470,21 +459,6 @@ pub async fn get_effective_identity(
         field_sources,
         source,
     })
-}
-
-/// Copy local identity from `root_path` into `new_space_path`. Called after
-/// `git init` for new independent/submodule spaces, and after clone /
-/// `submodule update --init`. No-op when the root has no local identity —
-/// the global config will apply via natural git precedence.
-pub async fn scaffold_space_git_identity(
-    cli: &GitCli,
-    new_space_path: &Path,
-    root_path: &Path,
-) -> Result<(), AppError> {
-    if let Some(id) = get_local_identity(cli, root_path).await? {
-        set_local_identity(cli, new_space_path, Some(&id.name), Some(&id.email)).await?;
-    }
-    Ok(())
 }
 
 /// Apply identity to root + N target_spaces. Stops at the first failure and

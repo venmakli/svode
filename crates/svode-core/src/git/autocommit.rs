@@ -332,6 +332,13 @@ impl AutocommitService {
         .await
     }
 
+    /// Make the pending creation commits of the Spaces of `project_path`
+    /// where structural commits are on for it (Stage 11 05 «Коммиты
+    /// создания»): only their creation paths, one commit per Space.
+    pub async fn commit_space_creations(&self, project_path: &Path) -> Result<usize, GitError> {
+        super::space_creation::commit_pending(&self.runtime, self.host.as_ref(), project_path).await
+    }
+
     /// Commit the scaffolded `.svode/` directory.
     pub async fn commit_scaffold(
         &self,

@@ -862,6 +862,31 @@ pub async fn register_local_submodule_metadata(
     Ok(())
 }
 
+/// Copy the local identity of `root` into the repository `repo`: a new,
+/// cloned or materialized Space repository commits as the Project does. A
+/// root without a complete local identity leaves `repo` to the global one.
+pub async fn copy_local_identity(cli: &GitCli, root: &Path, repo: &Path) -> Result<(), GitError> {
+    let mut identity = Vec::new();
+    for key in ["user.name", "user.email"] {
+        let out = cli.exec(root, &["config", "--local", "--get", key]).await?;
+        let value = out.stdout.trim();
+        if out.exit_code != 0 || value.is_empty() {
+            return Ok(());
+        }
+        identity.push((key, value.to_string()));
+    }
+    for (key, value) in identity {
+        let out = cli.exec(repo, &["config", "--local", key, &value]).await?;
+        if out.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(format!(
+                "git config --local {key} failed: {}",
+                out.stderr.trim()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Validate a clone URL (HTTPS or SSH).
 pub fn validate_clone_url(url: &str) -> Result<(), GitError> {
     let trimmed = url.trim();

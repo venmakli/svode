@@ -43,6 +43,7 @@ pub(crate) mod save_chain_tests;
 #[cfg(test)]
 mod save_tests;
 pub mod service_merge;
+pub mod space_creation;
 pub mod stage_merge;
 pub mod staging;
 #[cfg(test)]

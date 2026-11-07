@@ -192,6 +192,20 @@ pub async fn commit_single(
     .await
 }
 
+/// Commit exactly `paths` (a scope Git expands) with `message`; the staged
+/// versions of other paths stay staged. `false` when none of them changed.
+pub(crate) async fn commit_exact(
+    cli: &GitCli,
+    repo: &Path,
+    paths: &[String],
+    message: &str,
+) -> Result<bool, GitError> {
+    let Some(prepared) = prepare(cli, repo, paths).await? else {
+        return Ok(false);
+    };
+    commit_prepared(cli, repo, &prepared.paths, &prepared.present, message).await
+}
+
 /// The facts of several groups as one: each fact keeps its place.
 fn merged<'a>(groups: impl Iterator<Item = &'a GroupFacts>) -> GroupFacts {
     let mut all = GroupFacts {

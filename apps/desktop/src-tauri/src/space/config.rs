@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::AppError;
 
-use super::types::{LocalConfig, SpaceConfig};
+use super::types::SpaceConfig;
 
 /// Read space config from {space_path}/.svode/config.json.
 pub fn read_space_config(path: &Path) -> Result<SpaceConfig, AppError> {
@@ -13,13 +13,6 @@ pub fn read_space_config(path: &Path) -> Result<SpaceConfig, AppError> {
 /// this version does not know as they are in the file.
 pub fn write_space_config(path: &Path, config: &SpaceConfig) -> Result<(), AppError> {
     Ok(svode_core::space_config::write(path, config)?)
-}
-
-pub fn mutate_local_config<T>(
-    path: &Path,
-    mutate: impl FnOnce(&mut LocalConfig) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    svode_core::routines::local::mutate_with(path, mutate)
 }
 
 #[cfg(test)]
@@ -106,7 +99,7 @@ mod tests {
             let barrier = barrier.clone();
             writers.push(std::thread::spawn(move || {
                 barrier.wait();
-                mutate_local_config(&path, |local| {
+                svode_core::routines::local::mutate_with::<_, AppError>(&path, |local| {
                     match owner {
                         "git" => {
                             local.git = Some(GitUserPolicy {

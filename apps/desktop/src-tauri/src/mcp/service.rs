@@ -39,7 +39,14 @@ mod tests {
     use super::*;
 
     fn scaffold_test_space(path: &Path, name: &str) {
-        crate::space::scaffold::scaffold_space(path, name, "", "").expect("scaffold space");
+        svode_core::project::scaffold::scaffold(
+            path,
+            name,
+            "",
+            "",
+            svode_core::project::scaffold::Storage::Inherited,
+        )
+        .expect("scaffold space");
     }
 
     #[test]

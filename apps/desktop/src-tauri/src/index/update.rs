@@ -584,7 +584,7 @@ mod tests {
             &IndexKey::Root(project.to_path_buf()),
             owner_path,
         );
-        crate::space::config::mutate_local_config(project, |local| {
+        svode_core::routines::local::mutate_with::<_, crate::error::AppError>(project, |local| {
             let routines = local.routines.get_or_insert_with(Default::default);
             if enabled {
                 routines.automatic_authority.insert(key, true);

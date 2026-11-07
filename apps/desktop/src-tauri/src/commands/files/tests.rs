@@ -51,7 +51,14 @@ async fn update_title(
 #[tokio::test]
 async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
     let tmp = TempDir::new().unwrap();
-    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    svode_core::project::scaffold::scaffold(
+        tmp.path(),
+        "Test",
+        "",
+        "",
+        svode_core::project::scaffold::Storage::Inherited,
+    )
+    .unwrap();
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     std::fs::write(
         tmp.path().join("Parent.md"),
@@ -94,7 +101,14 @@ async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
 #[tokio::test]
 async fn collection_create_with_a_unique_title_skips_a_folder_of_the_same_name() {
     let tmp = TempDir::new().unwrap();
-    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    svode_core::project::scaffold::scaffold(
+        tmp.path(),
+        "Test",
+        "",
+        "",
+        svode_core::project::scaffold::Storage::Inherited,
+    )
+    .unwrap();
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     std::fs::create_dir_all(tmp.path().join("untitled")).unwrap();
     std::fs::write(tmp.path().join("untitled/Note.md"), "Kept\n").unwrap();
@@ -144,7 +158,14 @@ async fn collection_create_with_a_unique_title_skips_a_folder_of_the_same_name()
 #[tokio::test]
 async fn collection_create_rejects_invalid_schema_before_source_effects() {
     let tmp = TempDir::new().unwrap();
-    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    svode_core::project::scaffold::scaffold(
+        tmp.path(),
+        "Test",
+        "",
+        "",
+        svode_core::project::scaffold::Storage::Inherited,
+    )
+    .unwrap();
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     let schema: CollectionSchema = serde_norway::from_str(
         "columns:\n  - { name: Status, type: text }\n  - { name: Status, type: number }\nviews: []\n",
@@ -179,7 +200,14 @@ async fn collection_create_rejects_invalid_schema_before_source_effects() {
 #[tokio::test]
 async fn collection_create_materializes_two_way_reverse_schema() {
     let tmp = TempDir::new().unwrap();
-    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    svode_core::project::scaffold::scaffold(
+        tmp.path(),
+        "Test",
+        "",
+        "",
+        svode_core::project::scaffold::Storage::Inherited,
+    )
+    .unwrap();
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     std::fs::create_dir_all(tmp.path().join("Sprints")).unwrap();
     std::fs::write(
@@ -222,7 +250,14 @@ async fn collection_create_materializes_two_way_reverse_schema() {
 #[tokio::test]
 async fn collection_create_rolls_back_after_reverse_schema_conflict() {
     let tmp = TempDir::new().unwrap();
-    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    svode_core::project::scaffold::scaffold(
+        tmp.path(),
+        "Test",
+        "",
+        "",
+        svode_core::project::scaffold::Storage::Inherited,
+    )
+    .unwrap();
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     std::fs::create_dir_all(tmp.path().join("Sprints")).unwrap();
     let reverse_schema = "columns:\n  - { name: Tasks, type: text }\nviews: []\n";

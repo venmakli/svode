@@ -146,6 +146,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn space_folder_allows_ascii_friendly_names() {
+        assert_eq!(
+            normalize_space_folder("Ops_2026-support-v2").unwrap(),
+            "Ops_2026-support-v2"
+        );
+    }
+
+    #[test]
+    fn space_folder_rejects_paths_and_unsafe_names() {
+        for folder in [
+            "testov/support",
+            "testov\\support",
+            "../support",
+            "/support",
+            "C:/support",
+            "поддержка",
+        ] {
+            assert!(normalize_space_folder(folder).is_err(), "{folder}");
+        }
+    }
+
+    #[test]
     fn normalizes_windows_separators_spaces_and_unicode() {
         assert_eq!(
             normalize_repo_path("Folder With Space\\кириллица.md").unwrap(),

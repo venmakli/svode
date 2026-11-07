@@ -10,7 +10,6 @@ use super::delivery::host;
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
-use crate::space::project;
 use crate::space::types::{GitUserPolicy, SpaceGitType};
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
 use svode_core::git::cli::{GitAvailability, GitCli};
@@ -22,6 +21,7 @@ use svode_core::git::versions::{self, MessageLanguage};
 use svode_core::git::{
     conflict_base, conflict_file, conflict_kind, flow, markers, ops, page_merge, sync,
 };
+use svode_core::project::scaffold;
 use svode_core::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
@@ -224,7 +224,7 @@ pub async fn git_clone_space(
     let project_dir = PathBuf::from(&project_path);
     let target = PathBuf::from(&target_path);
     let target_folder = repo_relative_from_base(&project_dir, &target, RootMode::Reject)?;
-    let space_folder = project::normalize_space_folder(&target_folder)?;
+    let space_folder = svode_core::git::path::normalize_space_folder(&target_folder)?;
     if let Some(parent_dir) = target.parent() {
         std::fs::create_dir_all(parent_dir)?;
     }
@@ -244,9 +244,9 @@ pub async fn git_clone_space(
         let svode_existed_before = svode_dir.exists();
         let readme_existed_before = target.join("README.md").exists();
         if svode_existed_before {
-            crate::space::project::ensure_scope_readme(&target, &space_folder)?;
+            scaffold::ensure_scope_readme(&target, &space_folder)?;
         } else {
-            crate::space::scaffold::scaffold_repository_space(&target, &space_folder, "", "")?;
+            scaffold::scaffold(&target, &space_folder, "", "", scaffold::Storage::Own)?;
         }
         drop(_guard);
         drop(child_guard);

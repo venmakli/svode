@@ -14,7 +14,10 @@ use crate::project_runtime::ProjectRuntimeState;
 use crate::routines::RoutineSchedulerState;
 use crate::space::{config, content_tree, project, registry, settings, types::*};
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
+use svode_core::git::path::normalize_space_folder;
 use svode_core::git::{local_repair, ops};
+use svode_core::project::scaffold::{self, Storage};
+use svode_core::project::space as space_create;
 use svode_core::storage::lfs::LfsState;
 use svode_core::system_path;
 
@@ -673,7 +676,7 @@ async fn prepare_project(
     // A config that cannot be read leaves the project without a README repair.
     let (cfg, config_unreadable) = project::read_registered_config(&project_path)?;
     let readme_created = if repairs_allowed && config_unreadable.is_none() {
-        project::ensure_scope_readme(&project_path, &cfg.name)?
+        scaffold::ensure_scope_readme(&project_path, &cfg.name)?
     } else {
         false
     };
@@ -733,7 +736,7 @@ pub async fn reorder_spaces(
 #[tauri::command]
 pub async fn create_space(
     app: AppHandle,
-    git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
     project_runtime: State<'_, ProjectRuntimeState>,
     parent_path: String,
     name: String,
@@ -742,110 +745,43 @@ pub async fn create_space(
     git_type: SpaceGitType,
 ) -> Result<SpaceInfo, AppError> {
     let parent = Path::new(&parent_path);
-    require_repository_mutation(&app, parent).await?;
-    crate::git::delivery::require_scope_repair(&app, parent, parent).await?;
-    let folder_name = project::normalize_space_folder(&folder_name)?;
-    let info = project::create_space(parent, &name, &icon, &folder_name, git_type)?;
-    let space_dir = parent.join(&folder_name);
-    let root_structural_autocommit = auto_commit_structural_enabled(parent);
-    let space_structural_autocommit = auto_commit_structural_enabled(&space_dir);
-
-    // Unified root-commit message — `Add <type> space <folder>`. Type is
-    // visible in history without reading the diff.
-    let type_label = match git_type {
-        SpaceGitType::Inline => "inline",
-        SpaceGitType::Independent => "independent",
-        SpaceGitType::Submodule => "submodule",
+    let created = space_create::create(
+        &crate::git::delivery::runtime(&app),
+        crate::git::delivery::host(&app).as_ref(),
+        space_create::SpaceCreate {
+            project: parent.to_path_buf(),
+            name,
+            folder: folder_name,
+            git_type,
+            icon: Some(icon),
+            description: None,
+        },
+    )
+    .await?;
+    let config = SpaceConfig {
+        icon: created.icon,
+        description: created.description,
+        ..SpaceConfig::named(&created.name)
     };
-    let root_message = format!("Add {} space {}", type_label, folder_name);
-
-    match git_type {
-        SpaceGitType::Inline => {
-            ops::ensure_inline_gitignore(parent)?;
-            if root_structural_autocommit {
-                if let Some(cli) = git_state.detected() {
-                    let lock = git_state.get_lock(parent).await;
-                    let _guard = lock.lock().await;
-                    ops::add_all(cli, parent).await?;
-                    let _ = ops::commit(cli, parent, &root_message).await?;
-                }
-            }
-        }
-        SpaceGitType::Independent => {
-            let cli = require_cli(&git_state)?;
-            {
-                let lock = git_state.get_lock(&space_dir).await;
-                let _guard = lock.lock().await;
-                ops::init_with_optional_scaffold_commit(&cli, &space_dir, false).await?;
-                if let Err(e) =
-                    crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
-                {
-                    tracing::warn!(
-                        "scaffold_space_git_identity failed for new independent space: {e}"
-                    );
-                }
-                if space_structural_autocommit {
-                    ops::add_all(&cli, &space_dir).await?;
-                    let _ = ops::commit(&cli, &space_dir, "Scaffold .svode").await?;
-                }
-            }
-            ops::add_independent_gitignore(parent, &folder_name)?;
-            if root_structural_autocommit {
-                let root_lock = git_state.get_lock(parent).await;
-                let _root_guard = root_lock.lock().await;
-                ops::add_all(&cli, parent).await?;
-                let _ = ops::commit(&cli, parent, &root_message).await?;
-            }
-        }
-        SpaceGitType::Submodule => {
-            let cli = require_cli(&git_state)?;
-            {
-                let lock = git_state.get_lock(&space_dir).await;
-                let _guard = lock.lock().await;
-                ops::init_with_optional_scaffold_commit(&cli, &space_dir, false).await?;
-                if let Err(e) =
-                    crate::identity::scaffold_space_git_identity(&cli, &space_dir, parent).await
-                {
-                    tracing::warn!(
-                        "scaffold_space_git_identity failed for new submodule space: {e}"
-                    );
-                }
-                if space_structural_autocommit {
-                    ops::add_all(&cli, &space_dir).await?;
-                    let _ = ops::commit(&cli, &space_dir, "Scaffold .svode").await?;
-                }
-            }
-            {
-                let parent_lock = git_state.get_lock(parent).await;
-                let _parent_guard = parent_lock.lock().await;
-                if root_structural_autocommit && space_structural_autocommit {
-                    let out = cli
-                        .exec(parent, &["submodule", "add", &format!("./{folder_name}")])
-                        .await?;
-                    if out.exit_code != 0 {
-                        return Err(AppError::GitCommandFailed(format!(
-                            "git submodule add failed: {}",
-                            out.stderr
-                        )));
-                    }
-                    ops::add_all(&cli, parent).await?;
-                    let _ = ops::commit(&cli, parent, &root_message).await?;
-                } else {
-                    ops::register_local_submodule_metadata(&cli, parent, &folder_name).await?;
-                    if root_structural_autocommit {
-                        ops::add(&cli, parent, ".svode/config.json").await?;
-                        ops::add(&cli, parent, ".gitmodules").await?;
-                        let _ = ops::commit(&cli, parent, &root_message).await?;
-                    }
-                }
-            }
-        }
-    }
+    let info = project::ready_space_info(created.id, config, None, &created.path);
 
     project_runtime
-        .on_space_added(&app, parent, &info.id, &folder_name, info.status)
+        .on_space_added(&app, parent, &info.id, &created.folder, info.status)
         .await;
-    emit_space_added(&app, parent, &info, &folder_name);
+    emit_space_added(&app, parent, &info, &created.folder);
+
+    // The creation commit, where structural commits are on: only its paths.
+    // A refusal keeps the space and becomes the commit stop (1.E n. 3).
+    match autocommit.commit_space_creations(parent).await {
+        Ok(_) => {}
+        Err(svode_core::git::GitError::SourceBusy { .. }) => {
+            tracing::info!("creation commit deferred while another writer holds the project");
+        }
+        Err(error) => {
+            tracing::warn!(kind = error.kind(), "creation commit refused");
+            crate::git::auto_versions::settle(&app, parent.to_path_buf(), Err(error));
+        }
+    }
 
     Ok(info)
 }
@@ -933,7 +869,7 @@ pub async fn register_cloned_space(
 ) -> Result<SpaceInfo, AppError> {
     let path = Path::new(&parent_path);
     require_repository_mutation(&app, path).await?;
-    let folder_name = project::normalize_space_folder(&folder_name)?;
+    let folder_name = normalize_space_folder(&folder_name)?;
     let repo = if git_type == "independent" {
         Some(url)
     } else {
@@ -944,8 +880,14 @@ pub async fn register_cloned_space(
     let svode_existed_before = space_dir.join(".svode").join("config.json").exists();
     let readme_existed_before = space_dir.join("README.md").exists();
 
-    let info =
-        project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
+    let connected =
+        scaffold::connect_child(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
+    let info = project::ready_space_info(
+        connected.id,
+        connected.opened.config,
+        connected.opened.config_unreadable,
+        &space_dir,
+    );
 
     crate::git::delivery::repair_project(&app, path).await;
     crate::git::delivery::repair_scope_best_effort(&app, path, &space_dir).await;
@@ -1162,18 +1104,11 @@ pub async fn ensure_space_scaffold(
 
     let svode_existed_before = path.join(".svode").join("config.json").exists();
     let readme_existed_before = path.join("README.md").exists();
-    let fallback_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| "Space".to_string());
+    let fallback_name = scaffold::folder_name(path);
     if svode_existed_before {
-        project::ensure_scope_readme(path, &fallback_name)?;
+        scaffold::ensure_scope_readme(path, &fallback_name)?;
     } else {
-        if path.join(".git").symlink_metadata().is_ok() {
-            crate::space::scaffold::scaffold_repository_space(path, &fallback_name, "", "")?;
-        } else {
-            crate::space::scaffold::scaffold_space(path, &fallback_name, "", "")?;
-        }
+        scaffold::scaffold(path, &fallback_name, "", "", Storage::of_folder(path))?;
     }
 
     crate::git::delivery::repair_project(&app, Path::new(&project_path)).await;
@@ -1265,10 +1200,8 @@ pub async fn clone_missing_space(
         let lock = git_state.get_lock(&space_dir).await;
         let _guard = lock.lock().await;
         crate::git::clone::clone_with_progress(&cli, &app, url, &space_dir).await?;
-        if let Err(e) =
-            crate::identity::scaffold_space_git_identity(&cli, &space_dir, &parent).await
-        {
-            tracing::warn!("scaffold_space_git_identity failed after clone: {e}");
+        if let Err(e) = ops::copy_local_identity(&cli, &parent, &space_dir).await {
+            tracing::warn!("copy_local_identity failed after clone: {e}");
         }
         if root_mutation_allowed
             && crate::git::delivery::repair_scope(&app, &parent, &parent).await?
@@ -1287,10 +1220,8 @@ pub async fn clone_missing_space(
         let root_lock = git_state.get_lock(&parent).await;
         let _root_guard = root_lock.lock().await;
         svode_core::git::branch::materialize(&cli, &parent, &space_dir, &space_ref.path).await?;
-        if let Err(e) =
-            crate::identity::scaffold_space_git_identity(&cli, &space_dir, &parent).await
-        {
-            tracing::warn!("scaffold_space_git_identity failed after submodule update: {e}");
+        if let Err(e) = ops::copy_local_identity(&cli, &parent, &space_dir).await {
+            tracing::warn!("copy_local_identity failed after submodule update: {e}");
         }
     }
 
@@ -1301,9 +1232,9 @@ pub async fn clone_missing_space(
     let svode_existed_before = svode_dir.exists();
     let readme_existed_before = space_dir.join("README.md").exists();
     if svode_existed_before {
-        project::ensure_scope_readme(&space_dir, &space_ref.path)?;
+        scaffold::ensure_scope_readme(&space_dir, &space_ref.path)?;
     } else {
-        crate::space::scaffold::scaffold_repository_space(&space_dir, &space_ref.path, "", "")?;
+        scaffold::scaffold(&space_dir, &space_ref.path, "", "", Storage::Own)?;
     }
     if !svode_existed_before || !readme_existed_before {
         let commit_result = if !svode_existed_before && readme_existed_before {
