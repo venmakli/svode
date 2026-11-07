@@ -39,7 +39,9 @@ export function reconcileAttachmentPeek(
         ["page", "collection", "app"].includes(candidate.kind),
     );
   if (item?.kind === "app" && !item.hasApp) return null;
-  return item
-    ? { ...current, item, sourceGeneration: snapshot.generation }
+  if (item) return { ...current, item, sourceGeneration: snapshot.generation };
+  // A file viewer owns its not-found state, so a missing file keeps the peek.
+  return current.item.kind === "document" || current.item.kind === "media"
+    ? current
     : null;
 }
