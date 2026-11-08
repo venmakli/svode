@@ -1,11 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, useEffect, useState } from "react";
+import { act, useContext, useEffect, useState } from "react";
 import type {
   AttachmentActivationRequest,
   AttachmentItem,
 } from "@/features/attachments";
+import type { SpaceInfo } from "@/features/space";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { isEscapeTaken } from "@/shared/lib/escape-key";
 import { createTestDom } from "@/shared/testing/dom";
@@ -82,6 +83,68 @@ if (process.env.SVODE_PEEK_ESCAPE_DOM !== "1") {
   const { PagePeekSheet } = await import("@/features/collection/app-shell");
   const { TerminalPanelHost } = await import("@/features/terminal");
   const { PeekIdentity, PeekTopBar } = await import("@/shared/ui/peek-top-bar");
+  const { TitleZone } = await import("@/features/page/detail");
+  const { CollectionPropertyPanel } =
+    await import("@/features/properties/panel");
+  const { defineOwnerDefinedCollectionProperty } =
+    await import("@/features/properties");
+  const { UserEditScope } = await import("@/features/navigation");
+  const { ThemeProvider } = await import("@/components/ui/theme-provider");
+  const { ChatAttachmentOpenerContext } =
+    await import("@/features/agent-sessions");
+  const { registerRootSpace } = await import("@/features/space");
+
+  interface Note {
+    summary: string | null;
+  }
+  const summary = defineOwnerDefinedCollectionProperty<Note>({
+    capabilities: {
+      edit: { getState: () => ({ status: "idle" }), update: async () => {} },
+    },
+    featureId: "test",
+    getValue: (note) => note.summary,
+    key: "summary",
+    label: "Summary",
+    standard: { type: "text" },
+  });
+  /**
+   * The content of a page peek as the owner peek draws it: the top bar, the
+   * editable title of the page and its properties.
+   */
+  function PageContent({ onClose }: { onClose(): void }) {
+    return (
+      <ThemeProvider theme="light" setTheme={() => {}}>
+        <UserEditScope mainArea={false}>
+          <PeekTopBar
+            identity={<PeekIdentity icon={null} name="Roadmap" />}
+            onExpand={() => {}}
+            onClose={onClose}
+          />
+          <TitleZone
+            title="Roadmap"
+            icon={null}
+            description=""
+            hideDescription
+            onTitleChange={() => {}}
+            onIconChange={() => {}}
+            onDescriptionChange={() => {}}
+            onBodyFocus={() => {}}
+          />
+          <CollectionPropertyPanel
+            item={{ summary: "Review" }}
+            properties={[summary]}
+          />
+        </UserEditScope>
+      </ThemeProvider>
+    );
+  }
+  // The chat opens a page in the owner peek of the app shell.
+  mock.module("./compact-scope-peek", () => ({
+    CompactScopePeek: ({ onClose }: { onClose(): void }) => (
+      <PageContent onClose={onClose} />
+    ),
+  }));
+  const { ChatAttachmentPeekProvider } = await import("./chat-attachment-peek");
 
   async function settle() {
     await act(async () => {
@@ -121,8 +184,49 @@ if (process.env.SVODE_PEEK_ESCAPE_DOM !== "1") {
     peeks().at(-1)?.querySelector<HTMLElement>(`[aria-label="${label}"]`) ??
     null;
   const row = () => doc.querySelector<HTMLElement>("[data-row]")!;
+  const titleField = () =>
+    peeks().at(-1)!.querySelector<HTMLInputElement>("[data-page-title-input]")!;
+  const propertyField = () =>
+    peeks()
+      .at(-1)!
+      .querySelector<HTMLInputElement>(
+        '[data-collection-property-editor="summary"] input',
+      )!;
 
-  function attachment(kind: "document" | "media", path: string) {
+  /** Types into a field as a user does, the field focused. */
+  async function type(field: HTMLInputElement, value: string) {
+    await act(async () => {
+      field.focus();
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(field, value);
+      field.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await settle();
+  }
+  /**
+   * Esc in an edit of the title or a property of the top peek cancels the
+   * edit and keeps the peek; the next Esc closes it, focus at `source`.
+   */
+  async function expectTwoStepEscape(
+    field: () => HTMLInputElement,
+    saved: string,
+    source: () => HTMLElement,
+  ) {
+    await type(field(), "Draft");
+    expect(field().value).toBe("Draft");
+    await pressEscape();
+    expect(peeks().length).toBe(1);
+    expect(field().value).toBe(saved);
+    expect(doc.activeElement === field()).toBe(false);
+    await pressEscape();
+    expect(peeks().length).toBe(0);
+    await settle();
+    expect(doc.activeElement).toBe(source());
+  }
+
+  function attachment(kind: AttachmentItem["kind"], path: string) {
     const item: AttachmentItem = {
       key: `${kind}:${path}`,
       path,
@@ -190,7 +294,9 @@ if (process.env.SVODE_PEEK_ESCAPE_DOM !== "1") {
           onOpenChange={(open) => {
             if (!open) setShownRequest(null);
           }}
-          renderOwnerPeek={() => null}
+          renderOwnerPeek={(context) => (
+            <PageContent onClose={context.onClose} />
+          )}
         />
       </>
     );
@@ -303,7 +409,7 @@ if (process.env.SVODE_PEEK_ESCAPE_DOM !== "1") {
     await dom.render(null);
   }, 30_000);
 
-  test("a page peek closes on one Esc from its top bar, Esc in its title cancels the edit", async () => {
+  test("a page peek closes on one Esc from its top bar; Esc in its title or a property first cancels the edit", async () => {
     const page = {
       path: "Tasks/Roadmap.md",
       body: "",
@@ -334,14 +440,7 @@ if (process.env.SVODE_PEEK_ESCAPE_DOM !== "1") {
           onDeletePage={() => {}}
           onConvertedPage={() => {}}
           renderPeek={(context) => (
-            <>
-              <PeekTopBar
-                identity={<PeekIdentity icon={null} name="Roadmap" />}
-                onExpand={() => {}}
-                onClose={() => context.dismiss()}
-              />
-              <input data-page-title-input defaultValue="Roadmap" />
-            </>
+            <PageContent onClose={() => context.dismiss()} />
           )}
         />
       );
@@ -375,11 +474,85 @@ if (process.env.SVODE_PEEK_ESCAPE_DOM !== "1") {
     await settle();
     expect(doc.activeElement).toBe(focusAfterButton);
 
-    await act(async () => setOpen(true));
-    await settle();
-    await focus(doc.querySelector<HTMLElement>("[data-page-title-input]")!);
+    for (const field of [titleField, propertyField]) {
+      await act(async () => setOpen(true));
+      await settle();
+      await expectTwoStepEscape(
+        field,
+        field === titleField ? "Roadmap" : "Review",
+        () => focusAfterButton as HTMLElement,
+      );
+    }
+    await dom.render(null);
+  }, 30_000);
+
+  test("a page peek of Attachments: one Esc closes it, Esc in its title or a property first cancels the edit", async () => {
+    await mountApp();
+    const page = attachment("page", "Roadmap.md");
+    await open(page);
     await pressEscape();
-    expect(peeks().length).toBe(1);
+    await expectClosedToRow();
+
+    await open(page);
+    await expectTwoStepEscape(titleField, "Roadmap", row);
+    await open(page);
+    await expectTwoStepEscape(propertyField, "Review", row);
+    await dom.render(null);
+  }, 30_000);
+
+  test("a page peek of the chat: one Esc closes it, Esc in its title or a property first cancels the edit", async () => {
+    registerRootSpace({
+      id: "root",
+      name: "Project",
+      path: project,
+    } as SpaceInfo);
+    let openChatAttachment: (attachment: {
+      path: string;
+      name: string;
+    }) => void = () => {};
+    function Badge() {
+      const opener = useContext(ChatAttachmentOpenerContext);
+      useEffect(() => {
+        if (opener) openChatAttachment = opener;
+      });
+      return (
+        <button type="button" data-badge>
+          Roadmap.md
+        </button>
+      );
+    }
+    await dom.render(
+      <TooltipProvider delayDuration={300}>
+        <ChatAttachmentPeekProvider>
+          <Badge />
+        </ChatAttachmentPeekProvider>
+        <TerminalPanelHost />
+      </TooltipProvider>,
+    );
+    await settle();
+    const badge = () => doc.querySelector<HTMLElement>("[data-badge]")!;
+    async function openFromChat() {
+      await focus(badge());
+      await act(async () =>
+        openChatAttachment({
+          path: `${project}/Roadmap.md`,
+          name: "Roadmap.md",
+        }),
+      );
+      await settle();
+      expect(peeks().length).toBe(1);
+    }
+
+    await openFromChat();
+    await pressEscape();
+    expect(peeks().length).toBe(0);
+    await settle();
+    expect(doc.activeElement).toBe(badge());
+
+    await openFromChat();
+    await expectTwoStepEscape(titleField, "Roadmap", badge);
+    await openFromChat();
+    await expectTwoStepEscape(propertyField, "Review", badge);
     await dom.render(null);
   }, 30_000);
 

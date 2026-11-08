@@ -1,5 +1,12 @@
-import { lazy, Suspense, useCallback, useState, type ReactNode } from "react";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useOpenArtifact,
@@ -20,7 +27,7 @@ import { usePeekNavigation } from "@/features/scope-surfaces";
 import type { HeldMedia, LocalMediaFile } from "@/features/media/app-shell";
 import { useSpace } from "@/features/space";
 import { openPath } from "@/platform/native/shell";
-import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { chatAttachmentRoute, htmlRoute } from "./chat-attachment-route";
 import { CompactScopePeek } from "./compact-scope-peek";
 
@@ -63,6 +70,15 @@ export function ChatAttachmentPeekProvider({
   children: ReactNode;
 }) {
   const [target, setTarget] = useState<AttachmentPeekTarget | null>(null);
+  // Where the opening came from, e.g. the badge: the peek returns focus there.
+  const sourceRef = useRef<HTMLElement | null>(null);
+  const rememberSource = () => {
+    const focused = document.activeElement;
+    sourceRef.current =
+      focused instanceof HTMLElement && focused !== document.body
+        ? focused
+        : null;
+  };
   const rootSpaces = useSpace((state) => state.rootSpaces);
   const spaces = useSpace((state) => state.spaces);
   const activeRootId = useSpace((state) => state.activeRootId);
@@ -72,6 +88,7 @@ export function ChatAttachmentPeekProvider({
   )?.path;
   const open = useCallback(
     async (attachment: ChatAttachment) => {
+      rememberSource();
       const location = locateChatAttachment(attachment.path, [
         ...rootSpaces,
         ...spaces,
@@ -125,10 +142,10 @@ export function ChatAttachmentPeekProvider({
     [activeRootId, projectPath, rootSpaces, spaces],
   );
 
-  const openHeld = useCallback(
-    (media: HeldMedia) => setTarget({ kind: "held-media", media }),
-    [],
-  );
+  const openHeld = useCallback((media: HeldMedia) => {
+    rememberSource();
+    setTarget({ kind: "held-media", media });
+  }, []);
 
   return (
     <ChatAttachmentOpenerContext.Provider
@@ -139,6 +156,7 @@ export function ChatAttachmentPeekProvider({
         <ChatAttachmentPeek
           target={target}
           projectPath={projectPath}
+          sourceRef={sourceRef}
           onClose={() => setTarget(null)}
         />
       </ChatHeldMediaOpenerContext.Provider>
@@ -149,10 +167,13 @@ export function ChatAttachmentPeekProvider({
 function ChatAttachmentPeek({
   target: requested,
   projectPath,
+  sourceRef,
   onClose,
 }: {
   target: AttachmentPeekTarget | null;
   projectPath: string | undefined;
+  /** The element focused when the peek opened, to return focus to. */
+  sourceRef: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
   const navigation = usePeekNavigation(requested, (target) =>
@@ -166,97 +187,98 @@ function ChatAttachmentPeek({
     navigation.dismiss();
     onClose();
   };
-  usePeekStackEntry(Boolean(target), () => void leave(() => close(), "close"));
+  // Expand hands focus to the main area instead of the source.
+  const closeToMain = () => {
+    sourceRef.current = null;
+    close();
+  };
   const project =
     projectPath ??
     (target && "location" in target ? target.location.spacePath : "");
 
   return (
-    <Sheet
+    <PeekSheet
       open={Boolean(target)}
-      onOpenChange={(open) => {
-        if (!open) void leave(() => close(), "close");
+      title={
+        (target?.kind === "held-media"
+          ? target.media.name
+          : target?.attachment.name) ?? ""
+      }
+      onRequestClose={() => void leave(() => close(), "close")}
+      onCloseAutoFocus={(event) => {
+        const source = sourceRef.current;
+        sourceRef.current = null;
+        if (!source?.isConnected) return;
+        event.preventDefault();
+        source.focus();
       }}
     >
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
-        className="gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none"
-        style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
-      >
-        <SheetTitle className="sr-only">
-          {(target?.kind === "held-media"
-            ? target.media.name
-            : target?.attachment.name) ?? ""}
-        </SheetTitle>
-        {target?.kind === "page" ? (
-          <CompactScopePeek
-            key={navigation.sessionKey}
-            path={target.location.path}
-            surfaceId={target.surfaceId}
-            spaceId={target.location.spaceId}
-            spacePath={target.location.spacePath}
-            projectPath={project}
-            sessionKey={navigation.sessionKey}
-            fallbackTitle={target.attachment.name}
-            registerNavigationGuard={navigation.registerNavigationGuard}
-            dismiss={close}
-            onExpand={(openFull) =>
-              void leave(async () => {
-                if (await openFull()) close();
-              }, "expand")
-            }
-            onClose={() => void leave(() => close(), "close")}
-          />
-        ) : target?.kind === "local-media" ? (
-          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
-            <MediaSurface file={target.file} onClose={close} />
-          </Suspense>
-        ) : target?.kind === "local-document" ? (
-          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
-            <DocumentSurface file={target.file} onClose={close} />
-          </Suspense>
-        ) : target?.kind === "held-media" ? (
-          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
-            <MediaSurface held={target.media} onClose={close} />
-          </Suspense>
-        ) : target ? (
-          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
-            {(() => {
-              const Surface =
-                target.kind === "document" ? DocumentSurface : MediaSurface;
-              return (
-                <Surface
-                  path={target.location.path}
-                  projectPath={project}
-                  spaceId={target.registeredSpaceId}
-                  spacePath={target.location.spacePath}
-                  changes={
-                    <ChangesControl
-                      origin="peek"
-                      target={fileChangesTarget({
-                        spacePath: target.location.spacePath,
-                        projectPath: project,
-                        path: target.location.path,
-                      })}
-                    />
-                  }
-                  onClose={close}
-                  onOpenFullPage={() => {
-                    close();
-                    openArtifact({
+      {target?.kind === "page" ? (
+        <CompactScopePeek
+          key={navigation.sessionKey}
+          path={target.location.path}
+          surfaceId={target.surfaceId}
+          spaceId={target.location.spaceId}
+          spacePath={target.location.spacePath}
+          projectPath={project}
+          sessionKey={navigation.sessionKey}
+          fallbackTitle={target.attachment.name}
+          registerNavigationGuard={navigation.registerNavigationGuard}
+          dismiss={close}
+          onExpand={(openFull) =>
+            void leave(async () => {
+              if (await openFull()) closeToMain();
+            }, "expand")
+          }
+          onClose={() => void leave(() => close(), "close")}
+        />
+      ) : target?.kind === "local-media" ? (
+        <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+          <MediaSurface file={target.file} onClose={close} />
+        </Suspense>
+      ) : target?.kind === "local-document" ? (
+        <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+          <DocumentSurface file={target.file} onClose={close} />
+        </Suspense>
+      ) : target?.kind === "held-media" ? (
+        <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+          <MediaSurface held={target.media} onClose={close} />
+        </Suspense>
+      ) : target ? (
+        <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+          {(() => {
+            const Surface =
+              target.kind === "document" ? DocumentSurface : MediaSurface;
+            return (
+              <Surface
+                path={target.location.path}
+                projectPath={project}
+                spaceId={target.registeredSpaceId}
+                spacePath={target.location.spacePath}
+                changes={
+                  <ChangesControl
+                    origin="peek"
+                    target={fileChangesTarget({
+                      spacePath: target.location.spacePath,
+                      projectPath: project,
                       path: target.location.path,
-                      sourceShape: "file",
-                      spaceId: target.registeredSpaceId,
-                    });
-                  }}
-                />
-              );
-            })()}
-          </Suspense>
-        ) : null}
-      </SheetContent>
-    </Sheet>
+                    })}
+                  />
+                }
+                onClose={close}
+                onOpenFullPage={() => {
+                  closeToMain();
+                  openArtifact({
+                    path: target.location.path,
+                    sourceShape: "file",
+                    spaceId: target.registeredSpaceId,
+                  });
+                }}
+              />
+            );
+          })()}
+        </Suspense>
+      ) : null}
+    </PeekSheet>
   );
 }

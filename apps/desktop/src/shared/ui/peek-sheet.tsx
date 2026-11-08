@@ -2,12 +2,17 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import {
+  cancelsEditOnEscape,
+  keepLayerOpenOnEscape,
+} from "@/shared/lib/escape-key";
 import { cn } from "@/shared/lib/utils";
 
 /**
  * The overlay of every object peek: the right sheet at peek width over a
  * light scrim, on the peek stack. Closing it by Esc, the scrim or ⌘W asks
- * `onRequestClose`, which runs the leave guard of the content.
+ * `onRequestClose`, which runs the leave guard of the content. Esc in an
+ * inline edit of the content only cancels the edit (`cancelsEditOnEscape`).
  */
 export function PeekSheet({
   open,
@@ -23,10 +28,7 @@ export function PeekSheet({
   onRequestClose(): void;
   className?: string;
   children: ReactNode;
-} & Pick<
-  ComponentProps<typeof SheetContent>,
-  "onCloseAutoFocus" | "onEscapeKeyDown"
-> &
+} & Pick<ComponentProps<typeof SheetContent>, "onCloseAutoFocus"> &
   Record<`data-${string}`, string | boolean | undefined>) {
   usePeekStackEntry(open, onRequestClose);
   return (
@@ -46,6 +48,9 @@ export function PeekSheet({
           className,
         )}
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
+        onEscapeKeyDown={(event) => {
+          if (cancelsEditOnEscape(event.target)) keepLayerOpenOnEscape(event);
+        }}
         {...contentProps}
       >
         <SheetTitle className="sr-only">{title}</SheetTitle>

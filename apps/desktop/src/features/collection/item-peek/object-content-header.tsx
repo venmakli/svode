@@ -152,6 +152,7 @@ function EditableObjectContentHeader({
           aria-describedby={titleField.message ? titleErrorId : undefined}
           aria-busy={titleField.pending || undefined}
           data-object-content-header-title
+          data-escape-cancels-edit
           className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-[22px] font-bold leading-8 outline-none [overflow-wrap:anywhere]"
           onFocus={titleField.onFocus}
           onChange={(event) =>
@@ -199,6 +200,7 @@ function EditableObjectContentHeader({
             aria-busy={descriptionField.pending || undefined}
             placeholder={m.editor_description_placeholder()}
             data-object-content-header-description
+            data-escape-cancels-edit
             className="min-h-5 min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-[13px] leading-5 text-muted-foreground outline-none placeholder:text-muted-foreground/40 [overflow-wrap:anywhere]"
             onFocus={() => {
               descriptionField.onFocus();
@@ -362,19 +364,4 @@ function useAutoHeight(
     node.style.height = "0px";
     node.style.height = `${node.scrollHeight}px`;
   }, [ref, value]);
-}
-
-/**
- * Whether Escape in `target` belongs to an inline edit of the content header,
- * which it cancels, rather than to the overlay around the screen.
- */
-export function keepsObjectContentHeaderEditOnEscape(
-  target: EventTarget | null,
-): boolean {
-  const element = target as Element | null;
-  if (!element || typeof element.closest !== "function") return false;
-  return (
-    element.tagName === "TEXTAREA" &&
-    element.closest("[data-object-content-header]") !== null
-  );
 }

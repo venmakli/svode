@@ -266,6 +266,7 @@ export function TitleZone({
             }}
             onKeyDown={handleKeyDown}
             data-page-title-input
+            data-escape-cancels-edit={titleReadOnly ? undefined : true}
             placeholder={defaultTitle}
             className="min-w-0 bg-transparent text-[22px] font-bold leading-8 outline-none placeholder:text-muted-foreground/40"
           />

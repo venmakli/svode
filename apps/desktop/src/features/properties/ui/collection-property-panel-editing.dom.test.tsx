@@ -42,8 +42,7 @@ if (process.env.SVODE_PROPERTY_PANEL_EDITING_DOM !== "1") {
     await import("../model/common-property");
   const { CollectionPropertyPanel } =
     await import("./collection-property-panel");
-  const { keepsCollectionPropertyEditorOnEscape } =
-    await import("./collection-property-editor");
+  const { cancelsEditOnEscape } = await import("@/shared/lib/escape-key");
   const { subscribeUserEdits, UserEditScope } =
     await import("@/features/navigation");
   const document = dom.window.document;
@@ -328,10 +327,8 @@ if (process.env.SVODE_PROPERTY_PANEL_EDITING_DOM !== "1") {
     });
     try {
       await type(input("summary"), "Draft");
-      expect(keepsCollectionPropertyEditorOnEscape(input("summary"))).toBe(
-        true,
-      );
-      expect(keepsCollectionPropertyEditorOnEscape(document.body)).toBe(false);
+      expect(cancelsEditOnEscape(input("summary"))).toBe(true);
+      expect(cancelsEditOnEscape(document.body)).toBe(false);
       await key(input("summary"), "Escape");
       expect(input("summary").value).toBe("Review");
       expect(writes).toEqual([]);

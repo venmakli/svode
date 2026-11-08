@@ -82,7 +82,6 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
   }));
   mock.module("@/features/properties/panel", () => ({
     CollectionPropertyPanel: () => null,
-    keepsCollectionPropertyEditorOnEscape: () => false,
   }));
 
   const { mockNativeIpc } = await import("@/platform/native/testing");

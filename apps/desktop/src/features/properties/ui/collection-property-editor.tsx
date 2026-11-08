@@ -26,21 +26,6 @@ import { propertyValidationMessage } from "./validation-message";
 
 const EDITOR_ATTRIBUTE = "data-collection-property-editor";
 
-/**
- * Whether Escape in `target` belongs to an open edit of the property panel,
- * which it cancels, rather than to the surface around the panel.
- */
-export function keepsCollectionPropertyEditorOnEscape(
-  target: EventTarget | null,
-): boolean {
-  const element = target as Element | null;
-  if (!element || typeof element.closest !== "function") return false;
-  return (
-    (element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
-    element.closest(`[${EDITOR_ATTRIBUTE}]`) !== null
-  );
-}
-
 export function readCollectionPropertyEditState<Item>(
   edit: CollectionPropertyEdit<Item>,
   item: Item,
@@ -190,6 +175,7 @@ export function CollectionPropertyEditor<Item>({
     <div
       className="flex min-w-0 flex-col gap-1"
       {...{ [EDITOR_ATTRIBUTE]: property.key }}
+      data-escape-cancels-edit
       data-collection-panel-property-state={status}
       aria-busy={busy || undefined}
       onKeyDown={(event) => {

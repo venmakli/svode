@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act, useEffect, useState, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import type { CollectionItemPeekController } from "./types";
@@ -71,6 +70,8 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
   })) as unknown as typeof window.matchMedia;
 
   const doc = dom.window.document;
+  // React detects input events by the presence of `document` at import.
+  const { createRoot } = await import("react-dom/client");
 
   async function settle() {
     await act(async () => {
@@ -96,6 +97,7 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
     options: {
       guard?: () => boolean | Promise<boolean>;
       expand?: (id: string) => (() => void) | null;
+      editable?: boolean;
     } = {},
   ) {
     const { TooltipProvider } = await import("@/components/ui/tooltip");
@@ -157,7 +159,17 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
                 <p data-item-content>{item.name}</p>
               </Expandable>
             ),
-            header: { icon: <span>☺</span>, title: item.name },
+            header: {
+              icon: <span>☺</span>,
+              title: item.name,
+              edit: options.editable
+                ? {
+                    description: "",
+                    onTitleCommit: async () => {},
+                    onDescriptionCommit: async () => {},
+                  }
+                : undefined,
+            },
             identity: { icon: <span>☺</span>, name: item.name },
             menu: (
               <CollectionItemActionsMenu
@@ -319,6 +331,48 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
     await env.open("grace", false);
     expect(identity()).toBe("Grace");
     expect(expandButton()).toBeNull();
+    await env.unmount();
+  });
+
+  test("Esc in an edit of the header cancels it and keeps the peek; the next Esc closes it to the row", async () => {
+    const env = await setup([{ id: "ada", name: "Ada" }], { editable: true });
+    await env.open("ada");
+    const title = () =>
+      doc.querySelector<HTMLTextAreaElement>(
+        "[data-object-content-header-title]",
+      )!;
+    async function escape() {
+      const target = (doc.activeElement as HTMLElement | null) ?? doc.body;
+      await act(async () => {
+        target.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await settle();
+    }
+    await act(async () => {
+      title().focus();
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(title(), "Draft");
+      title().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(title().value).toBe("Draft");
+    await escape();
+    expect(doc.querySelector("[data-collection-item-peek]") === null).toBe(
+      false,
+    );
+    expect(title().value).toBe("Ada");
+    expect(doc.activeElement === title()).toBe(false);
+    await escape();
+    expect(doc.querySelector("[data-collection-item-peek]")).toBeNull();
+    expect(doc.activeElement?.id).toBe("row-ada");
     await env.unmount();
   });
 }

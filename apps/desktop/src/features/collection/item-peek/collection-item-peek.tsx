@@ -5,12 +5,8 @@ import { UserEditScope } from "@/features/navigation";
 import { cn } from "@/shared/lib/utils";
 import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
-import { keepsCollectionPropertyEditorOnEscape } from "@/features/properties/panel";
 
-import {
-  keepsObjectContentHeaderEditOnEscape,
-  ObjectContentHeader,
-} from "./object-content-header";
+import { ObjectContentHeader } from "./object-content-header";
 import type {
   CollectionItemPeekController,
   CollectionItemPeekFocus,
@@ -80,15 +76,6 @@ export function CollectionItemPeek<Target, Item>({
       title={screen?.identity.name ?? ""}
       onRequestClose={() => void close()}
       data-collection-item-peek
-      onEscapeKeyDown={(event) => {
-        // Escape first cancels an open edit of a property or the header.
-        if (
-          keepsCollectionPropertyEditorOnEscape(event.target) ||
-          keepsObjectContentHeaderEditOnEscape(event.target)
-        ) {
-          event.preventDefault();
-        }
-      }}
       onCloseAutoFocus={(event) => {
         if (focusItemPeekTarget(closeFocus)) event.preventDefault();
       }}

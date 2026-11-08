@@ -1,9 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { PeekSheet } from "@/shared/ui/peek-sheet";
-import { keepLayerOpenOnEscape } from "@/shared/lib/escape-key";
 import { pageNavigationItem, type Page } from "@/features/page";
-import { keepsCollectionPropertyEditorOnEscape } from "@/features/properties/panel";
 import { useSpace } from "@/features/space";
 import { PageDetailActions } from "@/features/page/detail";
 import {
@@ -52,16 +50,6 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
       open={Boolean(target)}
       title={target?.page.meta.title ?? m.collection_open_in_peek()}
       onRequestClose={() => void leave(() => close(), "close")}
-      onEscapeKeyDown={(event) => {
-        // Esc in the title or in a property cancels its edit and keeps the
-        // peek open.
-        if (
-          (event.target instanceof HTMLElement &&
-            event.target.matches("[data-page-title-input]:not([readonly])")) ||
-          keepsCollectionPropertyEditorOnEscape(event.target)
-        )
-          keepLayerOpenOnEscape(event);
-      }}
     >
       {target
         ? props.renderPeek({

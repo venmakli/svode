@@ -9,8 +9,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
@@ -70,7 +69,6 @@ export function AttachmentsPeek({
       dismiss();
       afterClose?.();
     }, "close");
-  usePeekStackEntry(Boolean(target), () => void close());
   const activationRef = useRef(target?.activation);
   useEffect(() => {
     if (target) activationRef.current = target.activation;
@@ -99,111 +97,97 @@ export function AttachmentsPeek({
     ) : null;
 
   return (
-    <Sheet
+    <PeekSheet
       open={Boolean(target)}
-      onOpenChange={(open) => {
-        if (!open) void close();
+      title={target?.item.displayName ?? m.scope_surface_attachments()}
+      onRequestClose={() => void close()}
+      className={isBinaryViewer ? "pb-0" : undefined}
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        restoreAttachmentFocus(activationRef.current);
       }}
     >
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
+      {target && !isBinaryViewer && !isOwner ? (
+        <PeekTopBar
+          identity={
+            <PeekIdentity
+              icon={<AttachmentIcon item={target.item} />}
+              name={target.item.displayName}
+            />
+          }
+          onClose={() => void close()}
+        />
+      ) : null}
+      <div
         className={cn(
-          "gap-0 p-0 data-[side=right]:sm:max-w-none",
-          isBinaryViewer ? "pt-2 pb-0" : "pt-2 pb-6",
+          "min-h-0 flex-1 overflow-x-hidden",
+          isBinaryViewer
+            ? "overflow-hidden"
+            : isOwner
+              ? "overflow-hidden"
+              : "scrollbar-hide overflow-y-auto",
         )}
-        style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          restoreAttachmentFocus(activationRef.current);
-        }}
       >
-        <SheetTitle className="sr-only">
-          {target?.item.displayName ?? m.scope_surface_attachments()}
-        </SheetTitle>
-        {target && !isBinaryViewer && !isOwner ? (
-          <PeekTopBar
-            identity={
-              <PeekIdentity
-                icon={<AttachmentIcon item={target.item} />}
-                name={target.item.displayName}
-              />
+        {target?.item.kind === "directory" ? (
+          directoryContent
+        ) : isOwner && target ? (
+          <OwnerPeekContent
+            renderOwnerPeek={renderOwnerPeek}
+            target={target}
+            spaceId={target.owner.spaceId ?? owner.spaceId}
+            registerCloseGuard={registerCloseGuard}
+            onContentPathChange={onContentPathChange}
+            dismiss={dismiss}
+            onExpand={(openFullPage) =>
+              void navigation.leave(async () => {
+                if (await openFullPage()) dismiss();
+              }, "expand")
             }
             onClose={() => void close()}
           />
-        ) : null}
-        <div
-          className={cn(
-            "min-h-0 flex-1 overflow-x-hidden",
-            isBinaryViewer
-              ? "overflow-hidden"
-              : isOwner
-                ? "overflow-hidden"
-                : "scrollbar-hide overflow-y-auto",
-          )}
-        >
-          {target?.item.kind === "directory" ? (
-            directoryContent
-          ) : isOwner && target ? (
-            <OwnerPeekContent
-              renderOwnerPeek={renderOwnerPeek}
-              target={target}
-              spaceId={target.owner.spaceId ?? owner.spaceId}
-              registerCloseGuard={registerCloseGuard}
-              onContentPathChange={onContentPathChange}
-              dismiss={dismiss}
-              onExpand={(openFullPage) =>
-                void navigation.leave(async () => {
-                  if (await openFullPage()) dismiss();
-                }, "expand")
-              }
-              onClose={() => void close()}
+        ) : target?.item.kind === "document" ? (
+          <Suspense fallback={<DocumentPeekLoadingState />}>
+            <DocumentSurface
+              path={target.item.path}
+              projectPath={resolvedProjectPath}
+              spaceId={target.owner.spaceId}
+              spacePath={resolvedSpacePath}
+              changes={fileChanges}
+              onClose={() => onOpenChange(false)}
+              onOpenFullPage={() => {
+                onOpenChange(false);
+                openArtifact({
+                  path: target.item.path,
+                  sourceShape: target.item.sourceShape,
+                  spaceId: target.owner.spaceId,
+                });
+              }}
             />
-          ) : target?.item.kind === "document" ? (
-            <Suspense fallback={<DocumentPeekLoadingState />}>
-              <DocumentSurface
-                path={target.item.path}
-                projectPath={resolvedProjectPath}
-                spaceId={target.owner.spaceId}
-                spacePath={resolvedSpacePath}
-                changes={fileChanges}
-                onClose={() => onOpenChange(false)}
-                onOpenFullPage={() => {
-                  onOpenChange(false);
-                  openArtifact({
-                    path: target.item.path,
-                    sourceShape: target.item.sourceShape,
-                    spaceId: target.owner.spaceId,
-                  });
-                }}
-              />
-            </Suspense>
-          ) : target?.item.kind === "media" ? (
-            <Suspense fallback={<MediaPeekLoadingState />}>
-              <MediaSurface
-                path={target.item.path}
-                projectPath={resolvedProjectPath}
-                spaceId={target.owner.spaceId}
-                spacePath={resolvedSpacePath}
-                changes={fileChanges}
-                onClose={() => onOpenChange(false)}
-                onOpenFullPage={() => {
-                  onOpenChange(false);
-                  openArtifact({
-                    path: target.item.path,
-                    sourceShape: target.item.sourceShape,
-                    spaceId: target.owner.spaceId,
-                  });
-                }}
-              />
-            </Suspense>
-          ) : target ? (
-            <BinaryAvailability item={target.item} />
-          ) : null}
-        </div>
-      </SheetContent>
-    </Sheet>
+          </Suspense>
+        ) : target?.item.kind === "media" ? (
+          <Suspense fallback={<MediaPeekLoadingState />}>
+            <MediaSurface
+              path={target.item.path}
+              projectPath={resolvedProjectPath}
+              spaceId={target.owner.spaceId}
+              spacePath={resolvedSpacePath}
+              changes={fileChanges}
+              onClose={() => onOpenChange(false)}
+              onOpenFullPage={() => {
+                onOpenChange(false);
+                openArtifact({
+                  path: target.item.path,
+                  sourceShape: target.item.sourceShape,
+                  spaceId: target.owner.spaceId,
+                });
+              }}
+            />
+          </Suspense>
+        ) : target ? (
+          <BinaryAvailability item={target.item} />
+        ) : null}
+      </div>
+    </PeekSheet>
   );
 }
 
