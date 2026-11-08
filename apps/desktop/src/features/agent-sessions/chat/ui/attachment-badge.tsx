@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { File, FileText, FileX, Folder, Image } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -41,7 +41,7 @@ export function AttachmentBadge({
    */
   onOpen?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const hoverCard = useBadgeHoverCard();
   const available = useAttachmentAvailable(attachment.path);
   const openAttachment = useOpenAttachment();
   const kind = attachmentKind(attachment.path);
@@ -50,11 +50,8 @@ export function AttachmentBadge({
 
   return (
     <HoverCard
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) recheckAttachments();
-      }}
+      open={hoverCard.open}
+      onOpenChange={hoverCard.onOpenChange}
       openDelay={300}
     >
       <HoverCardTrigger asChild>
@@ -76,10 +73,13 @@ export function AttachmentBadge({
                   })
                 : attachment.name
             }
+            {...hoverCard.triggerProps}
             onClick={() => {
               if (available === false) return;
               if (onOpen) onOpen();
-              else openAttachment?.(attachment);
+              else if (openAttachment) openAttachment(attachment);
+              else return;
+              hoverCard.dismiss();
             }}
           >
             <Icon data-icon="inline-start" />
@@ -88,7 +88,7 @@ export function AttachmentBadge({
         </Badge>
       </HoverCardTrigger>
       <HoverCardContent className="w-72" align="start">
-        {open && (
+        {hoverCard.open && (
           <AttachmentPreviewCard
             attachment={attachment}
             kind={kind}
@@ -98,6 +98,52 @@ export function AttachmentBadge({
       </HoverCardContent>
     </HoverCard>
   );
+}
+
+/**
+ * The hover card of a badge. Once the badge opened what it names, the card
+ * closes and stays shut, even when its pending open fires or the click
+ * focuses the badge, until the pointer has left the badge and focus has
+ * left it too: the opened surface may cover a pointer that has not moved.
+ */
+function useBadgeHoverCard() {
+  const [open, setOpen] = useState(false);
+  const pointerInside = useRef(false);
+  const focused = useRef(false);
+  const dismissed = useRef(false);
+
+  const release = () => {
+    if (!pointerInside.current && !focused.current) dismissed.current = false;
+  };
+
+  return {
+    open,
+    onOpenChange(next: boolean) {
+      if (next && dismissed.current) return;
+      setOpen(next);
+      if (next) recheckAttachments();
+    },
+    dismiss() {
+      setOpen(false);
+      if (pointerInside.current || focused.current) dismissed.current = true;
+    },
+    triggerProps: {
+      onPointerEnter() {
+        pointerInside.current = true;
+      },
+      onPointerLeave() {
+        pointerInside.current = false;
+        release();
+      },
+      onFocus() {
+        focused.current = true;
+      },
+      onBlur() {
+        focused.current = false;
+        release();
+      },
+    },
+  };
 }
 
 /** An image the agent replayed without a file: nothing to open. */
