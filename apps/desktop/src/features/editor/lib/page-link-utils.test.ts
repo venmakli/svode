@@ -5,6 +5,7 @@ import {
   encodePageLinkPath,
   isBrokenPageLink,
   isProjectFileLink,
+  isWebLink,
   makeRelativePath,
   pageLinkPath,
   resolveRelativeDocPath,
@@ -102,4 +103,17 @@ test("a link to a project file is a path that is not a Page", () => {
   expect(isProjectFileLink("#goals")).toBe(false);
   expect(isProjectFileLink("")).toBe(false);
   expect(isProjectFileLink(undefined)).toBe(false);
+});
+
+test("only an http(s) address is a web link", () => {
+  expect(isWebLink("https://example.com")).toBe(true);
+  expect(isWebLink("http://example.com/a?b=1#c")).toBe(true);
+  expect(isWebLink("HTTPS://EXAMPLE.COM")).toBe(true);
+  expect(isWebLink("mailto:team@example.com")).toBe(false);
+  expect(isWebLink("file:///tmp/a.html")).toBe(false);
+  expect(isWebLink("//cdn.example.com/a.js")).toBe(false);
+  expect(isWebLink("reports/dashboard.html")).toBe(false);
+  expect(isWebLink("notes/plan.md")).toBe(false);
+  expect(isWebLink("")).toBe(false);
+  expect(isWebLink(undefined)).toBe(false);
 });

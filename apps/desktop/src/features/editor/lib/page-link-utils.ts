@@ -26,6 +26,14 @@ export function isProjectFileLink(url: string | undefined): boolean {
   return stripAnchor(url).length > 0;
 }
 
+/**
+ * An external web address: the only links the Desktop new-window handler
+ * opens in the system browser.
+ */
+export function isWebLink(url: string | undefined): boolean {
+  return url !== undefined && /^https?:\/\//i.test(url);
+}
+
 export function joinAbs(base: string, rel: string): string {
   if (!rel) return base;
   if (rel.startsWith("/")) return rel;

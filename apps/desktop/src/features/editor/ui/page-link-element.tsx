@@ -15,7 +15,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { isMacKeyboardPlatform } from "@/shared/lib/keyboard-shortcuts";
-import { isPageLink, isProjectFileLink } from "../lib/page-link-utils";
+import {
+  isPageLink,
+  isProjectFileLink,
+  isWebLink,
+} from "../lib/page-link-utils";
 import { usePageLinkNavigation } from "../hooks/use-page-link-navigation";
 
 /** ⌘-click on macOS, Ctrl-click elsewhere: the gesture that opens a link. */
@@ -51,6 +55,16 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
   // file opens with the neutral opening of an artifact, never in the browser.
   if (!isDoc) {
     const isFile = isProjectFileLink(url);
+    // The WebView never follows a link inside the editable body, so the open
+    // gesture asks for a new window itself: the Desktop new-window handler,
+    // which also receives the open button of the link popover, opens the
+    // address in the system browser (DF-325).
+    const handleWebClick = (e: React.MouseEvent) => {
+      if (e.button !== 0 || !isLinkOpenClick(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(url, "_blank");
+    };
     const handleFileClick = (e: React.MouseEvent) => {
       if (!isBrowserLinkClick(e)) return;
       e.preventDefault();
@@ -77,7 +91,9 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
           },
           ...(isFile
             ? { onClick: handleFileClick, onAuxClick: handleFileClick }
-            : {}),
+            : isWebLink(url)
+              ? { onClick: handleWebClick }
+              : {}),
         }}
       >
         {children}

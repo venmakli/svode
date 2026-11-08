@@ -413,6 +413,7 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     "../../outside.html",
     "../cold/plan.pdf",
     "https://example.com/report",
+    "mailto:team@example.com",
   ];
   function fileLinkEditor(selectedLink?: number) {
     const editor = createPlateEditor({
@@ -553,22 +554,122 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     expect(openedArtifacts).toEqual([]);
   });
 
-  test("a plain click and an external link keep their behavior", async () => {
+  test("a plain click on a file link keeps its behavior", async () => {
     await renderFileLinks();
     resetOpened();
     let plain!: MouseEvent;
-    let external!: MouseEvent;
     await act(async () => {
       plain = click(fileLink(0));
-      external = click(fileLink(5), openModifier);
     });
     await settle();
     expect(plain.defaultPrevented).toBe(false);
-    expect(external.defaultPrevented).toBe(false);
-    expect(fileLink(5).getAttribute("href")).toBe("https://example.com/report");
     expect(resolveCalls).toEqual([]);
     expect(openedArtifacts).toEqual([]);
   });
+
+  // DF-325: the open gesture on an external link goes to the new-window path
+  // of the Desktop, the one the open button of the link popover takes.
+  function setPlatform(mac: boolean) {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: mac ? "MacIntel" : "Win32",
+    });
+  }
+  function recordWindowOpens(): unknown[][] {
+    const calls: unknown[][] = [];
+    window.open = (...args: unknown[]) => {
+      calls.push(args);
+      return null;
+    };
+    return calls;
+  }
+
+  for (const mac of [true, false]) {
+    const gesture = mac
+      ? "⌘-click on macOS"
+      : "Ctrl-click on Windows and Linux";
+    const open: MouseEventInit = mac ? { metaKey: true } : { ctrlKey: true };
+    const other: MouseEventInit = mac ? { ctrlKey: true } : { metaKey: true };
+
+    test(`a ${gesture} opens an external link in a new window`, async () => {
+      setPlatform(mac);
+      try {
+        await renderFileLinks();
+        resetOpened();
+        const windowOpens = recordWindowOpens();
+        let event!: MouseEvent;
+        await act(async () => {
+          event = click(fileLink(5), open);
+        });
+        await settle();
+        expect(event.defaultPrevented).toBe(true);
+        expect(windowOpens).toEqual([["https://example.com/report", "_blank"]]);
+        expect(fileLink(5).getAttribute("href")).toBe(
+          "https://example.com/report",
+        );
+        expect(resolveCalls).toEqual([]);
+        expect(openedArtifacts).toEqual([]);
+        expect(opened).toEqual([]);
+      } finally {
+        delete (navigator as { platform?: string }).platform;
+      }
+    });
+
+    test(`only the ${gesture} opens an external link`, async () => {
+      setPlatform(mac);
+      try {
+        await renderFileLinks();
+        resetOpened();
+        const windowOpens = recordWindowOpens();
+        const events: MouseEvent[] = [];
+        await act(async () => {
+          events.push(click(fileLink(5)));
+          events.push(click(fileLink(5), other));
+          events.push(click(fileLink(5), { shiftKey: true }));
+          events.push(click(fileLink(5), { altKey: true }));
+          events.push(click(fileLink(5), { ...open, button: 1 }));
+          events.push(click(fileLink(6), open));
+        });
+        await settle();
+        expect(events.map((event) => event.defaultPrevented)).toEqual([
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+        ]);
+        expect(windowOpens).toEqual([]);
+        expect(resolveCalls).toEqual([]);
+        expect(openedArtifacts).toEqual([]);
+      } finally {
+        delete (navigator as { platform?: string }).platform;
+      }
+    });
+
+    test(`a ${gesture} on a file link still takes the neutral opening`, async () => {
+      setPlatform(mac);
+      try {
+        await renderFileLinks();
+        resetOpened();
+        const windowOpens = recordWindowOpens();
+        await act(async () => {
+          click(fileLink(0), open);
+        });
+        await until(() => openedArtifacts.length > 0);
+        expect(openedArtifacts).toEqual([
+          {
+            path: "reports/dashboard.html",
+            spaceId: "root",
+            sourceShape: "file",
+          },
+        ]);
+        expect(windowOpens).toEqual([]);
+      } finally {
+        delete (navigator as { platform?: string }).platform;
+      }
+    });
+  }
 
   test("the open button of the link popover opens the file", async () => {
     await renderFileLinks(0);
