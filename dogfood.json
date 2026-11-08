@@ -8,8 +8,8 @@
       "commit": "f882fb64eef2c95f492fed10aac34bd108192cf6",
       "sourceRef": "main",
       "runId": 42476058613,
-      "publishedAt": "2026-11-08T12:05:36.054Z",
-      "expiresAt": "2026-11-11T12:05:36.054Z",
+      "publishedAt": "2026-11-08T12:17:19.721Z",
+      "expiresAt": "2026-11-11T12:17:19.721Z",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/42476058613/artifacts/13616676374",
@@ -20,6 +20,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/42476058613/artifacts/13616800695",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/42476058613",
           "artifactName": "Svode-windows-nsis"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/42476058613/artifacts/13617011570",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/42476058613",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     }
