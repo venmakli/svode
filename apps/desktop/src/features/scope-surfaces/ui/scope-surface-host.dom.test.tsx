@@ -3,11 +3,16 @@ import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import {
+  createAppDirectoryOwner,
   createCollectionDirectoryOwner,
   createPageOwner,
 } from "../model/owners";
 import { useScopeSurfaceStore } from "../model/surface-store";
-import type { ScopeOpenItem, ScopeSurfaceContribution } from "../model/types";
+import type {
+  ScopeOpenItem,
+  ScopeSurfaceContribution,
+  ScopeSurfaceId,
+} from "../model/types";
 import { ScopeSurfaceHost } from "./scope-surface-host";
 
 const contribution: ScopeSurfaceContribution = {
@@ -196,8 +201,10 @@ for (const presentation of ["full", "compact"] as const) {
       contentPath: "Note/README.md",
       hasApp: true,
     });
+    // The full owner remembers its Readme; the compact one is given it.
     useScopeSurfaceStore.setState({
-      surfaceByOwnerKey: {},
+      surfaceByOwnerKey:
+        presentation === "full" ? { [target.ownerKey]: "readme" as const } : {},
       openRequestKeyByOwnerKey: {},
     });
     let calls = 0;
@@ -362,7 +369,7 @@ test("Page owner conversion and rename retain one Readme instance and applied re
   }
 });
 
-test("Page default intents apply once across remount and unavailable App falls back safely", async () => {
+test("an App with a README opens on its App once per request, over a remembered Readme, and unavailable App falls back safely", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -377,10 +384,10 @@ test("Page default intents apply once across remount and unavailable App falls b
     hasApp: true,
   });
   useScopeSurfaceStore.setState({
-    surfaceByOwnerKey: { [target.ownerKey]: "app" as const },
+    surfaceByOwnerKey: { [target.ownerKey]: "readme" as const },
     openRequestKeyByOwnerKey: {},
   });
-  const render = (request: number, hasApp = true, explicit = false) =>
+  const render = (request: number, hasApp = true, explicit?: ScopeSurfaceId) =>
     root.render(
       <ScopeSurfaceHost
         owner={{ ...target, capabilities: hasApp ? ["app"] : [] }}
@@ -388,33 +395,108 @@ test("Page default intents apply once across remount and unavailable App falls b
         contributions={pageContributions}
         header={null}
         openIntent={
-          explicit ? { kind: "target", surfaceId: "app" } : { kind: "default" }
+          explicit
+            ? { kind: "target", surfaceId: explicit }
+            : { kind: "default" }
         }
         openRequestKey={request}
         sessionKey={request}
       />,
     );
   try {
-    await act(async () => render(1));
-    expect(findTab(dom, "Readme").getAttribute("aria-selected")).toBe("true");
-    await act(async () => activateTab(dom, "App"));
+    // A new opening shows the App, not the remembered Readme.
     await act(async () => render(1));
     expect(findTab(dom, "App").getAttribute("aria-selected")).toBe("true");
+    // A choice inside the open page lasts until the next opening.
+    await act(async () => activateTab(dom, "Readme"));
+    await act(async () => render(1));
+    expect(findTab(dom, "Readme").getAttribute("aria-selected")).toBe("true");
     await act(async () => root.render(null));
     await act(async () => render(1));
-    expect(findTab(dom, "App").getAttribute("aria-selected")).toBe("true");
-    await act(async () => render(2));
     expect(findTab(dom, "Readme").getAttribute("aria-selected")).toBe("true");
-    await act(async () => render(3, true, true));
+    await act(async () => render(2));
     expect(findTab(dom, "App").getAttribute("aria-selected")).toBe("true");
-    await act(async () => render(3, false, true));
+    await act(async () => render(3, true, "readme"));
+    expect(findTab(dom, "Readme").getAttribute("aria-selected")).toBe("true");
+    await act(async () => render(4, true, "app"));
+    expect(findTab(dom, "App").getAttribute("aria-selected")).toBe("true");
+    await act(async () => render(4, false, "app"));
     expect(dom.window.document.querySelector('[role="tablist"]')).toBeNull();
     expect(
       useScopeSurfaceStore.getState().surfaceByOwnerKey[target.ownerKey],
     ).toBe("readme");
     expect(dom.window.document.querySelector("textarea") !== null).toBe(true);
-    await act(async () => render(3, true, true));
+    await act(async () => render(4, true, "app"));
     expect(findTab(dom, "Readme").getAttribute("aria-selected")).toBe("true");
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("a Peek without a chosen surface starts an App owner on its App and other owners on Readme", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const appWithReadme = createPageOwner({
+    ...pageBase,
+    form: "folder",
+    contentPath: "Note/README.md",
+    ownerPath: "Note",
+    hasApp: true,
+  });
+  const appOnly = createAppDirectoryOwner({
+    ...pageBase,
+    ownerPath: "dash",
+    hasApp: true,
+  });
+  const collectionApp = createCollectionDirectoryOwner({
+    ...pageBase,
+    ownerPath: "tasks",
+    hasSchema: true,
+    hasApp: true,
+  });
+  const peekContributions: ScopeSurfaceContribution[] = [
+    ...pageContributions,
+    {
+      ...contribution,
+      id: "pages",
+      label: "Collection",
+      order: 2,
+      presentations: ["full", "compact"],
+      appliesTo: (owner) => owner.capabilities.includes("collection"),
+    },
+  ];
+  try {
+    for (const [peekOwner, expected] of [
+      [appWithReadme, "app"],
+      [appOnly, "app"],
+      [collectionApp, "readme"],
+    ] as const) {
+      const changes: ScopeSurfaceId[] = [];
+      await act(async () =>
+        root.render(
+          <ScopeSurfaceHost
+            key={peekOwner.ownerKey}
+            owner={peekOwner}
+            presentation="compact"
+            contributions={peekContributions}
+            header={null}
+            onCompactSurfaceIdChange={(id) => changes.push(id)}
+          />,
+        ),
+      );
+      expect(
+        findTab(dom, expected === "app" ? "App" : "Readme").getAttribute(
+          "aria-selected",
+        ),
+      ).toBe("true");
+      expect(changes).toEqual([expected]);
+    }
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();

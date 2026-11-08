@@ -14,6 +14,7 @@ import {
   createRegisteredSpaceOwner,
   ScopeOwnerFactsError,
   ScopeSurfaceErrorBoundary,
+  resolveDefaultScopeSurface,
   type ScopeOwnerRef,
   type ScopePeekContext,
   type ScopeSurfaceId,
@@ -110,7 +111,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
   const [identity, setIdentity] = useState<ScopeOwnerIdentity | null>(null);
   const defaultSurfaceId: ScopeSurfaceId =
     props.surfaceId ??
-    (owner?.identityKind === "app-directory" ? "app" : "readme");
+    (owner ? resolveDefaultScopeSurface(owner, "compact") : "readme");
   if (owner && surfaceId === null) setSurfaceId(defaultSurfaceId);
   const selectedSurfaceId = surfaceId ?? defaultSurfaceId;
   const openFull = async () => {

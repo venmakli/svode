@@ -95,7 +95,7 @@ export function ScopeSurfaceHost({
   const effectiveStoredSurfaceId = previousStoredSurfaceId ?? storedSurfaceId;
   const effectiveAppliedOpenRequestKey =
     previousAppliedOpenRequestKey ?? appliedOpenRequestKey;
-  const defaultSurfaceId = resolveDefaultScopeSurface(owner);
+  const defaultSurfaceId = resolveDefaultScopeSurface(owner, presentation);
   const hasPendingOpenRequest =
     presentation === "full" &&
     openRequestKey !== undefined &&
@@ -108,12 +108,10 @@ export function ScopeSurfaceHost({
         ? intentSurfaceId
         : (effectiveStoredSurfaceId ?? defaultSurfaceId)
       : compactSurfaceId;
-  const fallbackSurfaceId =
-    presentation === "full" ? defaultSurfaceId : "readme";
   const activeSurface = resolveActiveScopeSurface(
     surfaces,
     requestedSurfaceId,
-    fallbackSurfaceId,
+    defaultSurfaceId,
   );
   const readmeSurface = surfaces.find(({ id }) => id === "readme") ?? null;
   const { hostRef, rememberReadmeScroll } = useReadmeScrollRetention(

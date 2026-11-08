@@ -32,6 +32,7 @@ import {
 import { useOpenPage } from "@/features/page/navigation";
 import {
   ScopeSurfaceHost,
+  resolveDefaultScopeSurface,
   type PeekNavigationGuard,
   type ScopeMainItem,
   type ScopeOpenIntent,
@@ -99,8 +100,9 @@ export function ScopeSurfacePage({
   const [compactViewName, setCompactViewName] = useState<string | null>(null);
   const [compactCalendarScope, setCompactCalendarScope] =
     useState<CalendarScope | null>(null);
-  const [localCompactSurfaceId, setLocalCompactSurfaceId] =
-    useState<CollectionPeekSurfaceState["surfaceId"]>("readme");
+  const [localCompactSurfaceId, setLocalCompactSurfaceId] = useState<
+    CollectionPeekSurfaceState["surfaceId"]
+  >(() => resolveDefaultScopeSurface(owner, "compact"));
   const compactRouteState = useMemo<CollectionRouteState>(
     () => ({
       viewName: compactViewName,

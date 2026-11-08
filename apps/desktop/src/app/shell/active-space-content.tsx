@@ -13,6 +13,7 @@ import { SpaceConfigAlert, useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
 import {
   createRegisteredSpaceOwner,
+  hasScopeCapability,
   knownScopeOwnerFacts,
   ScopeOwnerFactsError,
   type ScopeOwnerKey,
@@ -27,6 +28,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import { useHtmlAppOpening } from "./hooks/use-html-app-opening";
+import { useReplacedOwnerKey } from "./hooks/use-replaced-owner-key";
 import { useSpaceScopeOwner } from "./hooks/use-space-scope-owner";
 import { useShellStore } from "./model";
 import { ScopeSurfacePage } from "./scope-surface-page";
@@ -126,9 +128,6 @@ export function ActiveSpaceContent() {
   const previousCollectionOwnerKey = retargetedOwnerPath
     ? (`collection:${selectionSpaceId}:${retargetedOwnerPath}` as ScopeOwnerKey)
     : undefined;
-  const previousAppOwnerKey = retargetedOwnerPath
-    ? (`app:${selectionSpaceId}:${retargetedOwnerPath}` as ScopeOwnerKey)
-    : undefined;
   const appSessionKey = scopeOwnerRequest?.key ?? artifactSessionKey ?? "app";
   const {
     owner,
@@ -143,6 +142,24 @@ export function ActiveSpaceContent() {
         : null,
     retainPrevious: isArtifactPathRetarget,
   });
+  // An App with a README is a Page folder that is an App: opened as an App,
+  // it shows as one, on the surface its request asks for.
+  const appOwner =
+    owner?.identityKind === "app-directory" ||
+    (owner?.identityKind === "page-directory" &&
+      scopeOwnerRequest?.owner.kind === "app-directory" &&
+      hasScopeCapability(owner, "app"))
+      ? owner
+      : null;
+  const previousAppOwnerKey = retargetedOwnerPath
+    ? (`${appOwner?.identityKind === "page-directory" ? "page" : "app"}:${selectionSpaceId}:${retargetedOwnerPath}` as ScopeOwnerKey)
+    : undefined;
+  // A README added to or removed from the open App changes its owner key:
+  // the new key takes over the surface instead of a new opening.
+  const replacedAppOwnerKey = useReplacedOwnerKey(
+    scopeOwnerRequest?.key,
+    appOwner?.ownerKey,
+  );
   // An HTML file of an App opens its App, asked before the Document shows.
   const htmlAppPending = useHtmlAppOpening({
     requestKey: artifactRequest?.key ?? null,
@@ -173,15 +190,16 @@ export function ActiveSpaceContent() {
         previousOwnerKey={previousCollectionOwnerKey}
         sessionKey={collectionSessionKey}
       />
-    ) : owner?.identityKind === "app-directory" && selectionSpaceId ? (
+    ) : appOwner && selectionSpaceId ? (
       <ScopeSurfacePage
         key={`app-session:${selectionSpaceId}:${appSessionKey}`}
-        owner={owner}
+        owner={appOwner}
         presentation="full"
         openIntent={scopeOwnerRequest?.intent}
         openRequestKey={scopeOwnerRequest?.key}
-        previousOwnerKey={previousAppOwnerKey}
+        previousOwnerKey={previousAppOwnerKey ?? replacedAppOwnerKey}
         sessionKey={appSessionKey}
+        onPageGone={closeActiveContent}
       />
     ) : owner && scopeOwnerRequest && selectionSpaceId ? (
       // A Collection or App target whose marker is gone keeps its owner session.

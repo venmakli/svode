@@ -6,7 +6,12 @@ import { act, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
-import type { ScopeOwnerRef } from "@/features/scope-surfaces";
+import type {
+  ScopeOpenIntent,
+  ScopeOwnerKey,
+  ScopeOwnerRef,
+  ScopeSurfaceContribution,
+} from "@/features/scope-surfaces";
 
 if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
   test("Main content owner selection", () => {
@@ -67,15 +72,41 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
   }));
   // Mounts of the owner surface: a retarget must keep the mounted one.
   let scopeMounts = 0;
+  // Renders the tabs of the owner surface through the real host.
+  let hostTabs = false;
+  const tabContributions: ScopeSurfaceContribution[] = [
+    {
+      id: "readme",
+      label: "Readme",
+      order: 0,
+      presentations: ["full"],
+      appliesTo: () => true,
+      icon: () => null,
+      render: () => <div data-readme />,
+    },
+    {
+      id: "app",
+      label: "App",
+      order: 1,
+      presentations: ["full"],
+      appliesTo: (owner) => owner.capabilities.includes("app"),
+      icon: () => null,
+      render: () => <div data-app />,
+    },
+  ];
   mock.module("./scope-surface-page", () => ({
     ScopeSurfacePage: ({
       owner,
       previousOwnerKey,
       sessionKey,
+      openIntent,
+      openRequestKey,
     }: {
       owner: ScopeOwnerRef;
-      previousOwnerKey?: string;
-      sessionKey?: string;
+      previousOwnerKey?: ScopeOwnerKey;
+      sessionKey?: string | number;
+      openIntent?: ScopeOpenIntent;
+      openRequestKey?: number;
     }) => {
       renders.push(`scope:${describe(owner)}`);
       useEffect(() => {
@@ -86,7 +117,22 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
           data-scope-owner={describe(owner)}
           data-previous-owner-key={previousOwnerKey ?? ""}
           data-session-key={sessionKey ?? ""}
-        />
+          data-open-request-key={openRequestKey ?? ""}
+          data-open-intent={openIntent?.kind ?? ""}
+        >
+          {hostTabs ? (
+            <ScopeSurfaceHost
+              owner={owner}
+              presentation="full"
+              contributions={tabContributions}
+              header={null}
+              openIntent={openIntent}
+              openRequestKey={openRequestKey}
+              previousOwnerKey={previousOwnerKey}
+              sessionKey={sessionKey}
+            />
+          ) : null}
+        </div>
       );
     },
   }));
@@ -118,6 +164,8 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       </div>
     ),
   }));
+  const { ScopeSurfaceHost, useScopeSurfaceStore } =
+    await import("@/features/scope-surfaces");
   const { ActiveSpaceContent } = await import("./active-space-content");
   const { useMainHeaderContribution } =
     await import("./main-header-contribution");
@@ -316,6 +364,10 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       expect(
         f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
       ).toBe("page-directory:tasks/README.md:");
+      // The owner whose marker is gone is no new opening.
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-open-request-key"),
+      ).toBe("");
     } finally {
       await f.cleanup();
     }
@@ -801,6 +853,136 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     }
   });
 
+  test("an App opened as an App shows its App over a remembered Readme, with a README or without, and keeps its choice as its README comes and goes", async () => {
+    let readme = true;
+    const f = await fixture((path) =>
+      path === "app-demo"
+        ? {
+            identity: readme ? "pageDirectory" : "appDirectory",
+            ownerPath: "app-demo",
+            contentPath: "app-demo/README.md",
+            hasApp: true,
+          }
+        : path === "dash"
+          ? {
+              identity: "appDirectory",
+              ownerPath: "dash",
+              contentPath: "dash/README.md",
+              hasApp: true,
+            }
+          : null,
+    );
+    const selectedTab = () =>
+      f.query('[role="tab"][aria-selected="true"]')?.textContent;
+    const clickTab = async (label: string) => {
+      const tab = [
+        ...(f.query("[role=tablist]")?.querySelectorAll('[role="tab"]') ?? []),
+      ].find((candidate) => candidate.textContent === label)!;
+      await act(async () => {
+        tab.dispatchEvent(
+          new window.MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      });
+      await f.settle();
+    };
+    hostTabs = true;
+    useScopeSurfaceStore.setState({
+      surfaceByOwnerKey: {
+        "page:root:app-demo": "readme",
+        "app:root:app-demo": "readme",
+        "app:root:dash": "readme",
+      },
+      openRequestKeyByOwnerKey: {},
+    });
+    try {
+      // An App with a README: the Page folder it resolves to opens as an App.
+      openScopeOwner({
+        kind: "app-directory",
+        path: "app-demo",
+        spaceId: "root",
+      });
+      await f.render();
+      await f.settle();
+      const appDemo = f.query("[data-scope-owner]")!;
+      expect(appDemo.getAttribute("data-scope-owner")).toBe(
+        "page-directory:app-demo/README.md:app",
+      );
+      expect(appDemo.getAttribute("data-open-intent")).toBe("default");
+      // It gets the request of its opening, not the branch of a gone marker.
+      expect(appDemo.getAttribute("data-open-request-key")).toBe(
+        String(
+          (
+            getActiveContentSelection().selection as {
+              request: { key: number };
+            }
+          ).request.key,
+        ),
+      );
+      expect(selectedTab()).toBe("App");
+
+      // A choice inside the open App lasts across a repeated opening and as
+      // its README goes and comes back.
+      await clickTab("Readme");
+      openScopeOwner({
+        kind: "app-directory",
+        path: "app-demo",
+        spaceId: "root",
+      });
+      await f.render();
+      await f.settle();
+      expect(selectedTab()).toBe("Readme");
+      const mounts = scopeMounts;
+      const { emit } = await import("@/platform/native/events");
+      readme = false;
+      await act(async () => {
+        await emit("file:deleted", {
+          space: spacePath,
+          path: "app-demo/README.md",
+        });
+      });
+      await f.settle();
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+      ).toBe("app-directory:app-demo/README.md:app");
+      expect(selectedTab()).toBe("Readme");
+      readme = true;
+      await act(async () => {
+        await emit("file:created", {
+          space: spacePath,
+          path: "app-demo/README.md",
+        });
+      });
+      await f.settle();
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+      ).toBe("page-directory:app-demo/README.md:app");
+      expect(selectedTab()).toBe("Readme");
+      expect(scopeMounts).toBe(mounts);
+
+      // An App without a README.
+      openScopeOwner({ kind: "app-directory", path: "dash", spaceId: "root" });
+      await f.render();
+      await f.settle();
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+      ).toBe("app-directory:dash/README.md:app");
+      expect(selectedTab()).toBe("App");
+
+      // A new opening of the App with a README shows its App again.
+      openScopeOwner({
+        kind: "app-directory",
+        path: "app-demo",
+        spaceId: "root",
+      });
+      await f.render();
+      await f.settle();
+      expect(selectedTab()).toBe("App");
+    } finally {
+      hostTabs = false;
+      await f.cleanup();
+    }
+  });
+
   test("failed facts show the error with Retry instead of a reduced owner", async () => {
     let fail = true;
     const f = await fixture(() => {
@@ -845,6 +1027,9 @@ function installDomGlobals(dom: JSDOM) {
     Node: dom.window.Node,
     document: dom.window.document,
     navigator: dom.window.navigator,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     window: dom.window,
   };
   const previous = new Map<string, PropertyDescriptor | undefined>();

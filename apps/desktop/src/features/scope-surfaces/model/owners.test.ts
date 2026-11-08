@@ -133,7 +133,8 @@ test("Page identity follows explicit form facts, not a README suffix", () => {
   expect(folder.readmePath).toBe(input.contentPath);
   expect(folder.capabilities).toEqual(["app"]);
   expect(resolveDefaultScopeSurface(leaf)).toBe("readme");
-  expect(resolveDefaultScopeSurface(folder)).toBe("readme");
+  // A folder Page with an App is an App with a README.
+  expect(resolveDefaultScopeSurface(folder)).toBe("app");
 });
 
 test("Page owner rejects unavailable Space and inconsistent folder facts", () => {

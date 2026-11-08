@@ -584,6 +584,9 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   test("Page serializes pending flush, retains failed save recovery and respects Collection guard", async () => {
     const f = await fixture("Guard/README.md", true);
     try {
+      // An App with a README opens on its App; the guard leaves its Readme.
+      expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
+      await clickTab(f.dom, 0);
       let calls = 0;
       let release!: () => void;
       flushBody = () => {
@@ -683,14 +686,17 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   test("Page open applies default once, remount preserves selection, marker fallback and repository recovery work", async () => {
     const f = await fixture("Open/README.md", true);
     try {
-      await clickTab(f.dom, 1);
+      // A new opening of an App with a README shows its App.
+      expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
+      await clickTab(f.dom, 0);
       await act(async () => {
         openPage("Open/README.md", "root");
         await settle();
       });
-      expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
+      expect(tabs(f.dom)[0]?.getAttribute("aria-selected")).toBe("true");
       await f.remount();
-      expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
+      expect(tabs(f.dom)[0]?.getAttribute("aria-selected")).toBe("true");
+      await clickTab(f.dom, 1);
       await f.marker(false);
       expect(tabs(f.dom).length).toBe(2);
       expect(tabs(f.dom)[0]?.getAttribute("aria-selected")).toBe("true");
@@ -716,10 +722,20 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         await settle();
       });
       await act(settle);
-      expect(tabs(f.dom)[0]?.getAttribute("aria-selected")).toBe("true");
+      expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
       expect(unmounts).toBe(before + 1);
+      // A new opening is not overridden by the remembered Attachments.
       await act(async () => {
         openPage("Open/README.md", "root");
+        await settle();
+      });
+      await act(settle);
+      expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
+      // An explicit Readme intent opens its Readme.
+      await act(async () => {
+        openPage("Other/README.md", "root", {
+          scopeOpenIntent: { kind: "target", surfaceId: "readme" },
+        });
         await settle();
       });
       await act(settle);
@@ -731,6 +747,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   test("a pending Page flush follows rename to the current owner key", async () => {
     const f = await fixture("Pending/README.md", true);
     try {
+      await clickTab(f.dom, 0);
       let release!: () => void;
       flushBody = () =>
         new Promise<void>((resolve) => {
@@ -767,6 +784,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     const previousError = console.error;
     console.error = () => {};
     try {
+      await clickTab(f.dom, 0);
       const editor = f.dom.window.document.querySelector("textarea");
       appBroken = true;
       await clickTab(f.dom, 1);
@@ -857,6 +875,8 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       const f = await fixture(path, path.includes("/"));
       const doc = f.dom.window.document;
       try {
+        // The folder of the fixture is an App, which opens on its App.
+        if (path.includes("/")) await clickTab(f.dom, 0);
         expect(doc.querySelector("textarea")?.dataset.editor).toBe(path);
         await f.disappear(path, event);
         expect(
