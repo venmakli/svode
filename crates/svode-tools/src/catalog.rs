@@ -1168,6 +1168,7 @@ Apps authoring:
 - Process `environment` is a top-level string-to-string mapping. Literal text and one or more `${NAME}` substitutions are supported; `$${NAME}` emits literal `${NAME}`. Names match `[A-Za-z_][A-Za-z0-9_]*`. No recursive expansion, defaults, functions, or expressions exist. Static and url Apps cannot declare environment.
 - Never write credentials into app.yaml. Convert credentials supplied in a prompt into `${NAME}` references and tell the user to provide values in Settings → Variables. Variable values stay on this device; Secret values stay in the OS Keychain, so a clone may require local setup.
 - Before writing app.yaml, call validate_app_manifest with the complete candidate; repair all diagnostics, write the exact validated YAML into the target owner directory, then read it back and validate again after edits. The validator is read-only and never launches setup/start or reads secret values. After a valid process App is opened, missing names block launch until the user creates each name or binds it to an existing entry. Changed values apply on the next setup/start or explicit restart.
+- Theme: the page of a static, process or url App sees the effective Svode theme in `prefers-color-scheme` and follows a theme change without a reload, as a `change` event of `matchMedia("(prefers-color-scheme: dark)")`. Support light and dark through this media query: Svode adds no `data-theme`, `color-scheme` or URL parameter to an App page.
 
 Apps for agents:
 - Find Apps with list_apps (`svode app list`): the App owners of a Space as its tree shows them, the root as ownerPath ".", with runtimeType, valid, diagnosticCount and hasReadme. Describe one with get_app (`svode app show <owner>`): runtimeType, the declared url of a process or url App, manifest diagnostics and readme, the README of its Description tab with path relative to the Space, meta and body. Both are read-only and work in the CLI and in Svode MCP with or without the desktop app.
@@ -2614,6 +2615,44 @@ mod tests {
         assert!(guide_text().contains("Apps authoring:"));
         assert!(guide_text().contains("$${NAME}"));
         assert!(guide_text().contains("OS Keychain"));
+    }
+
+    #[test]
+    fn guide_and_skill_describe_the_app_page_theme() {
+        let guide = guide_text();
+        let authoring = &guide[guide
+            .find("Apps authoring:")
+            .expect("Apps authoring section")..];
+        let authoring = &authoring[..authoring.find("\n\n").unwrap_or(authoring.len())];
+        let theme = authoring
+            .lines()
+            .find(|line| line.starts_with("- Theme:"))
+            .expect("the theme rule of an App page");
+        for part in [
+            "static, process or url App",
+            "effective Svode theme in `prefers-color-scheme`",
+            "without a reload",
+            "`change` event of `matchMedia(\"(prefers-color-scheme: dark)\")`",
+            "Svode adds no `data-theme`, `color-scheme` or URL parameter",
+        ] {
+            assert!(theme.contains(part), "the theme rule misses {part}");
+        }
+
+        let skill = include_str!("../../../plugins/svode/skills/svode/SKILL.md");
+        let section = &skill[skill.find("## Apps\n").expect("Apps section of the skill")..];
+        let section = &section[..section[1..]
+            .find("\n## ")
+            .map_or(section.len(), |end| end + 1)];
+        assert!(section.contains("light or dark Svode theme is in the guide"));
+        // The skill points to the rule instead of repeating it.
+        for detail in [
+            "prefers-color-scheme",
+            "matchMedia",
+            "data-theme",
+            "color-scheme",
+        ] {
+            assert!(!skill.contains(detail), "the skill repeats {detail}");
+        }
     }
 
     #[test]

@@ -34,6 +34,7 @@ Start a project with `svode project create <path>` and add a Space with `svode s
 - An App is a directory with `app.yaml` that the Svode desktop app opens as a window. When a task touches an App's data or code, find it with `svode app list` and read its description with `svode app show <owner>` (MCP: `list_apps`, `get_app`): it carries the App's README, where its author says how an agent works with it.
 - The state, logs, start, restart and stop of a process App are the MCP tools `get_app_status` and `control_app`, served only while the Svode desktop app has the project open.
 - When you create an App, describe in its README how an agent works with it.
+- How an App page follows the light or dark Svode theme is in the guide.
 - A tool with its own agent integration is set up its own way; Svode does not install or register it. The details are in the guide.
 
 ## After a change
