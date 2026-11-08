@@ -14,6 +14,7 @@ import {
 } from "@/paraglide/runtime.js";
 
 import {
+  applyAppThemeToWindows,
   getAppPreferences,
   listenAppPreferencesChanged,
   setAppLocale as persistAppLocale,
@@ -70,6 +71,17 @@ export function AppPreferencesProvider({
   const themeMutationRef = useRef<Promise<AppTheme> | null>(null);
   const requestGenerationRef = useRef(0);
   const legacyRecoveryAttemptedRef = useRef(false);
+  const windowThemeRef = useRef<AppTheme | null>(null);
+
+  const applyWindowTheme = useCallback(async (theme: AppTheme) => {
+    if (windowThemeRef.current === theme) return;
+    try {
+      await applyAppThemeToWindows(theme);
+      windowThemeRef.current = theme;
+    } catch (error) {
+      console.error("Failed to apply app theme to windows:", error);
+    }
+  }, []);
 
   const applyPreferences = useCallback(
     async (nextPreferences: ConfirmedPreferences) => {
@@ -80,6 +92,8 @@ export function AppPreferencesProvider({
 
       document.documentElement.lang = nextPreferences.locale;
       document.documentElement.dir = getTextDirection(nextPreferences.locale);
+      // Windows leave an explicit theme before "system" reads the OS theme.
+      await applyWindowTheme(nextPreferences.theme);
       applyThemeToDocument(nextPreferences.theme);
 
       if (
@@ -93,7 +107,7 @@ export function AppPreferencesProvider({
       setPreferences(nextPreferences);
       return nextPreferences;
     },
-    [],
+    [applyWindowTheme],
   );
 
   const readCanonicalPreferences = useCallback(
@@ -201,6 +215,8 @@ export function AppPreferencesProvider({
     const mediaQuery = window.matchMedia(SYSTEM_THEME_QUERY);
     const handleSystemThemeChange = () => applyThemeToDocument("system");
     mediaQuery.addEventListener("change", handleSystemThemeChange);
+    // The OS theme can reach this window only after it left an explicit theme.
+    handleSystemThemeChange();
     return () =>
       mediaQuery.removeEventListener("change", handleSystemThemeChange);
   }, [preferences?.theme]);

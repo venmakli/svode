@@ -97,6 +97,7 @@ if (process.env.SVODE_UPDATE_FOOTER_DOM_PROCESS !== "1") {
             language: "en",
             themeNeedsRecovery: false,
           };
+        if (command === "plugin:app|set_app_theme") return null;
         if (command === "plugin:shell|open") {
           urls.push((args as { path: string }).path);
           return;

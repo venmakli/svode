@@ -1,3 +1,4 @@
+import { setNativeAppTheme } from "@/platform/native/app";
 import {
   getAppPreferences as getAppPreferencesDto,
   listenAppPreferencesChanged as listenAppPreferencesChangedDto,
@@ -35,4 +36,9 @@ export async function setAppTheme(theme: AppTheme): Promise<AppTheme> {
 
 export function listenAppPreferencesChanged(handler: () => void) {
   return listenAppPreferencesChangedDto(handler);
+}
+
+/** Gives Svode windows the chosen theme; "system" leaves them to the OS. */
+export function applyAppThemeToWindows(theme: AppTheme): Promise<void> {
+  return setNativeAppTheme(theme === "system" ? null : theme);
 }

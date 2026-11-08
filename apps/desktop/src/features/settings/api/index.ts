@@ -1,4 +1,5 @@
 export {
+  applyAppThemeToWindows,
   getAppPreferences,
   listenAppPreferencesChanged,
   setAppLocale,

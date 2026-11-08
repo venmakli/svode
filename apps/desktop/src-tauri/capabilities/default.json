@@ -10,6 +10,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-set-title",
+    "core:app:allow-set-app-theme",
     "shell:allow-open",
     "dialog:allow-open",
     "dialog:allow-confirm"

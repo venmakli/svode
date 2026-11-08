@@ -77,6 +77,7 @@ if (process.env.SVODE_USER_MENU_DOM_PROCESS !== "1") {
             language: "en",
             themeNeedsRecovery: false,
           };
+        if (command === "plugin:app|set_app_theme") return null;
         if (command === "set_app_theme") {
           const requested = (args as { theme: string }).theme;
           writes.push(requested);

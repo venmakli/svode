@@ -24,7 +24,7 @@ test("bootstraps before localized UI and switches both directions without remoun
   const localeMutations: string[] = [];
   let settingsReadCount = 0;
   let committedLanguage = "ru";
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command, args) => {
       if (command === "get_app_preferences") {
         settingsReadCount += 1;
@@ -102,7 +102,7 @@ test("keeps the confirmed locale when persistence fails", async () => {
   const restoreGlobals = installDomGlobals(dom);
   const originalLocale = getParaglideLocale();
   const mutation = deferred<string>();
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences") return appPreferences("en");
       if (command === "set_app_locale") return mutation.promise;
@@ -157,7 +157,7 @@ test("commits a theme field, applies it without remount, and skips same-value wr
   let backendTheme = "system";
   const mutations: string[] = [];
   let mountCount = 0;
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command, args) => {
       if (command === "get_app_preferences")
         return appPreferences("en", backendTheme);
@@ -209,7 +209,7 @@ test("keeps the confirmed theme while pending and after persistence failure", as
   const restoreGlobals = installDomGlobals(dom);
   const originalLocale = getParaglideLocale();
   const mutation = deferred<string>();
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences")
         return appPreferences("en", "light");
@@ -260,13 +260,89 @@ test("keeps the confirmed theme while pending and after persistence failure", as
   }
 });
 
+test("gives windows the theme on load and change and leaves them to the OS before computing the system theme", async () => {
+  const dom = createDom();
+  const webView = installWebViewTheme(dom, false);
+  const restoreGlobals = installDomGlobals(dom);
+  const originalLocale = getParaglideLocale();
+  let backendTheme = "dark";
+  const mutations: string[] = [];
+  mockNativeIpc(
+    (command, args) => {
+      if (command === WINDOW_THEME_COMMAND) {
+        webView.setWindowTheme(windowThemeArg(args));
+        return null;
+      }
+      if (command === "get_app_preferences")
+        return appPreferences("en", backendTheme);
+      if (command === "set_app_theme") {
+        backendTheme = (args as { theme: string }).theme;
+        mutations.push(backendTheme);
+        return backendTheme;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const rootClasses = dom.window.document.documentElement.classList;
+
+  try {
+    await act(async () => {
+      root.render(
+        <AppPreferencesProvider fallback={<span data-bootstrap>Loading</span>}>
+          <ThemeHarness />
+        </AppPreferencesProvider>,
+      );
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(textOf(dom, "[data-theme]")).toBe("dark");
+    expect(webView.windowThemes).toEqual(["dark"]);
+    expect(rootClasses.contains("dark")).toBe(true);
+
+    await clickAndFlush(dom, "[data-change-theme]");
+    expect(textOf(dom, "[data-theme]")).toBe("light");
+    expect(webView.windowThemes).toEqual(["dark", "light"]);
+    expect(rootClasses.contains("light")).toBe(true);
+
+    await clickAndFlush(dom, "[data-change-theme]");
+    expect(webView.windowThemes).toEqual(["dark", "light", "dark"]);
+    expect(rootClasses.contains("dark")).toBe(true);
+
+    const readsBeforeSystem = webView.reads.length;
+    await clickAndFlush(dom, "[data-system-theme]");
+    expect(textOf(dom, "[data-theme]")).toBe("system");
+    expect(webView.windowThemes).toEqual(["dark", "light", "dark", null]);
+    const systemReads = webView.reads.slice(readsBeforeSystem);
+    expect(systemReads.length > 0).toBe(true);
+    expect(systemReads.every((read) => read.windowTheme === null)).toBe(true);
+    expect(rootClasses.contains("light")).toBe(true);
+    expect(rootClasses.contains("dark")).toBe(false);
+
+    await act(async () => {
+      webView.setOsDark(true);
+      await nextTurn();
+    });
+    expect(rootClasses.contains("dark")).toBe(true);
+    expect(webView.windowThemes).toEqual(["dark", "light", "dark", null]);
+    expect(mutations).toEqual(["light", "dark", "system"]);
+  } finally {
+    await act(async () => root.unmount());
+    await setParaglideLocale(originalLocale, { reload: false });
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("reacts to OS appearance changes in system mode without writing", async () => {
   const dom = createDom();
   const mediaQuery = installSystemTheme(dom, false);
   const restoreGlobals = installDomGlobals(dom);
   const originalLocale = getParaglideLocale();
   const mutations: string[] = [];
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command, args) => {
       if (command === "get_app_preferences")
         return appPreferences("en", "system");
@@ -318,7 +394,7 @@ test("recovers a valid legacy theme once and removes localStorage ownership", as
   const restoreGlobals = installDomGlobals(dom);
   const originalLocale = getParaglideLocale();
   const mutations: string[] = [];
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command, args) => {
       if (command === "get_app_preferences")
         return appPreferences("en", "system", true);
@@ -364,7 +440,7 @@ test("canonical theme wins over and removes stale legacy localStorage", async ()
   const restoreGlobals = installDomGlobals(dom);
   const originalLocale = getParaglideLocale();
   let mutationCount = 0;
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences")
         return appPreferences("en", "light");
@@ -408,7 +484,7 @@ test("allows concurrent theme and locale mutations without losing either field",
   const localeMutation = deferred<string>();
   let backendTheme = "system";
   let backendLocale = "en";
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences")
         return appPreferences(backendLocale, backendTheme);
@@ -482,7 +558,7 @@ test("applies the latest invalidation read and deduplicates repeated delivery", 
   const staleRead = deferred<AppSettingsResponse>();
   let readCount = 0;
   let renderCount = 0;
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences") {
         readCount += 1;
@@ -557,7 +633,7 @@ test("reconciles a missed change on foreground and cleans up the focus listener"
   const originalLocale = getParaglideLocale();
   let backendLocale = "en";
   let readCount = 0;
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences") {
         readCount += 1;
@@ -612,7 +688,7 @@ test("does not apply a late mutation result over a newer committed locale", asyn
   const originalLocale = getParaglideLocale();
   const mutation = deferred<string>();
   let backendLocale = "en";
-  mockNativeIpc(
+  mockPreferencesIpc(
     (command) => {
       if (command === "get_app_preferences")
         return appPreferences(backendLocale);
@@ -729,6 +805,11 @@ function ThemeHarness({ onMount }: { onMount?: () => void }) {
         data-keep-theme
         onClick={() => void setTheme(theme)}
       />
+      <button
+        type="button"
+        data-system-theme
+        onClick={() => void setTheme("system")}
+      />
     </>
   );
 }
@@ -752,6 +833,72 @@ function appPreferences(
     language,
     theme,
     themeNeedsRecovery,
+  };
+}
+
+const WINDOW_THEME_COMMAND = "plugin:app|set_app_theme";
+
+function windowThemeArg(args: unknown): string | null {
+  return (args as { theme?: string | null } | undefined)?.theme ?? null;
+}
+
+/** Answers the window theme command so handlers list only preference commands. */
+function mockPreferencesIpc(
+  handler: Parameters<typeof mockNativeIpc>[0],
+  options?: Parameters<typeof mockNativeIpc>[1],
+) {
+  mockNativeIpc(
+    (command, args) =>
+      command === WINDOW_THEME_COMMAND ? null : handler(command, args),
+    options,
+  );
+}
+
+/**
+ * A WebView whose `prefers-color-scheme` follows the theme given to its
+ * windows and, without one, the OS theme.
+ */
+function installWebViewTheme(dom: JSDOM, initialOsDark: boolean) {
+  let osDark = initialOsDark;
+  let windowTheme: string | null = null;
+  const windowThemes: Array<string | null> = [];
+  const reads: Array<{ windowTheme: string | null }> = [];
+  const listeners = new Set<() => void>();
+  const matches = () => (windowTheme ?? (osDark ? "dark" : "light")) === "dark";
+  const mediaQuery = {
+    get matches() {
+      reads.push({ windowTheme });
+      return matches();
+    },
+    media: "(prefers-color-scheme: dark)",
+    onchange: null,
+    addEventListener: (_type: string, listener: () => void) => {
+      listeners.add(listener);
+    },
+    removeEventListener: (_type: string, listener: () => void) => {
+      listeners.delete(listener);
+    },
+  } as unknown as MediaQueryList;
+  Object.defineProperty(dom.window, "matchMedia", {
+    configurable: true,
+    value: () => mediaQuery,
+  });
+  const update = (change: () => void) => {
+    const before = matches();
+    change();
+    if (matches() !== before) for (const listener of listeners) listener();
+  };
+
+  return {
+    reads,
+    windowThemes,
+    setOsDark(nextOsDark: boolean) {
+      update(() => (osDark = nextOsDark));
+    },
+    setWindowTheme(nextWindowTheme: string | null) {
+      windowThemes.push(nextWindowTheme);
+      update(() => (windowTheme = nextWindowTheme));
+    },
   };
 }
 
