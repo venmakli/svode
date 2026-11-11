@@ -6,21 +6,21 @@ pub mod space;
 
 use crate::error::AppError;
 
-/// Runs work whose cost grows with the size of a folder or project on the
-/// blocking pool, so a command doing it never holds the main thread that
-/// drives the window. The work's own result comes back unchanged; only a
-/// panic inside it turns into an error.
-pub(crate) async fn off_main_thread<R: Send + 'static>(
-    work: impl FnOnce() -> R + Send + 'static,
-) -> Result<R, AppError> {
-    tauri::async_runtime::spawn_blocking(work)
+/// Runs work that reads the file system, with a cost that may grow with a
+/// folder or the project, on the blocking pool, so a command doing it never
+/// holds the main thread that drives the window. The work's own result comes
+/// back unchanged; only a panic inside it turns into an error.
+pub(crate) async fn blocking<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    tauri::async_runtime::spawn_blocking(task)
         .await
-        .map_err(|error| AppError::General(format!("Background read failed: {error}")))
+        .map_err(|error| AppError::General(format!("Background task failed: {error}")))?
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{files, off_main_thread, space};
+    use super::{blocking, files, space};
 
     fn unpolled<F: std::future::Future + Send>(_command: F) {}
 
@@ -43,7 +43,7 @@ mod tests {
     #[tokio::test]
     async fn work_runs_on_another_thread_and_returns_its_result() {
         let caller = std::thread::current().id();
-        let (worker, value) = off_main_thread(|| (std::thread::current().id(), 42))
+        let (worker, value) = blocking(|| Ok((std::thread::current().id(), 42)))
             .await
             .expect("work result");
         assert_ne!(worker, caller);
@@ -52,7 +52,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_panic_in_the_work_becomes_an_error() {
-        let result = off_main_thread(|| -> u8 { panic!("boom") }).await;
+        let result = blocking(|| -> Result<u8, _> { panic!("boom") }).await;
         assert!(result.is_err());
     }
 }

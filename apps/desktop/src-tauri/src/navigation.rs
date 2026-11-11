@@ -1069,17 +1069,8 @@ pub mod commands {
     use std::path::Path;
 
     use super::{NavigationItem, NavigationKey, NavigationState, ResolvedItem};
+    use crate::commands::blocking;
     use crate::error::AppError;
-
-    /// Resolving pinned targets reads the file system, so it runs off the
-    /// main thread.
-    async fn blocking<T: Send + 'static>(
-        task: impl FnOnce() -> Result<T, AppError> + Send + 'static,
-    ) -> Result<T, AppError> {
-        tauri::async_runtime::spawn_blocking(task)
-            .await
-            .map_err(|error| AppError::General(format!("Navigation worker failed: {error}")))?
-    }
 
     #[tauri::command]
     pub async fn navigation_read(project_path: String) -> Result<NavigationState, AppError> {

@@ -7,7 +7,7 @@ pub async fn list_templates(
     space: String,
     collection_path: String,
 ) -> Result<Vec<TemplateInfo>, AppError> {
-    off_main_thread(move || Ok(templates::list(&space, &collection_path)?)).await?
+    blocking(move || Ok(templates::list(&space, &collection_path)?)).await
 }
 
 #[tauri::command]
@@ -464,7 +464,7 @@ pub async fn query_relation_backlinks(
     source_collection_path: Option<String>,
     source_column: Option<String>,
 ) -> Result<Vec<RelationBacklink>, AppError> {
-    off_main_thread(move || {
+    blocking(move || {
         Ok(engine::query_relation_backlinks(
             &space,
             &target_path,
@@ -472,7 +472,7 @@ pub async fn query_relation_backlinks(
             source_column.as_deref(),
         )?)
     })
-    .await?
+    .await
 }
 
 #[tauri::command]
@@ -537,7 +537,7 @@ pub async fn repair_two_way_relation(
 
 #[tauri::command]
 pub async fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
-    off_main_thread(move || Ok(engine::list_collections(&space)?)).await?
+    blocking(move || Ok(engine::list_collections(&space)?)).await
 }
 
 #[tauri::command]

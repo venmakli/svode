@@ -4,7 +4,7 @@ use super::*;
 
 #[tauri::command]
 pub async fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, AppError> {
-    off_main_thread(move || crate::space::content_tree::read_order(Path::new(&space))).await
+    blocking(move || Ok(crate::space::content_tree::read_order(Path::new(&space)))).await
 }
 
 #[tauri::command]

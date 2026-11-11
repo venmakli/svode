@@ -4,7 +4,7 @@ use super::*;
 
 #[tauri::command]
 pub async fn list_content_tree(space: String) -> Result<Vec<TreeNode>, AppError> {
-    off_main_thread(move || list_content_tree_logged(&space)).await?
+    blocking(move || list_content_tree_logged(&space)).await
 }
 
 fn list_content_tree_logged(space: &str) -> Result<Vec<TreeNode>, AppError> {
@@ -40,7 +40,7 @@ pub async fn list_tree_children(
     space: String,
     parent_path: Option<String>,
 ) -> Result<Vec<tree::TreeChildNode>, tree::TreeLoadError> {
-    off_main_thread(move || list_tree_children_logged(&space, parent_path.as_deref()))
+    blocking(move || Ok(list_tree_children_logged(&space, parent_path.as_deref())))
         .await
         .map_err(|source| tree::TreeLoadError::Unavailable {
             message: source.to_string(),
@@ -106,7 +106,7 @@ pub async fn get_page_detail_state(
     space: String,
     path: String,
 ) -> Result<store::PageDetailState, AppError> {
-    off_main_thread(move || Ok(store::page_detail_state(Path::new(&space), &path)?)).await?
+    blocking(move || Ok(store::page_detail_state(Path::new(&space), &path)?)).await
 }
 
 #[tauri::command]
