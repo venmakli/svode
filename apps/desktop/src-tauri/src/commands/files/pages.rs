@@ -3,10 +3,14 @@
 use super::*;
 
 #[tauri::command]
-pub fn list_content_tree(space: String) -> Result<Vec<TreeNode>, AppError> {
+pub async fn list_content_tree(space: String) -> Result<Vec<TreeNode>, AppError> {
+    off_main_thread(move || list_content_tree_logged(&space)).await?
+}
+
+fn list_content_tree_logged(space: &str) -> Result<Vec<TreeNode>, AppError> {
     let started = Instant::now();
-    let space_name = path_name(&space);
-    let result = crate::space::content_tree::list_recursive(&space);
+    let space_name = path_name(space);
+    let result = crate::space::content_tree::list_recursive(space);
     let duration_ms = started.elapsed().as_millis() as u64;
 
     match &result {
@@ -32,14 +36,25 @@ pub fn list_content_tree(space: String) -> Result<Vec<TreeNode>, AppError> {
 }
 
 #[tauri::command]
-pub fn list_tree_children(
+pub async fn list_tree_children(
     space: String,
     parent_path: Option<String>,
 ) -> Result<Vec<tree::TreeChildNode>, tree::TreeLoadError> {
+    off_main_thread(move || list_tree_children_logged(&space, parent_path.as_deref()))
+        .await
+        .map_err(|source| tree::TreeLoadError::Unavailable {
+            message: source.to_string(),
+            source,
+        })?
+}
+
+fn list_tree_children_logged(
+    space: &str,
+    parent_path: Option<&str>,
+) -> Result<Vec<tree::TreeChildNode>, tree::TreeLoadError> {
     let started = Instant::now();
-    let space_name = path_name(&space);
+    let space_name = path_name(space);
     let parent_scope = if parent_path
-        .as_deref()
         .map(str::trim)
         .filter(|path| !path.is_empty())
         .is_some()
@@ -48,7 +63,7 @@ pub fn list_tree_children(
     } else {
         "root"
     };
-    let result = crate::space::content_tree::list_children_checked(&space, parent_path.as_deref());
+    let result = crate::space::content_tree::list_children_checked(space, parent_path);
     let duration_ms = started.elapsed().as_millis() as u64;
 
     match &result {
@@ -87,11 +102,11 @@ pub fn get_scope_owner_facts(
 }
 
 #[tauri::command]
-pub fn get_page_detail_state(
+pub async fn get_page_detail_state(
     space: String,
     path: String,
 ) -> Result<store::PageDetailState, AppError> {
-    Ok(store::page_detail_state(Path::new(&space), &path)?)
+    off_main_thread(move || Ok(store::page_detail_state(Path::new(&space), &path)?)).await?
 }
 
 #[tauri::command]

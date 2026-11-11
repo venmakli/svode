@@ -7,6 +7,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::actors::ActorCandidate;
+use crate::commands::off_main_thread;
 use crate::error::AppError;
 use crate::files::{FileWatcher, TreeNode, link_fix, tree};
 use crate::git::access::{

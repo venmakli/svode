@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::app_windows::{ProjectWindowRequest, WindowBinding, WindowView};
+use crate::commands::off_main_thread;
 use crate::error::AppError;
 use crate::git::access::{RepositoryAccessSnapshot, require_repository_mutation};
 use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy};
@@ -618,9 +619,8 @@ async fn prepare_project(
 // --- Spaces ---
 
 #[tauri::command]
-pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
-    let path = Path::new(&space_path);
-    content_tree::list_child_spaces(path)
+pub async fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
+    off_main_thread(move || content_tree::list_child_spaces(Path::new(&space_path))).await?
 }
 
 #[tauri::command]

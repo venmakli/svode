@@ -3,11 +3,11 @@
 use super::*;
 
 #[tauri::command]
-pub fn list_templates(
+pub async fn list_templates(
     space: String,
     collection_path: String,
 ) -> Result<Vec<TemplateInfo>, AppError> {
-    Ok(templates::list(&space, &collection_path)?)
+    off_main_thread(move || Ok(templates::list(&space, &collection_path)?)).await?
 }
 
 #[tauri::command]
@@ -458,18 +458,21 @@ pub async fn resolve_relations_batch(
 }
 
 #[tauri::command]
-pub fn query_relation_backlinks(
+pub async fn query_relation_backlinks(
     space: String,
     target_path: String,
     source_collection_path: Option<String>,
     source_column: Option<String>,
 ) -> Result<Vec<RelationBacklink>, AppError> {
-    Ok(engine::query_relation_backlinks(
-        &space,
-        &target_path,
-        source_collection_path.as_deref(),
-        source_column.as_deref(),
-    )?)
+    off_main_thread(move || {
+        Ok(engine::query_relation_backlinks(
+            &space,
+            &target_path,
+            source_collection_path.as_deref(),
+            source_column.as_deref(),
+        )?)
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -533,8 +536,8 @@ pub async fn repair_two_way_relation(
 }
 
 #[tauri::command]
-pub fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
-    Ok(engine::list_collections(&space)?)
+pub async fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
+    off_main_thread(move || Ok(engine::list_collections(&space)?)).await?
 }
 
 #[tauri::command]
