@@ -1,5 +1,8 @@
 import type { VariableSource } from "../model/app-variables";
-import type { StorageStrategyWarning } from "../model/storage-strategy";
+import type {
+  StorageBinaryRouting,
+  StorageStrategyWarning,
+} from "../model/storage-strategy";
 import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Bindings as checkPlatformS3Bindings,
@@ -17,7 +20,6 @@ import {
 import type {
   AssetsS3Config,
   AssetsStrategy,
-  BinaryRoutingConfig,
   LfsState,
 } from "@/features/space";
 
@@ -44,7 +46,8 @@ export interface CheckS3BindingsInput extends SpacePoolInput {
 
 export interface SetAssetsStrategyInput extends SpacePoolInput {
   strategy: AssetsStrategy;
-  binaryRouting: BinaryRoutingConfig;
+  // The whole routing: the command replaces the saved one with it.
+  binaryRouting: StorageBinaryRouting;
   s3Config: AssetsS3Config | null;
   s3Bindings: S3SecretBindings | null;
 }
@@ -67,6 +70,7 @@ export interface EffectiveAssetsConfig {
     version: number | null;
     lfsExtensions: string[];
     lfsThresholdBytes: number | null;
+    localExtensions: string[];
   };
 }
 

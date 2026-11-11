@@ -20,7 +20,7 @@ import {
   canRunLfsRemoteDiagnostic,
   storageStrategyWarningText,
   storageTargetKey,
-  type LfsRoutingDraftIssue,
+  type BinaryRoutingDraftIssue,
 } from "../model/storage-strategy";
 
 interface UseSpaceStorageSettingsOptions {
@@ -62,9 +62,10 @@ export interface UseSpaceStorageSettingsResult {
   ownerSpaceId: string | null;
   binaryRoutingStatus: "legacy-preset" | "v1" | "unsupported";
   binaryRoutingVersion: number | null;
-  binaryRoutingIssue: LfsRoutingDraftIssue | null;
+  binaryRoutingIssue: BinaryRoutingDraftIssue | null;
   binaryRoutingChanged: boolean;
   lfsExtensions: string;
+  localExtensions: string;
   lfsThresholdEnabled: boolean;
   lfsThresholdMegabytes: string;
   currentSpacePath: string;
@@ -96,11 +97,13 @@ export interface UseSpaceStorageSettingsResult {
   lfsPolicyDiagnosticLoading: boolean;
   lfsPolicyDiagnosticError: boolean;
   canUpdateLfsPolicy: boolean;
+  canUpdateLocalRules: boolean;
   setS3Endpoint: (value: string) => void;
   setS3Bucket: (value: string) => void;
   setS3Region: (value: string) => void;
   setS3Prefix: (value: string) => void;
   setLfsExtensions: (value: string) => void;
+  setLocalExtensions: (value: string) => void;
   setLfsThresholdEnabled: (value: boolean) => void;
   setLfsThresholdMegabytes: (value: string) => void;
   selectStrategy: (next: AssetsStrategy) => Promise<void>;
@@ -115,6 +118,7 @@ export interface UseSpaceStorageSettingsResult {
     password: string;
   }) => Promise<void>;
   updateLfsPolicy: () => Promise<void>;
+  updateLocalRules: () => Promise<void>;
   refreshLfsPolicyDiagnostic: () => Promise<void>;
   cancelPendingStrategy: () => void;
   confirmPendingStrategy: () => Promise<void>;
@@ -178,6 +182,7 @@ export function useSpaceStorageSettings({
     binaryRoutingIssue,
     binaryRoutingChanged,
     lfsExtensions,
+    localExtensions,
     lfsThresholdEnabled,
     lfsThresholdMegabytes,
     s3Endpoint,
@@ -190,6 +195,7 @@ export function useSpaceStorageSettings({
     setS3Region,
     setS3Prefix,
     setLfsExtensions,
+    setLocalExtensions,
     setLfsThresholdEnabled,
     setLfsThresholdMegabytes,
     markStrategyApplied,
@@ -340,7 +346,7 @@ export function useSpaceStorageSettings({
           );
         } else {
           toast.success(
-            useSavedConfig
+            useSavedConfig && next !== "local"
               ? m.storage_lfs_policy_updated()
               : m.toast_settings_saved(),
           );
@@ -483,6 +489,16 @@ export function useSpaceStorageSettings({
       applying: applyingStrategy,
     });
 
+  // The local rules are saved by applying `local` again with them.
+  const canUpdateLocalRules =
+    loadedForCurrentTarget &&
+    binaryRoutingStatus !== "unsupported" &&
+    binaryRoutingConfig !== null &&
+    binaryRoutingChanged &&
+    savedAssetsStrategy === "local" &&
+    assetsStrategy === "local" &&
+    !applyingStrategy;
+
   const applySelectedStrategy = useCallback(async () => {
     if (!canApplyStrategy) return;
     await requestStrategyConfirmation(assetsStrategy);
@@ -516,6 +532,11 @@ export function useSpaceStorageSettings({
     if (!canUpdateLfsPolicy) return;
     await applyStrategy(savedAssetsStrategy, true);
   }, [applyStrategy, canUpdateLfsPolicy, savedAssetsStrategy]);
+
+  const updateLocalRules = useCallback(async () => {
+    if (!canUpdateLocalRules) return;
+    await applyStrategy("local", true);
+  }, [applyStrategy, canUpdateLocalRules]);
 
   const cancelPendingStrategy = useCallback(() => {
     if (confirmingPendingStrategyRef.current) return;
@@ -609,6 +630,7 @@ export function useSpaceStorageSettings({
     binaryRoutingIssue,
     binaryRoutingChanged,
     lfsExtensions,
+    localExtensions,
     lfsThresholdEnabled,
     lfsThresholdMegabytes,
     currentSpacePath: spacePath,
@@ -638,11 +660,13 @@ export function useSpaceStorageSettings({
     lfsPolicyDiagnosticLoading,
     lfsPolicyDiagnosticError,
     canUpdateLfsPolicy,
+    canUpdateLocalRules,
     setS3Endpoint,
     setS3Bucket,
     setS3Region,
     setS3Prefix,
     setLfsExtensions,
+    setLocalExtensions,
     setLfsThresholdEnabled,
     setLfsThresholdMegabytes,
     selectStrategy,
@@ -654,6 +678,7 @@ export function useSpaceStorageSettings({
     setLfsRemoteAuthDialogOpen,
     saveLfsRemoteAuthAndRetry,
     updateLfsPolicy,
+    updateLocalRules,
     refreshLfsPolicyDiagnostic: reloadLfsPolicyDiagnostic,
     cancelPendingStrategy,
     confirmPendingStrategy,

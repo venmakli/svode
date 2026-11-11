@@ -1,14 +1,11 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  LfsExtensionPicker,
-  selectedLfsExtensionCount,
-} from "./lfs-extension-picker";
+import { ExtensionPicker, selectedExtensionCount } from "./extension-picker";
 
-test("LFS extension picker exposes selection at group and total levels", () => {
+test("The extension picker exposes selection at group and total levels", () => {
   const markup = renderToStaticMarkup(
-    <LfsExtensionPicker
+    <ExtensionPicker
       value="jpg, mp4, zip"
       onChange={() => undefined}
       disabled={false}
@@ -16,8 +13,8 @@ test("LFS extension picker exposes selection at group and total levels", () => {
     />,
   );
 
-  expect(selectedLfsExtensionCount("jpg, mp4, zip")).toBe(3);
-  expect(selectedLfsExtensionCount(".JPG, jpg, blend")).toBe(2);
+  expect(selectedExtensionCount("jpg, mp4, zip")).toBe(3);
+  expect(selectedExtensionCount(".JPG, jpg, blend")).toBe(2);
   expect(markup.includes("Images")).toBe(true);
   expect(markup.includes("1 of 9")).toBe(true);
   expect(markup.includes("1 of 6")).toBe(true);
@@ -28,9 +25,9 @@ test("LFS extension picker exposes selection at group and total levels", () => {
   expect(markup.includes("border-border")).toBe(false);
 });
 
-test("LFS extension picker keeps custom selections visible and removable", () => {
+test("The extension picker keeps custom selections visible and removable", () => {
   const markup = renderToStaticMarkup(
-    <LfsExtensionPicker
+    <ExtensionPicker
       value="blend"
       onChange={() => undefined}
       disabled={false}
@@ -38,7 +35,7 @@ test("LFS extension picker keeps custom selections visible and removable", () =>
     />,
   );
 
-  expect(selectedLfsExtensionCount("blend")).toBe(1);
+  expect(selectedExtensionCount("blend")).toBe(1);
   expect(markup.includes(".blend")).toBe(true);
   expect(markup.includes('aria-label="Remove .blend"')).toBe(true);
   expect(/id="[^"]*-custom-extension"/.test(markup)).toBe(true);

@@ -4,17 +4,18 @@ import { fileURLToPath } from "node:url";
 import { act, useState } from "react";
 import { JSDOM } from "jsdom";
 
-const isolatedDomProcess = process.env.SVODE_LFS_PICKER_DOM_PROCESS === "1";
+const isolatedDomProcess =
+  process.env.SVODE_EXTENSION_PICKER_DOM_PROCESS === "1";
 
 if (!isolatedDomProcess) {
-  test("LFS picker selection DOM scenario", () => {
+  test("Extension picker selection DOM scenario", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
         env: {
           ...process.env,
-          SVODE_LFS_PICKER_DOM_PROCESS: "1",
+          SVODE_EXTENSION_PICKER_DOM_PROCESS: "1",
         },
         encoding: "utf8",
       },
@@ -29,7 +30,7 @@ if (!isolatedDomProcess) {
     const dom = createDom();
     const restoreGlobals = installDomGlobals(dom);
     const { createRoot } = await import("react-dom/client");
-    const { LfsExtensionPicker } = await import("./lfs-extension-picker");
+    const { ExtensionPicker } = await import("./extension-picker");
     const root = createRoot(dom.window.document.getElementById("app")!);
 
     function Harness() {
@@ -37,7 +38,7 @@ if (!isolatedDomProcess) {
       return (
         <>
           <output id="selection-value">{value}</output>
-          <LfsExtensionPicker
+          <ExtensionPicker
             value={value}
             onChange={setValue}
             disabled={false}

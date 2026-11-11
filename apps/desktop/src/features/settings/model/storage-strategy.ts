@@ -3,7 +3,8 @@ import * as m from "@/paraglide/messages.js";
 
 export const BINARY_ROUTING_VERSION = 1;
 const BYTES_PER_MEGABYTE = 1_000_000;
-const PROTECTED_LFS_EXTENSIONS = new Set([
+// Text formats stay in Git under every strategy.
+const PROTECTED_EXTENSIONS = new Set([
   "md",
   "markdown",
   "yaml",
@@ -13,26 +14,36 @@ const PROTECTED_LFS_EXTENSIONS = new Set([
   "svg",
 ]);
 
-export interface LfsRoutingDraft {
-  extensions: string;
+// Binary routing as Settings sends it. `set_assets_strategy` replaces the
+// saved routing with it, so the `local` list is always there: without it the
+// config would fall back to the default set.
+export type StorageBinaryRouting = BinaryRoutingConfig & {
+  localExtensions: string[];
+};
+
+// The rules of both groups: the formats of Git LFS and of `local`, and the
+// size threshold they share.
+export interface BinaryRoutingDraft {
+  lfsExtensions: string;
+  localExtensions: string;
   thresholdEnabled: boolean;
   thresholdMegabytes: string;
 }
 
-export type LfsExtensionDraftIssue =
-  | "invalid-extension"
-  | "protected-extension";
+export type StorageRulesGroup = "lfs" | "local";
 
-export type LfsRoutingDraftIssue = LfsExtensionDraftIssue | "invalid-threshold";
+export type ExtensionDraftIssue = "invalid-extension" | "protected-extension";
 
-export interface NormalizedLfsExtension {
+export type BinaryRoutingDraftIssue = ExtensionDraftIssue | "invalid-threshold";
+
+export interface NormalizedStorageExtension {
   extension: string | null;
-  issue: LfsExtensionDraftIssue | null;
+  issue: ExtensionDraftIssue | null;
 }
 
-export interface LfsRoutingDraftResult {
-  config: BinaryRoutingConfig | null;
-  issue: LfsRoutingDraftIssue | null;
+export interface BinaryRoutingDraftResult {
+  config: StorageBinaryRouting | null;
+  issue: BinaryRoutingDraftIssue | null;
 }
 
 export type LfsStorageStrategy = Extract<
@@ -147,54 +158,86 @@ export function storageTargetKey(
   return `${projectPath}\u0000${spaceId ?? ""}`;
 }
 
-export function lfsRoutingDraftFromConfig(
-  extensions: string[],
-  thresholdBytes: number | null,
-): LfsRoutingDraft {
+export function binaryRoutingDraftFromConfig({
+  lfsExtensions,
+  localExtensions,
+  lfsThresholdBytes,
+}: Pick<
+  StorageBinaryRouting,
+  "lfsExtensions" | "localExtensions" | "lfsThresholdBytes"
+>): BinaryRoutingDraft {
   return {
-    extensions: [...extensions].sort().join(", "),
-    thresholdEnabled: thresholdBytes !== null,
+    lfsExtensions: extensionDraft(lfsExtensions),
+    localExtensions: extensionDraft(localExtensions),
+    thresholdEnabled: lfsThresholdBytes !== null,
     thresholdMegabytes:
-      thresholdBytes === null
+      lfsThresholdBytes === null
         ? "10"
-        : String(thresholdBytes / BYTES_PER_MEGABYTE),
+        : String(lfsThresholdBytes / BYTES_PER_MEGABYTE),
   };
 }
 
-export function normalizeLfsExtension(value: string): NormalizedLfsExtension {
+// A list is edited only in its own rules group; the other one goes out as
+// saved, so a hidden draft never changes or blocks what is sent.
+export function binaryRoutingDraftForGroup(
+  draft: BinaryRoutingDraft,
+  saved: StorageBinaryRouting | null,
+  group: StorageRulesGroup,
+): BinaryRoutingDraft {
+  if (!saved) return draft;
+  return group === "local"
+    ? { ...draft, lfsExtensions: extensionDraft(saved.lfsExtensions) }
+    : { ...draft, localExtensions: extensionDraft(saved.localExtensions) };
+}
+
+function extensionDraft(extensions: string[]): string {
+  return [...extensions].sort().join(", ");
+}
+
+export function normalizeStorageExtension(
+  value: string,
+): NormalizedStorageExtension {
   const extension = value.trim().replace(/^\.+/, "").toLowerCase();
   if (!/^[a-z0-9][a-z0-9+_-]*$/.test(extension)) {
     return { extension: null, issue: "invalid-extension" };
   }
-  if (PROTECTED_LFS_EXTENSIONS.has(extension)) {
+  if (PROTECTED_EXTENSIONS.has(extension)) {
     return { extension: null, issue: "protected-extension" };
   }
   return { extension, issue: null };
 }
 
-export function normalizeLfsRoutingDraft(
-  draft: LfsRoutingDraft,
-): LfsRoutingDraftResult {
-  const extensionTokens = draft.extensions
+function normalizeExtensionDraft(
+  value: string,
+): { extensions: string[]; issue: null } | { issue: ExtensionDraftIssue } {
+  const normalized = value
     .split(/[\s,]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const normalizedExtensions = extensionTokens.map(normalizeLfsExtension);
-  if (normalizedExtensions.some(({ issue }) => issue === "invalid-extension")) {
-    return { config: null, issue: "invalid-extension" };
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map(normalizeStorageExtension);
+  if (normalized.some(({ issue }) => issue === "invalid-extension")) {
+    return { issue: "invalid-extension" };
   }
-  if (
-    normalizedExtensions.some(({ issue }) => issue === "protected-extension")
-  ) {
-    return { config: null, issue: "protected-extension" };
+  if (normalized.some(({ issue }) => issue === "protected-extension")) {
+    return { issue: "protected-extension" };
   }
   const extensions = [
     ...new Set(
-      normalizedExtensions.flatMap(({ extension }) =>
+      normalized.flatMap(({ extension }) =>
         extension === null ? [] : [extension],
       ),
     ),
   ].sort();
+  return { extensions, issue: null };
+}
+
+export function normalizeBinaryRoutingDraft(
+  draft: BinaryRoutingDraft,
+): BinaryRoutingDraftResult {
+  const lfs = normalizeExtensionDraft(draft.lfsExtensions);
+  if (lfs.issue) return { config: null, issue: lfs.issue };
+  const local = normalizeExtensionDraft(draft.localExtensions);
+  if (local.issue) return { config: null, issue: local.issue };
 
   let lfsThresholdBytes: number | null = null;
   if (draft.thresholdEnabled) {
@@ -214,26 +257,32 @@ export function normalizeLfsRoutingDraft(
   return {
     config: {
       version: BINARY_ROUTING_VERSION,
-      lfsExtensions: extensions,
+      lfsExtensions: lfs.extensions,
       lfsThresholdBytes,
+      localExtensions: local.extensions,
     },
     issue: null,
   };
 }
 
 export function sameBinaryRouting(
-  left: BinaryRoutingConfig | null,
-  right: BinaryRoutingConfig | null,
+  left: StorageBinaryRouting | null,
+  right: StorageBinaryRouting | null,
 ): boolean {
   return (
     left !== null &&
     right !== null &&
     left.version === right.version &&
     left.lfsThresholdBytes === right.lfsThresholdBytes &&
-    left.lfsExtensions.length === right.lfsExtensions.length &&
-    left.lfsExtensions.every(
-      (extension, index) => extension === right.lfsExtensions[index],
-    )
+    sameList(left.lfsExtensions, right.lfsExtensions) &&
+    sameList(left.localExtensions, right.localExtensions)
+  );
+}
+
+function sameList(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
   );
 }
 

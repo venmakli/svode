@@ -145,6 +145,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       binaryRoutingIssue: null,
       binaryRoutingChanged: false,
       lfsExtensions: "png, psd",
+      localExtensions: "jpg, mp4, png",
       lfsThresholdEnabled: false,
       lfsThresholdMegabytes: "10",
       currentSpacePath: "/project",
@@ -179,11 +180,13 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       lfsPolicyDiagnosticLoading: false,
       lfsPolicyDiagnosticError: false,
       canUpdateLfsPolicy: false,
+      canUpdateLocalRules: false,
       setS3Endpoint: noop,
       setS3Bucket: noop,
       setS3Region: noop,
       setS3Prefix: noop,
       setLfsExtensions: noop,
+      setLocalExtensions: noop,
       setLfsThresholdEnabled: noop,
       setLfsThresholdMegabytes: noop,
       selectStrategy: async (next) => {
@@ -197,6 +200,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       setLfsRemoteAuthDialogOpen: noop,
       saveLfsRemoteAuthAndRetry: async () => {},
       updateLfsPolicy: call("updateLfsPolicy"),
+      updateLocalRules: call("updateLocalRules"),
       refreshLfsPolicyDiagnostic: call("refreshLfsPolicyDiagnostic"),
       cancelPendingStrategy: noop,
       confirmPendingStrategy: async () => {},
@@ -269,12 +273,12 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
 
   test("the strategy is a rich Select: the trigger names it, the list explains every option", async () => {
     await render(storageFixture());
-    expect(groups()).toEqual(["Strategy"]);
+    expect(groups()).toEqual(["Strategy", "Files on this device"]);
     const trigger = control("Storage strategy");
     expect(trigger.textContent).toBe("Local only");
     const options = await openSelect(trigger);
     expect(options.map((option) => option.textContent)).toEqual([
-      "Local onlyNew files stay on this device and aren't added to Git.",
+      "Local onlyFiles in the selected formats and large files stay on this device and aren't added to Git.",
       "In GitNew files are stored in Git with your documents.",
       "Git LFS (Remote)New files and matching media are stored in Git LFS with your Git provider.",
       "Git LFS + S3New files and matching media use Git LFS, with their contents stored in S3.",
@@ -458,6 +462,87 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     );
   });
 
+  test("local rules: formats and size of this device, saved on their own", async () => {
+    await render(storageFixture({ lfsThresholdEnabled: true }));
+    const rules = group("Files on this device");
+    expect(
+      rules.textContent?.includes(
+        "Applies to new files; files already added to Git stay as they are.",
+      ),
+    ).toBe(true);
+    const formats = rules.querySelector('[role="group"][aria-labelledby]')!;
+    const formatsRow = formats.closest('[data-slot="field"]')!;
+    expect(formatsRow.getAttribute("data-orientation")).toBe("vertical");
+    expect(
+      document.getElementById(formats.getAttribute("aria-labelledby")!)
+        ?.textContent,
+    ).toBe("File formats");
+    expect(
+      formatsRow.textContent?.includes(
+        "Files in the selected formats aren't added to Git. Selected: 3",
+      ),
+    ).toBe(true);
+    // The picker shows the local list, not the LFS one.
+    expect(
+      Array.from(
+        formats.querySelectorAll<HTMLElement>('[role="checkbox"]'),
+      ).find((box) => box.getAttribute("aria-label")?.includes("Video"))
+        ?.dataset.state,
+    ).toBe("indeterminate");
+    const threshold = rowOf(control("Use file size"));
+    expect(
+      threshold.textContent?.includes(
+        "Large files of any format stay on this device too.",
+      ),
+    ).toBe(true);
+    expect(rules.contains(control("Files from"))).toBe(true);
+    expect(buttons("Apply storage strategy").length).toBe(0);
+    expect(buttons("Save rules", rules)[0].disabled).toBe(true);
+
+    await render(storageFixture({ canUpdateLocalRules: true }));
+    await press(buttons("Save rules", group("Files on this device"))[0]);
+    expect(calls).toEqual(["updateLocalRules"]);
+
+    // An error sits under its row and the save stays off.
+    await render(storageFixture({ binaryRoutingIssue: "protected-extension" }));
+    expect(
+      group("Files on this device").textContent?.includes(
+        "Markdown, YAML, JSON, CSV, and SVG must stay in regular Git.",
+      ),
+    ).toBe(true);
+    expect(
+      group("Files on this device")
+        .querySelector('[role="group"][aria-labelledby]')
+        ?.getAttribute("aria-invalid"),
+    ).toBe("true");
+
+    // Saving disables the rules.
+    await render(storageFixture({ applyingStrategy: true }));
+    expect((control("Use file size") as HTMLButtonElement).disabled).toBe(true);
+
+    // Leaving local hides them: In Git has no rules, LFS has its own group.
+    await render(storageFixture({ assetsStrategy: "in-git" }));
+    expect(groups()).toEqual(["Strategy"]);
+    await render(storageFixture({ assetsStrategy: "lfs-remote" }));
+    expect(groups()).toEqual(["Strategy", "Files in Git LFS"]);
+
+    // Rules of a newer Svode version are read-only.
+    await render(
+      storageFixture({
+        binaryRoutingStatus: "unsupported",
+        binaryRoutingVersion: 2,
+      }),
+    );
+    expect(groups()).toEqual(["Strategy", "Files on this device"]);
+    const locked = group("Files on this device");
+    expect(
+      locked.textContent?.includes(
+        "These rules were created by a newer Svode version.",
+      ),
+    ).toBe(true);
+    expect(buttons("Save rules", locked).length).toBe(0);
+  });
+
   test("S3: Endpoint spans the row, the keys are rich Selects of Secrets, the editor opens under its key", async () => {
     await render(storageFixture({ assetsStrategy: "lfs-s3" }));
     const endpoint = control("Endpoint");
@@ -593,7 +678,11 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
   test("a space repository offers the project setting first and says why it cannot take it", async () => {
     const space = { isRoot: false, currentSpaceId: "docs" };
     await render(storageFixture(space));
-    expect(groups()).toEqual(["Project setting", "Strategy"]);
+    expect(groups()).toEqual([
+      "Project setting",
+      "Strategy",
+      "Files on this device",
+    ]);
     const setting = group("Project setting");
     expect(
       setting.textContent?.includes("Project “Testov”: Git LFS + S3"),

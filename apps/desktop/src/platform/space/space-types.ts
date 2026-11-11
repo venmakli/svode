@@ -79,6 +79,9 @@ export interface BinaryRoutingConfigDto {
   version: number;
   lfsExtensions: string[];
   lfsThresholdBytes: number | null;
+  // The formats the `local` strategy keeps out of Git; absent means the
+  // default set.
+  localExtensions?: string[];
   [key: string]: unknown;
 }
 
@@ -89,6 +92,9 @@ export interface EffectiveBinaryRoutingDto {
   version: number | null;
   lfsExtensions: string[];
   lfsThresholdBytes: number | null;
+  // The effective list of the `local` strategy: the configured one or the
+  // default set; empty for an unsupported version.
+  localExtensions: string[];
 }
 
 export interface AssetsSpaceConfigDto {

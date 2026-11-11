@@ -93,6 +93,9 @@ export interface BinaryRoutingConfig {
   version: number;
   lfsExtensions: string[];
   lfsThresholdBytes: number | null;
+  // The formats the `local` strategy keeps out of Git; absent means the
+  // default set.
+  localExtensions?: string[];
   [key: string]: unknown;
 }
 

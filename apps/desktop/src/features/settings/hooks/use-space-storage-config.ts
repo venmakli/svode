@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type {
-  AssetsS3Config,
-  AssetsStrategy,
-  BinaryRoutingConfig,
-} from "@/features/space";
+import type { AssetsS3Config, AssetsStrategy } from "@/features/space";
 import { getAssetsConfig } from "../api";
 import { useStorageS3 } from "./use-storage-s3";
 import {
-  lfsRoutingDraftFromConfig,
-  normalizeLfsRoutingDraft,
+  binaryRoutingDraftForGroup,
+  binaryRoutingDraftFromConfig,
+  normalizeBinaryRoutingDraft,
   sameBinaryRouting,
   storageTargetKey,
+  type BinaryRoutingDraft,
+  type StorageBinaryRouting,
 } from "../model/storage-strategy";
 
 interface UseSpaceStorageConfigOptions {
@@ -48,8 +47,9 @@ export function useSpaceStorageConfig({
     number | null
   >(null);
   const [savedBinaryRouting, setSavedBinaryRouting] =
-    useState<BinaryRoutingConfig | null>(null);
+    useState<StorageBinaryRouting | null>(null);
   const [lfsExtensions, setLfsExtensions] = useState("");
+  const [localExtensions, setLocalExtensions] = useState("");
   const [lfsThresholdEnabled, setLfsThresholdEnabled] = useState(false);
   const [lfsThresholdMegabytes, setLfsThresholdMegabytes] = useState("10");
   const [s3Endpoint, setS3Endpoint] = useState("");
@@ -57,6 +57,12 @@ export function useSpaceStorageConfig({
   const [s3Region, setS3Region] = useState("");
   const [s3Prefix, setS3Prefix] = useState("");
   const [loadError, setLoadError] = useState(false);
+  const setDraft = useCallback((draft: BinaryRoutingDraft) => {
+    setLfsExtensions(draft.lfsExtensions);
+    setLocalExtensions(draft.localExtensions);
+    setLfsThresholdEnabled(draft.thresholdEnabled);
+    setLfsThresholdMegabytes(draft.thresholdMegabytes);
+  }, []);
   const [reload, setReload] = useState(0);
   const s3 = useStorageS3({
     open: detailsOpen,
@@ -73,14 +79,31 @@ export function useSpaceStorageConfig({
       !inheritedFromProject &&
       !unknownStrategy,
   });
+  // `local` is a strategy one only leaves, so its draft is never a step
+  // toward another one: the local rules are edited only while it is chosen.
+  const rulesGroup = assetsStrategy === "local" ? "local" : "lfs";
   const binaryRoutingDraft = useMemo(
     () =>
-      normalizeLfsRoutingDraft({
-        extensions: lfsExtensions,
-        thresholdEnabled: lfsThresholdEnabled,
-        thresholdMegabytes: lfsThresholdMegabytes,
-      }),
-    [lfsExtensions, lfsThresholdEnabled, lfsThresholdMegabytes],
+      normalizeBinaryRoutingDraft(
+        binaryRoutingDraftForGroup(
+          {
+            lfsExtensions,
+            localExtensions,
+            thresholdEnabled: lfsThresholdEnabled,
+            thresholdMegabytes: lfsThresholdMegabytes,
+          },
+          savedBinaryRouting,
+          rulesGroup,
+        ),
+      ),
+    [
+      lfsExtensions,
+      localExtensions,
+      lfsThresholdEnabled,
+      lfsThresholdMegabytes,
+      savedBinaryRouting,
+      rulesGroup,
+    ],
   );
   const binaryRoutingChanged =
     binaryRoutingStatus === "legacy-preset" ||
@@ -132,22 +155,17 @@ export function useSpaceStorageConfig({
           setOwnerSpaceId(ownerSpaceId);
           setBinaryRoutingStatus(binaryRouting.status);
           setBinaryRoutingVersion(binaryRouting.version);
-          const nextRouting: BinaryRoutingConfig | null =
+          const nextRouting: StorageBinaryRouting | null =
             binaryRouting.status === "unsupported"
               ? null
               : {
                   version: 1,
                   lfsExtensions: [...binaryRouting.lfsExtensions].sort(),
                   lfsThresholdBytes: binaryRouting.lfsThresholdBytes,
+                  localExtensions: [...binaryRouting.localExtensions].sort(),
                 };
-          const nextDraft = lfsRoutingDraftFromConfig(
-            binaryRouting.lfsExtensions,
-            binaryRouting.lfsThresholdBytes,
-          );
           setSavedBinaryRouting(nextRouting);
-          setLfsExtensions(nextDraft.extensions);
-          setLfsThresholdEnabled(nextDraft.thresholdEnabled);
-          setLfsThresholdMegabytes(nextDraft.thresholdMegabytes);
+          setDraft(binaryRoutingDraftFromConfig(binaryRouting));
           setS3Endpoint(s3?.endpoint ?? "");
           setS3Bucket(s3?.bucket ?? "");
           setS3Region(s3?.region ?? "");
@@ -166,13 +184,21 @@ export function useSpaceStorageConfig({
       cancelled = true;
       setLoadedTargetKey(null);
     };
-  }, [open, spacePath, projectPath, currentSpaceId, targetKey, reload]);
+  }, [
+    open,
+    spacePath,
+    projectPath,
+    currentSpaceId,
+    targetKey,
+    reload,
+    setDraft,
+  ]);
 
   const markStrategyApplied = useCallback(
     (
       next: AssetsStrategy,
       nextS3Config: AssetsS3Config | null,
-      nextBinaryRouting: BinaryRoutingConfig,
+      nextBinaryRouting: StorageBinaryRouting,
     ) => {
       setAssetsStrategy(next);
       setSavedAssetsStrategy(next);
@@ -180,15 +206,9 @@ export function useSpaceStorageConfig({
       setBinaryRoutingStatus("v1");
       setBinaryRoutingVersion(1);
       setSavedBinaryRouting(nextBinaryRouting);
-      const nextDraft = lfsRoutingDraftFromConfig(
-        nextBinaryRouting.lfsExtensions,
-        nextBinaryRouting.lfsThresholdBytes ?? null,
-      );
-      setLfsExtensions(nextDraft.extensions);
-      setLfsThresholdEnabled(nextDraft.thresholdEnabled);
-      setLfsThresholdMegabytes(nextDraft.thresholdMegabytes);
+      setDraft(binaryRoutingDraftFromConfig(nextBinaryRouting));
     },
-    [],
+    [setDraft],
   );
 
   return {
@@ -206,6 +226,7 @@ export function useSpaceStorageConfig({
     binaryRoutingIssue: binaryRoutingDraft.issue,
     binaryRoutingChanged,
     lfsExtensions,
+    localExtensions,
     lfsThresholdEnabled,
     lfsThresholdMegabytes,
     inheritedFromProject,
@@ -217,6 +238,7 @@ export function useSpaceStorageConfig({
     s3Prefix,
     setAssetsStrategy,
     setLfsExtensions,
+    setLocalExtensions,
     setLfsThresholdEnabled,
     setLfsThresholdMegabytes,
     setS3Endpoint,

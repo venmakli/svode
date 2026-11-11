@@ -119,6 +119,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
               version: 1,
               lfsExtensions: ["png"],
               lfsThresholdBytes: null,
+              localExtensions: ["jpg"],
             },
           };
         if (command === "count_local_files") {

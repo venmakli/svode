@@ -7,11 +7,13 @@ import {
   canRunLfsPolicyDiagnostic,
   canRunLfsRemoteDiagnostic,
   canShowLfsStatePanel,
-  lfsRoutingDraftFromConfig,
-  normalizeLfsExtension,
-  normalizeLfsRoutingDraft,
+  binaryRoutingDraftForGroup,
+  binaryRoutingDraftFromConfig,
+  normalizeBinaryRoutingDraft,
+  normalizeStorageExtension,
   sameBinaryRouting,
   storageStrategyWarningText,
+  type BinaryRoutingDraft,
 } from "./storage-strategy";
 
 test("storage strategy draft is not applyable when selection is unchanged", () => {
@@ -205,77 +207,148 @@ test("active LFS policy can be explicitly reapplied when its config is ready", (
   ).toBe(false);
 });
 
-test("LFS routing draft normalizes extensions and an enabled MB threshold", () => {
-  const result = normalizeLfsRoutingDraft({
-    extensions: ".PSD, mp4 psd, ZIP",
-    thresholdEnabled: true,
-    thresholdMegabytes: "12.5",
-  });
+const draft = (overrides: Partial<BinaryRoutingDraft> = {}) => ({
+  lfsExtensions: "",
+  localExtensions: "",
+  thresholdEnabled: false,
+  thresholdMegabytes: "10",
+  ...overrides,
+});
+
+test("routing draft normalizes both format lists and an enabled MB threshold", () => {
+  const result = normalizeBinaryRoutingDraft(
+    draft({
+      lfsExtensions: ".PSD, mp4 psd, ZIP",
+      localExtensions: "JPG, .png jpg",
+      thresholdEnabled: true,
+      thresholdMegabytes: "12.5",
+    }),
+  );
 
   expect(result.issue).toBeNull();
   expect(result.config).toEqual({
     version: 1,
     lfsExtensions: ["mp4", "psd", "zip"],
     lfsThresholdBytes: 12_500_000,
+    localExtensions: ["jpg", "png"],
   });
 });
 
-test("LFS routing draft rejects protected and malformed extensions", () => {
+test("routing draft rejects protected and malformed extensions of either list", () => {
   expect(
-    normalizeLfsRoutingDraft({
-      extensions: "svg",
-      thresholdEnabled: false,
-      thresholdMegabytes: "10",
-    }).issue,
+    normalizeBinaryRoutingDraft(draft({ lfsExtensions: "svg" })).issue,
   ).toBe("protected-extension");
   expect(
-    normalizeLfsRoutingDraft({
-      extensions: "*.psd",
-      thresholdEnabled: false,
-      thresholdMegabytes: "10",
-    }).issue,
+    normalizeBinaryRoutingDraft(draft({ localExtensions: "md" })).issue,
+  ).toBe("protected-extension");
+  expect(
+    normalizeBinaryRoutingDraft(draft({ lfsExtensions: "*.psd" })).issue,
   ).toBe("invalid-extension");
   expect(
-    normalizeLfsRoutingDraft({
-      extensions: ".",
-      thresholdEnabled: false,
-      thresholdMegabytes: "10",
-    }).issue,
+    normalizeBinaryRoutingDraft(draft({ localExtensions: "docs/a.png" })).issue,
   ).toBe("invalid-extension");
+  expect(normalizeBinaryRoutingDraft(draft({ lfsExtensions: "." })).issue).toBe(
+    "invalid-extension",
+  );
   expect(
-    normalizeLfsRoutingDraft({
-      extensions: "psd",
-      thresholdEnabled: true,
-      thresholdMegabytes: "0.0000001",
-    }).issue,
+    normalizeBinaryRoutingDraft(
+      draft({
+        lfsExtensions: "psd",
+        thresholdEnabled: true,
+        thresholdMegabytes: "0.0000001",
+      }),
+    ).issue,
   ).toBe("invalid-threshold");
 });
 
-test("single LFS extension input normalizes user-friendly values", () => {
-  expect(normalizeLfsExtension(" .BLEND ")).toEqual({
+test("an empty local list stays an empty list: only the size rule applies", () => {
+  expect(
+    normalizeBinaryRoutingDraft(
+      draft({ thresholdEnabled: true, thresholdMegabytes: "10" }),
+    ).config,
+  ).toEqual({
+    version: 1,
+    lfsExtensions: [],
+    lfsThresholdBytes: 10_000_000,
+    localExtensions: [],
+  });
+});
+
+test("single extension input normalizes user-friendly values", () => {
+  expect(normalizeStorageExtension(" .BLEND ")).toEqual({
     extension: "blend",
     issue: null,
   });
-  expect(normalizeLfsExtension("*.psd")).toEqual({
+  expect(normalizeStorageExtension("*.psd")).toEqual({
     extension: null,
     issue: "invalid-extension",
   });
-  expect(normalizeLfsExtension(".svg")).toEqual({
+  expect(normalizeStorageExtension(".svg")).toEqual({
     extension: null,
     issue: "protected-extension",
   });
 });
 
-test("LFS routing draft round-trips a disabled threshold", () => {
-  const draft = lfsRoutingDraftFromConfig(["zip", "psd"], null);
-  const result = normalizeLfsRoutingDraft(draft);
+test("routing draft round-trips both lists and a disabled threshold", () => {
+  const config = {
+    version: 1,
+    lfsExtensions: ["zip", "psd"],
+    lfsThresholdBytes: null,
+    localExtensions: ["png", "jpg"],
+  };
+  const result = normalizeBinaryRoutingDraft(
+    binaryRoutingDraftFromConfig(config),
+  );
 
   expect(result.config).toEqual({
     version: 1,
     lfsExtensions: ["psd", "zip"],
     lfsThresholdBytes: null,
+    localExtensions: ["jpg", "png"],
   });
   expect(sameBinaryRouting(result.config, result.config)).toBe(true);
+  expect(
+    sameBinaryRouting(result.config, {
+      ...result.config!,
+      localExtensions: ["jpg"],
+    }),
+  ).toBe(false);
+});
+
+test("each list is edited in its own group; the hidden one goes out as saved", () => {
+  const saved = {
+    version: 1,
+    lfsExtensions: ["psd"],
+    lfsThresholdBytes: 10_000_000,
+    localExtensions: ["mp4", "jpg"],
+  };
+  const edited = draft({
+    lfsExtensions: "svg",
+    localExtensions: "png",
+    thresholdEnabled: true,
+    thresholdMegabytes: "5",
+  });
+
+  expect(binaryRoutingDraftForGroup(edited, saved, "local")).toEqual({
+    ...edited,
+    lfsExtensions: "psd",
+  });
+  expect(binaryRoutingDraftForGroup(edited, saved, "lfs")).toEqual({
+    ...edited,
+    localExtensions: "jpg, mp4",
+  });
+  // A protected format in the hidden LFS draft does not block the local save.
+  expect(
+    normalizeBinaryRoutingDraft(
+      binaryRoutingDraftForGroup(edited, saved, "local"),
+    ).config,
+  ).toEqual({
+    version: 1,
+    lfsExtensions: ["psd"],
+    lfsThresholdBytes: 5_000_000,
+    localExtensions: ["png"],
+  });
+  expect(binaryRoutingDraftForGroup(edited, null, "lfs")).toBe(edited);
 });
 
 test("strategy warnings are worded by code in the interface language", () => {

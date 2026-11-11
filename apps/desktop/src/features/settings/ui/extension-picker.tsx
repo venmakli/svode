@@ -23,8 +23,8 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 import {
-  normalizeLfsExtension,
-  type LfsExtensionDraftIssue,
+  normalizeStorageExtension,
+  type ExtensionDraftIssue,
 } from "../model/storage-strategy";
 
 const EXTENSION_GROUPS = [
@@ -51,7 +51,7 @@ const PRESET_EXTENSIONS = new Set<string>(PRESET_EXTENSION_ORDER);
 type ExtensionGroup = (typeof EXTENSION_GROUPS)[number];
 type ExtensionGroupValue = ExtensionGroup["value"];
 
-interface LfsExtensionPickerProps {
+interface ExtensionPickerProps {
   // The row that holds the picker names and describes its formats.
   labelledBy?: string;
   describedBy?: string;
@@ -61,23 +61,24 @@ interface LfsExtensionPickerProps {
   value: string;
 }
 
-export function selectedLfsExtensionCount(value: string): number {
+export function selectedExtensionCount(value: string): number {
   return extensionValuesFromDraft(value).length;
 }
 
-// The formats of the LFS rules: format groups that expand into single
-// formats, then a field for a format that is not listed.
-export function LfsExtensionPicker({
+// The formats of a storage rules group, Git LFS or this device: format
+// groups that expand into single formats, then a field for a format that is
+// not listed.
+export function ExtensionPicker({
   labelledBy,
   describedBy,
   disabled,
   invalid,
   onChange,
   value,
-}: LfsExtensionPickerProps) {
+}: ExtensionPickerProps) {
   const id = useId();
   const [customExtension, setCustomExtension] = useState("");
-  const [customIssue, setCustomIssue] = useState<LfsExtensionDraftIssue | null>(
+  const [customIssue, setCustomIssue] = useState<ExtensionDraftIssue | null>(
     null,
   );
   const [openGroup, setOpenGroup] = useState<ExtensionGroupValue | null>(null);
@@ -111,7 +112,7 @@ export function LfsExtensionPicker({
   };
 
   const addCustomExtension = () => {
-    const result = normalizeLfsExtension(customExtension);
+    const result = normalizeStorageExtension(customExtension);
     if (result.issue || result.extension === null) {
       setCustomIssue(result.issue ?? "invalid-extension");
       return;

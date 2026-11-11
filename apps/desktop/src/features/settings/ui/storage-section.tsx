@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { CheckCircle2, LoaderCircle, TriangleAlert } from "lucide-react";
+import { CheckCircle2, TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -14,29 +14,21 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-  InputGroupText,
-} from "@/components/ui/input-group";
-import { Switch } from "@/components/ui/switch";
 import type { AssetsStrategy } from "@/features/space";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
 import { isLfsStorageStrategy } from "../model/storage-strategy";
 import {
-  LfsExtensionPicker,
-  selectedLfsExtensionCount,
-} from "./lfs-extension-picker";
-import {
-  SettingsActions,
   SettingsGroup,
   SettingsItem,
   SettingsRow,
   SettingsRowSkeleton,
 } from "./settings-layout";
 import { SettingsSelect } from "./settings-select";
-import { StorageApplyActions, useStorageAction } from "./storage-actions";
+import { StorageApplyActions } from "./storage-actions";
+import {
+  StorageLfsRulesGroup,
+  StorageLocalRulesGroup,
+} from "./storage-rules-group";
 import { StorageS3Group } from "./storage-s3-group";
 import { StorageStateGroup } from "./storage-state-group";
 
@@ -219,8 +211,10 @@ export function StorageSettingsSection({
         />
       )}
       <StorageStrategyGroup settings={settings} />
-      {isLfsStorageStrategy(settings.assetsStrategy) ||
-      settings.binaryRoutingStatus === "unsupported" ? (
+      {settings.assetsStrategy === "local" ? (
+        <StorageLocalRulesGroup settings={settings} />
+      ) : isLfsStorageStrategy(settings.assetsStrategy) ||
+        settings.binaryRoutingStatus === "unsupported" ? (
         <StorageLfsRulesGroup settings={settings} />
       ) : null}
       {settings.assetsStrategy === "lfs-s3" ? (
@@ -398,138 +392,6 @@ function StorageStrategyGroup({ settings }: { settings: StorageSettings }) {
         }
       />
       {draft !== saved && draft === "in-git" ? (
-        <StorageApplyActions key="apply" settings={settings} />
-      ) : null}
-    </SettingsGroup>
-  );
-}
-
-// Formats and size that route new files to Git LFS. Once the strategy is
-// on, they are saved on their own.
-function StorageLfsRulesGroup({ settings }: { settings: StorageSettings }) {
-  const id = useId();
-  const [saving, runSave] = useStorageAction();
-  if (settings.binaryRoutingStatus === "unsupported")
-    return (
-      <SettingsGroup
-        title={m.storage_lfs_rules_title()}
-        callout={
-          <Alert>
-            <TriangleAlert />
-            <AlertTitle>{m.storage_lfs_rules_unsupported()}</AlertTitle>
-            <AlertDescription>
-              {m.storage_lfs_rules_unsupported_hint({
-                version: String(settings.binaryRoutingVersion ?? "?"),
-              })}
-            </AlertDescription>
-          </Alert>
-        }
-      />
-    );
-
-  const issue = settings.binaryRoutingIssue;
-  const formatsError =
-    issue === "invalid-extension"
-      ? m.storage_lfs_extensions_invalid()
-      : issue === "protected-extension"
-        ? m.storage_lfs_extensions_protected()
-        : null;
-  const sizeError =
-    issue === "invalid-threshold" ? m.storage_lfs_threshold_invalid() : null;
-  const disabled = settings.applyingStrategy;
-  const enabled = settings.assetsStrategy === settings.savedAssetsStrategy;
-  return (
-    <SettingsGroup
-      title={m.storage_lfs_rules_title()}
-      description={m.storage_lfs_existing_unchanged()}
-    >
-      <SettingsRow
-        key="formats"
-        layout="stacked"
-        label={
-          <span id={`${id}-formats`}>{m.storage_lfs_extensions_label()}</span>
-        }
-        description={
-          <span id={`${id}-formats-hint`}>
-            {m.storage_lfs_extensions_hint()}{" "}
-            {m.storage_lfs_extensions_selected({
-              count: String(selectedLfsExtensionCount(settings.lfsExtensions)),
-            })}
-          </span>
-        }
-        error={formatsError}
-        errorId={`${id}-formats-error`}
-      >
-        <LfsExtensionPicker
-          value={settings.lfsExtensions}
-          onChange={settings.setLfsExtensions}
-          disabled={disabled}
-          invalid={Boolean(formatsError)}
-          labelledBy={`${id}-formats`}
-          describedBy={
-            formatsError
-              ? `${id}-formats-hint ${id}-formats-error`
-              : `${id}-formats-hint`
-          }
-        />
-      </SettingsRow>
-      <SettingsRow
-        key="threshold"
-        label={m.storage_lfs_threshold_label()}
-        description={m.storage_lfs_threshold_hint()}
-        htmlFor={`${id}-threshold-enabled`}
-      >
-        <Switch
-          id={`${id}-threshold-enabled`}
-          checked={settings.lfsThresholdEnabled}
-          disabled={disabled}
-          onCheckedChange={(checked) =>
-            settings.setLfsThresholdEnabled(checked === true)
-          }
-        />
-      </SettingsRow>
-      {settings.lfsThresholdEnabled ? (
-        <SettingsRow
-          key="size"
-          label={m.storage_lfs_threshold_input_label()}
-          htmlFor={`${id}-threshold-size`}
-          error={sizeError}
-          errorId={`${id}-threshold-error`}
-        >
-          <InputGroup className="w-32">
-            <InputGroupInput
-              id={`${id}-threshold-size`}
-              inputMode="decimal"
-              value={settings.lfsThresholdMegabytes}
-              disabled={disabled}
-              aria-invalid={sizeError ? true : undefined}
-              aria-describedby={sizeError ? `${id}-threshold-error` : undefined}
-              onChange={(event) =>
-                settings.setLfsThresholdMegabytes(event.target.value)
-              }
-            />
-            <InputGroupAddon align="inline-end">
-              <InputGroupText>{m.storage_lfs_threshold_unit()}</InputGroupText>
-            </InputGroupAddon>
-          </InputGroup>
-        </SettingsRow>
-      ) : null}
-      {enabled ? (
-        <SettingsActions key="save">
-          <Button
-            type="button"
-            disabled={
-              !settings.canUpdateLfsPolicy || !settings.binaryRoutingChanged
-            }
-            onClick={() => runSave(settings.updateLfsPolicy)}
-          >
-            {saving ? (
-              <LoaderCircle data-icon="inline-start" className="animate-spin" />
-            ) : null}
-            {m.storage_lfs_rules_save()}
-          </Button>
-        </SettingsActions>
-      ) : settings.assetsStrategy === "lfs-remote" ? (
         <StorageApplyActions key="apply" settings={settings} />
       ) : null}
     </SettingsGroup>
