@@ -265,10 +265,22 @@ fn managed_attachment_repository_dir(space: &str, project_path: Option<&str>) ->
         .unwrap_or(space_dir)
 }
 
+/// The repository-relative form of the Space-relative `path`.
+fn managed_attachment_repository_path(repo_dir: &Path, space: &str, path: &str) -> String {
+    let space_dir = Path::new(space);
+    let space_prefix = space_dir.strip_prefix(repo_dir).unwrap_or(Path::new(""));
+    space_prefix.join(path).to_string_lossy().replace('\\', "/")
+}
+
 /// Repository policy files whose managed routing blocks a Page move may rewrite.
 pub fn managed_attachment_policy_paths(space: &str, project_path: Option<&str>) -> Vec<PathBuf> {
     let repo_dir = managed_attachment_repository_dir(space, project_path);
     vec![repo_dir.join(".gitignore"), repo_dir.join(".gitattributes")]
+}
+
+/// Repository `.gitignore` whose exact local rules a delete may drop.
+pub fn managed_attachment_local_rules_path(space: &str, project_path: Option<&str>) -> PathBuf {
+    managed_attachment_repository_dir(space, project_path).join(".gitignore")
 }
 
 /// Rebase managed Attachment routes of `from` (Space-relative) to `to`.
@@ -279,10 +291,73 @@ pub fn rebase_managed_attachment_routes(
     to: &str,
     subtree: bool,
 ) -> Result<Vec<PathBuf>, ManagedRouteError> {
-    let space_dir = PathBuf::from(space);
     let repo_dir = managed_attachment_repository_dir(space, project_path);
-    let space_prefix = space_dir.strip_prefix(&repo_dir).unwrap_or(Path::new(""));
-    let old_path = space_prefix.join(from).to_string_lossy().replace('\\', "/");
-    let new_path = space_prefix.join(to).to_string_lossy().replace('\\', "/");
+    let old_path = managed_attachment_repository_path(&repo_dir, space, from);
+    let new_path = managed_attachment_repository_path(&repo_dir, space, to);
     rebase_managed_import_routes(&repo_dir, &old_path, &new_path, subtree)
 }
+
+/// A `.gitignore` whose exact local rules a delete dropped, with its text
+/// from before the delete, so a failed delete puts the rules back.
+#[derive(Debug)]
+pub struct DroppedLocalRoutes {
+    path: PathBuf,
+    previous: String,
+}
+
+impl DroppedLocalRoutes {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn restore(&self) -> Result<(), std::io::Error> {
+        std::fs::write(&self.path, &self.previous)
+    }
+}
+
+/// Drop the exact local rules of the deleted Space-relative `deleted` and of
+/// every path under it: the rule of a deleted path would silently keep a
+/// future file at that path out of Git. Returns `None` when no rule named a
+/// deleted path, so the file stays untouched.
+pub fn drop_managed_attachment_local_routes(
+    space: &str,
+    project_path: Option<&str>,
+    deleted: &str,
+) -> Result<Option<DroppedLocalRoutes>, ManagedRouteError> {
+    let repo_dir = managed_attachment_repository_dir(space, project_path);
+    let deleted = managed_attachment_repository_path(&repo_dir, space, deleted);
+    let path = repo_dir.join(".gitignore");
+    let current = read_or_empty(&path)?;
+    let paths = parse_managed_paths(&current, LOCAL_PATHS_START, LOCAL_PATHS_END)?;
+    let retained = paths
+        .iter()
+        .filter(|path| !path_in_tree(path, &deleted))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if retained.len() == paths.len() {
+        return Ok(None);
+    }
+    let next = rewrite_managed_path_block(
+        &current,
+        LOCAL_PATHS_START,
+        LOCAL_PATHS_END,
+        &retained,
+        false,
+    );
+    write_or_remove(&path, &next)?;
+    Ok(Some(DroppedLocalRoutes {
+        path,
+        previous: current,
+    }))
+}
+
+fn path_in_tree(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+#[cfg(test)]
+#[path = "routes_tests.rs"]
+mod tests;

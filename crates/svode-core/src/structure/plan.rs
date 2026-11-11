@@ -7,7 +7,9 @@ use crate::collections::engine::{self, CollectionSchema};
 use crate::index::state::IndexRuntimeState;
 use crate::page::store;
 use crate::page::{PageError, ensure_path_in_space};
-use crate::storage::routes::managed_attachment_policy_paths;
+use crate::storage::routes::{
+    managed_attachment_local_rules_path, managed_attachment_policy_paths,
+};
 
 pub async fn move_mutation_paths(
     state: &IndexRuntimeState,
@@ -132,6 +134,7 @@ pub fn delete_mutation_paths(
         project_path.filter(|path| !path.is_empty()),
         &deleted,
     )?;
+    paths.push(managed_attachment_local_rules_path(space, project_path));
     paths.push(PathBuf::from(space));
     paths.sort();
     paths.dedup();

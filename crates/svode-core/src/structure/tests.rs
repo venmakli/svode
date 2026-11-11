@@ -2407,3 +2407,180 @@ async fn df_251_a_failed_step_restores_the_sources_with_rewritten_definitions() 
         }
     }
 }
+
+/// `.gitignore` with a user line and the exact local rules of `paths`.
+fn gitignore_with_local_rules(paths: &[&str]) -> String {
+    use crate::storage::routes::{LOCAL_PATHS_END, LOCAL_PATHS_START, rewrite_managed_path_block};
+    rewrite_managed_path_block(
+        "*.log\n",
+        LOCAL_PATHS_START,
+        LOCAL_PATHS_END,
+        &paths.iter().map(|path| path.to_string()).collect(),
+        false,
+    )
+}
+
+fn local_rule_paths(root: &Path) -> Vec<String> {
+    use crate::storage::routes::{LOCAL_PATHS_END, LOCAL_PATHS_START, parse_managed_paths};
+    let contents = fs::read_to_string(root.join(".gitignore")).unwrap_or_default();
+    parse_managed_paths(&contents, LOCAL_PATHS_START, LOCAL_PATHS_END)
+        .unwrap()
+        .into_iter()
+        .collect()
+}
+
+fn local_attachment_space(root: &Path) {
+    relation_target_space(root);
+    write_tree(
+        root,
+        &[
+            ("Notes/README.md", "---\ntitle: Notes\n---\n"),
+            ("Notes/scan.bin", "scan"),
+            ("Notes/Deep/clip.bin", "clip"),
+            ("Notes2/README.md", "---\ntitle: Notes2\n---\n"),
+            ("Notes2/kept.bin", "kept"),
+            ("Decisions/report.pdf", "report"),
+            ("Loose.md", "---\ntitle: Loose\n---\n"),
+        ],
+    );
+    fs::write(
+        root.join(".gitignore"),
+        gitignore_with_local_rules(&[
+            "Notes/scan.bin",
+            "Notes/Deep/clip.bin",
+            "Notes2/kept.bin",
+            "Decisions/report.pdf",
+        ]),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn deleting_content_drops_the_exact_local_rules_of_its_paths_in_the_same_operation() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    local_attachment_space(root);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+
+    // A folder Page drops the rules of its whole tree and no sibling's.
+    super::delete(
+        space,
+        "Notes/README.md",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .expect("delete the folder Page");
+    assert_eq!(
+        local_rule_paths(root),
+        vec!["Decisions/report.pdf", "Notes2/kept.bin"]
+    );
+    assert!(
+        fs::read_to_string(root.join(".gitignore"))
+            .unwrap()
+            .starts_with("*.log\n")
+    );
+    let committed = sink
+        .take()
+        .into_iter()
+        .flat_map(|(_, _, paths)| paths)
+        .collect::<Vec<_>>();
+    assert_contains_all(&committed, root, &[".gitignore", "Notes"]);
+
+    // A Collection drops the rules of its files.
+    super::delete(space, "Decisions/README.md", Some(space), runtime(&state))
+        .await
+        .expect("delete the Collection");
+    assert_eq!(local_rule_paths(root), vec!["Notes2/kept.bin"]);
+
+    // A delete that names no ruled path leaves `.gitignore` alone.
+    let before = fs::read_to_string(root.join(".gitignore")).unwrap();
+    super::delete(
+        space,
+        "Loose.md",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .expect("delete the leaf Page");
+    assert_eq!(fs::read_to_string(root.join(".gitignore")).unwrap(), before);
+    let committed = sink
+        .take()
+        .into_iter()
+        .flat_map(|(_, _, paths)| paths)
+        .collect::<Vec<_>>();
+    assert!(
+        !committed.contains(&root.join(".gitignore")),
+        "{committed:?}"
+    );
+
+    // The last rule gone takes the block with it, the user line stays.
+    super::delete(space, "Notes2/README.md", Some(space), runtime(&state))
+        .await
+        .expect("delete the last ruled Page");
+    assert_eq!(
+        fs::read_to_string(root.join(".gitignore")).unwrap(),
+        "*.log\n"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_delete_restores_the_exact_local_rules_it_dropped() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    local_attachment_space(root);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+    let before = source_snapshot(root);
+
+    crate::page::write::inject_failure(Some("delete_remove"), None);
+    let error = super::delete(
+        space,
+        "Notes/README.md",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .expect_err("injected delete failure");
+    crate::page::write::inject_failure(None, None);
+
+    assert!(
+        error.to_string().contains("injected delete_remove failure"),
+        "{error:?}"
+    );
+    assert_eq!(source_snapshot(root), before);
+    assert!(sink.take().is_empty());
+}
+
+#[tokio::test]
+async fn a_delete_refused_for_a_malformed_local_rules_block_changes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    local_attachment_space(root);
+    fs::write(
+        root.join(".gitignore"),
+        "# svode:assets-local-paths:start\n/Notes/scan.bin\n",
+    )
+    .unwrap();
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let before = source_snapshot(root);
+
+    super::delete(space, "Notes/README.md", Some(space), runtime(&state))
+        .await
+        .expect_err("malformed block");
+
+    assert_eq!(source_snapshot(root), before);
+}

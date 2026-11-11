@@ -34,6 +34,9 @@ pub struct DeleteResult {
     pub deleted_root: String,
     pub deleted_paths: Vec<String>,
     pub cascade_touched: Vec<PathBuf>,
+    /// Repository policy files whose exact routing rules of the deleted
+    /// paths the delete dropped.
+    pub routing_touched: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

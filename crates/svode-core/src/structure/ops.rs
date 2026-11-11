@@ -451,6 +451,11 @@ pub async fn delete<E: GitDateExecutor>(
                 space,
                 [abs_page_path(space, &deleted.deleted_root)],
             ));
+        for (owner_space, paths) in
+            super::naming::grouped_abs_paths_by_space(project_path, space, &deleted.routing_touched)
+        {
+            paths_by_space.entry(owner_space).or_default().extend(paths);
+        }
         let change = StructuralChange::new(StructuralOp::Delete(page_commit_name(space, path)));
         for (owner_space, paths) in paths_by_space {
             schedule_structural_paths(

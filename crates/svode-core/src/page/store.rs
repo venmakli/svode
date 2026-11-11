@@ -18,6 +18,7 @@ use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
 use crate::page::filename::{self, FilenameProjection};
 use crate::page::frontmatter;
 use crate::page::{PageError, ensure_path_in_space};
+use crate::storage::routes::DroppedLocalRoutes;
 
 use page_dir::{PageDirContents, RemovedPageDir};
 use persistence::{
@@ -2053,22 +2054,31 @@ pub fn delete_with_project(
 
     let deleted_root = rel_from_abs(space_path, &abs_path);
     let deleted_paths = collect_deleted_page_paths(space_path, &abs_path)?;
+    let dropped_routes = crate::storage::routes::drop_managed_attachment_local_routes(
+        space,
+        project_path,
+        &deleted_root,
+    )?;
+    let restore_routes =
+        |cause: PageError| restore_dropped_routes(space_path, dropped_routes.as_ref(), cause);
     let cascade_touched = match crate::collections::engine::cascade_clean_deleted_items_with_project(
         space,
         project_path,
         &deleted_paths,
     ) {
         Ok(paths) => paths,
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(restore_routes(error.into())),
     };
 
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
     let tombstone = unique_child_path(delete_parent, ".svode-delete", None);
-    fs::rename(&abs_path, &tombstone)?;
+    if let Err(error) = fs::rename(&abs_path, &tombstone) {
+        return Err(restore_routes(error.into()));
+    }
 
     if let Err(error) = cascade_remove_tombstone(&tombstone) {
         let _ = fs::rename(&tombstone, &abs_path);
-        return Err(error);
+        return Err(restore_routes(error));
     }
 
     if let Some(index) = backlink_index {
@@ -2083,10 +2093,38 @@ pub fn delete_with_project(
         deleted_root,
         deleted_paths,
         cascade_touched,
+        routing_touched: dropped_routes
+            .iter()
+            .map(|dropped| dropped.path().to_path_buf())
+            .collect(),
     })
 }
 
+/// Put back the exact local rules a failed delete dropped. Returns `cause`,
+/// or the recovery failure naming the policy file left changed.
+fn restore_dropped_routes(
+    space: &Path,
+    dropped: Option<&DroppedLocalRoutes>,
+    cause: PageError,
+) -> PageError {
+    let Some(dropped) = dropped else {
+        return cause;
+    };
+    match dropped.restore() {
+        Ok(()) => cause,
+        Err(error) => {
+            tracing::warn!(path = %dropped.path().display(), "could not restore local rules: {error}");
+            PageError::Recovery {
+                cause: cause.to_string(),
+                paths: vec![rel_from_abs(space, dropped.path())],
+            }
+        }
+    }
+}
+
 fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), PageError> {
+    #[cfg(test)]
+    crate::page::write::checkpoint("delete_remove")?;
     if tombstone.is_dir() {
         fs::remove_dir_all(tombstone)?;
     } else {
