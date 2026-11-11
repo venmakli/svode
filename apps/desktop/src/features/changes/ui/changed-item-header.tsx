@@ -29,42 +29,46 @@ export function ChangedItemHeader({
   conflictKind?: GitConflictKind;
 }) {
   const label = stateLabel(state);
+  // The tooltip trigger is a wrapper: on the accordion trigger itself its own
+  // `data-state` would replace the expanded state of the header.
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <AccordionTrigger
-          className="min-w-0 items-center gap-2 py-1.5 hover:no-underline"
-          data-changes-item-trigger={path}
-          aria-label={`${name} — ${label} (${path})`}
-        >
-          <ChangeStateIcon state={state} className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{name}</span>
-          {stats === undefined ? (
-            <Skeleton className="h-3 w-12" />
-          ) : stats.additions !== null && stats.deletions !== null ? (
-            <span
-              className="flex shrink-0 items-center gap-2 font-mono text-xs font-normal tabular-nums"
-              data-changes-stats
-              aria-label={m.changes_stats({
-                added: String(stats.additions),
-                removed: String(stats.deletions),
-              })}
-            >
-              <span className="text-destructive">−{stats.deletions}</span>
-              <span className="text-[var(--property-green)]">
-                +{stats.additions}
+        <div>
+          <AccordionTrigger
+            className="min-w-0 items-center gap-2 py-1.5 hover:no-underline"
+            data-changes-item-trigger={path}
+            aria-label={`${name} — ${label} (${path})`}
+          >
+            <ChangeStateIcon state={state} className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{name}</span>
+            {stats === undefined ? (
+              <Skeleton className="h-3 w-12" />
+            ) : stats.additions !== null && stats.deletions !== null ? (
+              <span
+                className="flex shrink-0 items-center gap-2 font-mono text-xs font-normal tabular-nums"
+                data-changes-stats
+                aria-label={m.changes_stats({
+                  added: String(stats.additions),
+                  removed: String(stats.deletions),
+                })}
+              >
+                <span className="text-destructive">−{stats.deletions}</span>
+                <span className="text-[var(--property-green)]">
+                  +{stats.additions}
+                </span>
               </span>
-            </span>
-          ) : state === "conflict" ? (
-            <Badge
-              variant="outline"
-              className="shrink-0 font-normal"
-              data-changes-conflict-kind={conflictKind}
-            >
-              {conflictKind ? gitConflictKindLabel(conflictKind) : label}
-            </Badge>
-          ) : null}
-        </AccordionTrigger>
+            ) : state === "conflict" ? (
+              <Badge
+                variant="outline"
+                className="shrink-0 font-normal"
+                data-changes-conflict-kind={conflictKind}
+              >
+                {conflictKind ? gitConflictKindLabel(conflictKind) : label}
+              </Badge>
+            ) : null}
+          </AccordionTrigger>
+        </div>
       </TooltipTrigger>
       <TooltipContent className="break-all">
         {path} — {label}
