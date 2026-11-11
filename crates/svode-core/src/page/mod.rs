@@ -15,6 +15,8 @@ mod membership;
 mod membership_tests;
 pub mod metadata;
 pub mod naming;
+#[cfg(test)]
+mod naming_tests;
 pub mod nonce;
 #[cfg(test)]
 mod order_tests;
@@ -37,8 +39,12 @@ pub use target::{
     space_reference_status,
 };
 
+#[cfg(test)]
+pub(crate) use source::head_reads;
 pub use source::{
     ColorName, Cover, PageSource, PageSourceError, PageSourceMeta, PageSourceWarning,
     ParsedMarkdown, ResolvedPageTarget, SourceVersion, current_source_version, fallback_title,
-    filesystem_dates, parse_markdown, read_page_source, resolve_page_target,
+    filesystem_dates, parse_markdown, read_page_source, read_page_source_with_names,
+    resolve_page_target,
 };
+pub(crate) use source::{FrontmatterHead, frontmatter_head};

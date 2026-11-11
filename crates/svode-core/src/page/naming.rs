@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,8 @@ use unicode_casefold::UnicodeCaseFold;
 use unicode_normalization::UnicodeNormalization;
 
 use super::error::PageError;
-use super::source::{PageSourceError, ParsedMarkdown, parse_markdown};
+use super::membership::ChildSpaceRoots;
+use super::source::{FrontmatterHead, PageSourceError, read_frontmatter_head};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -60,71 +61,221 @@ pub fn is_user_document(path: &str) -> bool {
             .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
 }
 
-fn title_for_markdown(path: &Path, fallback: String) -> String {
-    let Ok(content) = fs::read_to_string(path) else {
-        return fallback;
-    };
-    match parse_markdown(&content, "") {
-        ParsedMarkdown::Valid(meta, _) if meta.title_present => meta.title,
-        _ => fallback,
+/// Frontmatter facts of one document as its single head read gives them;
+/// `title` is `None` when the frontmatter has no title or does not read.
+#[derive(Debug, Clone, Default)]
+pub struct DocumentHead {
+    pub title: Option<String>,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+}
+
+impl DocumentHead {
+    /// Read the frontmatter head of the Markdown file at `path`.
+    pub fn read(path: &Path) -> Self {
+        match read_frontmatter_head(path) {
+            FrontmatterHead::Valid(meta) => Self {
+                title: meta.title_present.then_some(meta.title),
+                icon: meta.icon,
+                description: meta.description,
+            },
+            FrontmatterHead::Missing | FrontmatterHead::Unreadable => Self::default(),
+        }
     }
 }
 
-fn direct_document_siblings(
-    space: &Path,
-    parent: Option<&str>,
-    current: &str,
-) -> Result<Vec<DocumentNameConflictEvidence>, PageSourceError> {
-    let directory = space.join(parent.unwrap_or("").trim_matches('/'));
-    if !directory.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut siblings = Vec::new();
-    let entries = fs::read_dir(&directory).map_err(PageSourceError::Io)?;
-    for item in entries.filter_map(Result::ok) {
-        let path = item.path();
-        let name = item.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
+/// One document of a naming scope with the title the naming rule compares.
+#[derive(Debug)]
+struct ScopeDocument {
+    path: String,
+    title: String,
+    head: DocumentHead,
+}
+
+/// The documents that share one naming scope (logical parent), each read
+/// once: the leaf Markdown files of the directory and the README of each
+/// of its folders. Hidden entries and the folders of registered child
+/// Spaces are not part of it. A document without a title is named by its
+/// file stem with `-` and `_` as spaces, a folder head by its folder name.
+#[derive(Debug, Default)]
+struct DocumentScope {
+    parent: Option<String>,
+    documents: Vec<ScopeDocument>,
+    by_path: HashMap<String, usize>,
+    by_key: HashMap<String, Vec<usize>>,
+}
+
+impl DocumentScope {
+    fn read(
+        space: &Path,
+        parent: &str,
+        child_spaces: &ChildSpaceRoots,
+    ) -> Result<Self, PageSourceError> {
+        let mut scope = Self {
+            parent: Some(parent.to_string()).filter(|parent| !parent.is_empty()),
+            ..Self::default()
+        };
+        let directory = space.join(parent);
+        if !directory.is_dir() {
+            return Ok(scope);
         }
-        let rel = path.strip_prefix(space).unwrap_or(&path);
-        if path.is_dir() {
-            let Some(readme) = fs::read_dir(&path)
-                .ok()
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .find(|candidate| candidate.is_file() && is_readme(candidate))
-            else {
-                continue;
-            };
-            if repo_path(readme.strip_prefix(space).unwrap_or(&readme)) == current {
+        let entries = fs::read_dir(&directory).map_err(PageSourceError::Io)?;
+        for item in entries.filter_map(Result::ok) {
+            let path = item.path();
+            let name = item.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
                 continue;
             }
-            siblings.push(DocumentNameConflictEvidence {
-                path: repo_path(readme.strip_prefix(space).unwrap_or(&readme)),
-                title: title_for_markdown(&readme, name),
-            });
-        } else if path.is_file()
-            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
-            && !is_readme(&path)
-        {
-            if repo_path(rel) == current {
-                continue;
+            let rel = repo_path(path.strip_prefix(space).unwrap_or(&path));
+            if path.is_dir() {
+                if child_spaces.owner_of(&rel).is_some() {
+                    continue;
+                }
+                let Some(readme) = fs::read_dir(&path)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .find(|candidate| candidate.is_file() && is_readme(candidate))
+                else {
+                    continue;
+                };
+                scope.push(
+                    repo_path(readme.strip_prefix(space).unwrap_or(&readme)),
+                    DocumentHead::read(&readme),
+                    name,
+                );
+            } else if path.is_file()
+                && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+                && !is_readme(&path)
+            {
+                let fallback = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("Untitled")
+                    .replace(['-', '_'], " ");
+                scope.push(rel, DocumentHead::read(&path), fallback);
             }
-            let fallback = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("Untitled")
-                .replace(['-', '_'], " ");
-            siblings.push(DocumentNameConflictEvidence {
-                path: repo_path(rel),
-                title: title_for_markdown(&path, fallback),
-            });
+        }
+        Ok(scope)
+    }
+
+    fn push(&mut self, path: String, head: DocumentHead, fallback: String) {
+        let title = head.title.clone().unwrap_or(fallback);
+        let index = self.documents.len();
+        self.by_key
+            .entry(display_name_key(&title))
+            .or_default()
+            .push(index);
+        self.by_path.insert(path.clone(), index);
+        self.documents.push(ScopeDocument { path, title, head });
+    }
+
+    fn document(&self, path: &str) -> Option<&ScopeDocument> {
+        self.by_path.get(path).map(|index| &self.documents[*index])
+    }
+
+    /// The other documents of the scope that `title` names alike.
+    fn conflict(&self, current: &str, title: &str) -> Option<DocumentNameConflict> {
+        let conflicts = self
+            .by_key
+            .get(&display_name_key(title))
+            .into_iter()
+            .flatten()
+            .map(|index| &self.documents[*index])
+            .filter(|document| document.path != current)
+            .map(|document| DocumentNameConflictEvidence {
+                path: document.path.clone(),
+                title: document.title.clone(),
+            })
+            .collect::<Vec<_>>();
+        (!conflicts.is_empty()).then(|| DocumentNameConflict {
+            parent_path: self.parent.clone(),
+            conflicts,
+        })
+    }
+}
+
+/// The naming scopes of one Space, each read on first use and kept, so a
+/// listing or a batch of reads asks any number of conflicts for one read of
+/// every document per scope. Name conflict marks of listings and reads and
+/// the name check of writes all come from it.
+pub struct DocumentNames {
+    space: PathBuf,
+    child_spaces: ChildSpaceRoots,
+    scopes: HashMap<String, DocumentScope>,
+}
+
+impl DocumentNames {
+    /// Naming scopes of the Space at `space`. A config that does not read
+    /// registers no child Space here, as the tree that shows the Space
+    /// treats it; writes refuse such a config by their own membership check.
+    pub fn new(space: &Path) -> Self {
+        Self {
+            space: space.to_path_buf(),
+            child_spaces: ChildSpaceRoots::read(space).unwrap_or_default(),
+            scopes: HashMap::new(),
         }
     }
-    Ok(siblings)
+
+    fn scope(&mut self, parent: &str) -> Result<&DocumentScope, PageSourceError> {
+        if !self.scopes.contains_key(parent) {
+            let scope = DocumentScope::read(&self.space, parent, &self.child_spaces)?;
+            self.scopes.insert(parent.to_string(), scope);
+        }
+        Ok(&self.scopes[parent])
+    }
+
+    fn scope_of(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<(&DocumentScope, String)>, PageSourceError> {
+        if !is_user_document(path) {
+            return Ok(None);
+        }
+        let current = path.trim_matches('/').replace('\\', "/");
+        let parent = logical_document_parent(&current).unwrap_or_default();
+        Ok(Some((self.scope(&parent)?, current)))
+    }
+
+    /// The conflict that the document at `path` would have under `title`.
+    pub fn conflict_for(
+        &mut self,
+        path: &str,
+        title: &str,
+    ) -> Result<Option<DocumentNameConflict>, PageSourceError> {
+        Ok(self
+            .scope_of(path)?
+            .and_then(|(scope, current)| scope.conflict(&current, title)))
+    }
+
+    /// The conflict of the existing document at `path` under the title the
+    /// naming rule gives it, so two documents mark each other alike;
+    /// `fallback_title` serves a document its scope does not hold.
+    pub fn conflict_of(
+        &mut self,
+        path: &str,
+        fallback_title: &str,
+    ) -> Result<Option<DocumentNameConflict>, PageSourceError> {
+        Ok(self.scope_of(path)?.and_then(|(scope, current)| {
+            let title = scope
+                .document(&current)
+                .map_or(fallback_title, |document| document.title.as_str());
+            scope.conflict(&current, title)
+        }))
+    }
+
+    /// Frontmatter head of the document at `path` from its scope's read,
+    /// or its own read when the scope does not hold it.
+    pub fn head(&mut self, path: &str) -> Result<DocumentHead, PageSourceError> {
+        let held = self.scope_of(path)?.and_then(|(scope, current)| {
+            scope
+                .document(&current)
+                .map(|document| document.head.clone())
+        });
+        Ok(held.unwrap_or_else(|| DocumentHead::read(&self.space.join(path))))
+    }
 }
 
 pub fn document_name_conflict(
@@ -132,20 +283,7 @@ pub fn document_name_conflict(
     path: &str,
     title: &str,
 ) -> Result<Option<DocumentNameConflict>, PageSourceError> {
-    if !is_user_document(path) {
-        return Ok(None);
-    }
-    let parent = logical_document_parent(path);
-    let key = display_name_key(title);
-    let current = path.trim_matches('/').replace('\\', "/");
-    let conflicts = direct_document_siblings(space, parent.as_deref(), &current)?
-        .into_iter()
-        .filter(|sibling| display_name_key(&sibling.title) == key)
-        .collect::<Vec<_>>();
-    Ok((!conflicts.is_empty()).then_some(DocumentNameConflict {
-        parent_path: parent.filter(|value| !value.is_empty()),
-        conflicts,
-    }))
+    DocumentNames::new(space).conflict_for(path, title)
 }
 
 static DOCUMENT_NAME_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
@@ -182,19 +320,24 @@ pub fn ensure_document_name_available(
     Ok(())
 }
 
+/// `requested`, or the first of "`requested` 2", "`requested` 3"… free in
+/// the naming scope of `path_for_scope`; every candidate is checked against
+/// one read of the scope.
 pub fn allocate_document_title(
     space: &Path,
     path_for_scope: &str,
     requested: &str,
 ) -> Result<String, PageError> {
-    if !is_user_document(path_for_scope)
-        || document_name_conflict(space, path_for_scope, requested)?.is_none()
-    {
+    let mut names = DocumentNames::new(space);
+    let Some((scope, current)) = names.scope_of(path_for_scope)? else {
+        return Ok(requested.to_string());
+    };
+    if scope.conflict(&current, requested).is_none() {
         return Ok(requested.to_string());
     }
     for index in 2..=10_000 {
         let candidate = format!("{requested} {index}");
-        if document_name_conflict(space, path_for_scope, &candidate)?.is_none() {
+        if scope.conflict(&current, &candidate).is_none() {
             return Ok(candidate);
         }
     }

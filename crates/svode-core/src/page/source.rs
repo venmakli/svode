@@ -1,8 +1,9 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::frontmatter::FrontmatterFields;
-use super::naming::{DocumentNameConflict, document_name_conflict};
+use super::naming::{DocumentNameConflict, DocumentNames};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -202,6 +203,16 @@ pub(super) fn normalize_page_path(path: &str) -> Result<String, PageSourceError>
 }
 
 pub fn read_page_source(target: ResolvedPageTarget) -> Result<PageSource, PageSourceError> {
+    let mut names = DocumentNames::new(&target.space);
+    read_page_source_with_names(target, &mut names)
+}
+
+/// [`read_page_source`] with its name conflict from `names`, which a reader
+/// of many Pages of one Space shares, so each naming scope is read once.
+pub fn read_page_source_with_names(
+    target: ResolvedPageTarget,
+    names: &mut DocumentNames,
+) -> Result<PageSource, PageSourceError> {
     let bytes =
         fs::read(&target.absolute).map_err(|error| source_error(&target.absolute, error))?;
     let content = std::str::from_utf8(&bytes)
@@ -225,7 +236,7 @@ pub fn read_page_source(target: ResolvedPageTarget) -> Result<PageSource, PageSo
         ),
     };
     let version = version_of(&target, &bytes);
-    let name_conflict = document_name_conflict(&target.space, &target.path, &meta.title)?;
+    let name_conflict = names.conflict_of(&target.path, &meta.title)?;
     Ok(PageSource {
         target,
         meta,
@@ -301,6 +312,100 @@ pub fn parse_markdown(content: &str, path: &str) -> ParsedMarkdown {
     match parse_frontmatter(content, path) {
         Ok((meta, body)) => ParsedMarkdown::Valid(meta, body),
         Err(message) => ParsedMarkdown::Malformed(message, content.to_string()),
+    }
+}
+
+/// Longest frontmatter a head read accepts.
+const MAX_FRONTMATTER_HEAD_BYTES: usize = 64 * 1024;
+
+/// The frontmatter at the head of a Markdown source, read up to its closing
+/// line and no further than [`MAX_FRONTMATTER_HEAD_BYTES`].
+pub(crate) enum FrontmatterHead {
+    Missing,
+    Valid(PageSourceMeta),
+    Unreadable,
+}
+
+pub(crate) fn frontmatter_head(mut reader: impl BufRead) -> FrontmatterHead {
+    let mut head = String::new();
+    let mut started = false;
+
+    loop {
+        let mut line = String::new();
+        let Ok(bytes) = reader.read_line(&mut line) else {
+            return FrontmatterHead::Unreadable;
+        };
+        if bytes == 0 {
+            break;
+        }
+
+        if !started {
+            if line.trim().is_empty() {
+                head.push_str(&line);
+                continue;
+            }
+            if line.trim_end() != "---" {
+                return FrontmatterHead::Missing;
+            }
+            if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
+                return FrontmatterHead::Unreadable;
+            }
+            started = true;
+            head.push_str(&line);
+            continue;
+        }
+
+        let is_closing = line.trim_end() == "---";
+        if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
+            return FrontmatterHead::Unreadable;
+        }
+        head.push_str(&line);
+        if is_closing {
+            return match parse_markdown(&head, "") {
+                ParsedMarkdown::Valid(meta, _) => FrontmatterHead::Valid(meta),
+                _ => FrontmatterHead::Unreadable,
+            };
+        }
+    }
+
+    if started {
+        FrontmatterHead::Unreadable
+    } else {
+        FrontmatterHead::Missing
+    }
+}
+
+/// Frontmatter head of the Markdown file at `path`, without its body: the
+/// one read of a document that listings and naming scopes make. A file that
+/// does not open reads as unreadable.
+pub(crate) fn read_frontmatter_head(path: &Path) -> FrontmatterHead {
+    #[cfg(test)]
+    head_reads::record(path);
+    match fs::File::open(path) {
+        Ok(file) => frontmatter_head(BufReader::new(file)),
+        Err(_) => FrontmatterHead::Unreadable,
+    }
+}
+
+/// Head reads per file on the current thread, so tests can count how often
+/// a listing reads each document.
+#[cfg(test)]
+pub(crate) mod head_reads {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    thread_local! {
+        static READS: RefCell<HashMap<PathBuf, usize>> = RefCell::new(HashMap::new());
+    }
+
+    pub(crate) fn record(path: &Path) {
+        READS.with(|reads| *reads.borrow_mut().entry(path.to_path_buf()).or_default() += 1);
+    }
+
+    /// Head reads made on this thread since the last call, by file.
+    pub(crate) fn take() -> HashMap<PathBuf, usize> {
+        READS.with(|reads| std::mem::take(&mut *reads.borrow_mut()))
     }
 }
 

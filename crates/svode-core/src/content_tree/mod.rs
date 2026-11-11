@@ -9,7 +9,6 @@ mod order_tests;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -18,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use self::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use self::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::page::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
-use crate::page::naming::{DocumentNameConflict, document_name_conflict};
-use crate::page::{PageSourceMeta, ParsedMarkdown, parse_markdown};
+use crate::page::naming::{DocumentHead, DocumentNameConflict, DocumentNames};
+use crate::page::{FrontmatterHead, frontmatter_head};
 use crate::page::{SpaceReadiness, space_reference_status};
 use crate::storage::routes::{LOCAL_PATHS_END, LOCAL_PATHS_START, parse_managed_paths};
 
@@ -223,8 +222,6 @@ fn normalize_parent_path(raw: &str) -> Result<String, ContentTreeError> {
     Ok(path)
 }
 
-const MAX_FRONTMATTER_HEAD_BYTES: usize = 64 * 1024;
-
 pub fn has_direct_schema(directory: &Path) -> bool {
     directory.join("schema.yaml").is_file()
 }
@@ -323,47 +320,45 @@ fn find_readme(
     Ok(None)
 }
 
-/// Read sidebar metadata from frontmatter. Falls back to filename without .md on error.
-fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<String>) {
-    let fallback = abs_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let content = match fs::read_to_string(abs_path) {
-        Ok(c) => c,
-        Err(_) => return (fallback, None, None),
-    };
-
-    match parse_markdown(&content, "") {
-        ParsedMarkdown::Valid(meta, _) => title_or_fallback(meta, fallback),
-        _ => (fallback, None, None),
-    }
-}
-
 /// Lazy tree metadata reader: stop at frontmatter instead of loading markdown body.
 pub fn read_frontmatter_meta_head(abs_path: &Path) -> (String, Option<String>, Option<String>) {
-    let fallback = abs_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    read_frontmatter_meta_head_with_fallback(abs_path, fallback)
+    read_frontmatter_meta_head_with_fallback(abs_path, file_stem(abs_path))
 }
 
 pub fn read_frontmatter_meta_head_with_fallback(
     abs_path: &Path,
     fallback: String,
 ) -> (String, Option<String>, Option<String>) {
-    let Ok(file) = fs::File::open(abs_path) else {
-        return (fallback, None, None);
-    };
-    match frontmatter_head(BufReader::new(file)) {
-        FrontmatterHead::Valid(meta) => title_or_fallback(meta, fallback),
-        FrontmatterHead::Missing | FrontmatterHead::Unreadable => (fallback, None, None),
+    head_meta(DocumentHead::read(abs_path), fallback)
+}
+
+/// Title, icon and description the tree shows for a document `head`, its
+/// title falling back to `fallback`.
+fn head_meta(head: DocumentHead, fallback: String) -> (String, Option<String>, Option<String>) {
+    (head.title.unwrap_or(fallback), head.icon, head.description)
+}
+
+/// What the tree shows for the folder `name` from the `head` of its README
+/// at `readme`: a README titled only "README" (its file stem without
+/// frontmatter) shows the folder name.
+fn folder_head_meta(
+    head: DocumentHead,
+    readme: &Path,
+    name: &str,
+) -> (String, Option<String>, Option<String>) {
+    let (title, icon, description) = head_meta(head, file_stem(readme));
+    if icon.is_none() && title.eq_ignore_ascii_case("readme") {
+        (name.to_string(), None, None)
+    } else {
+        (title, icon, description)
     }
+}
+
+fn file_stem(path: &Path) -> String {
+    path.file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string()
 }
 
 /// The title the Space tree shows for the Markdown source `content`: its
@@ -371,83 +366,14 @@ pub fn read_frontmatter_meta_head_with_fallback(
 /// not read; a source without frontmatter takes `fallback`.
 pub fn source_title(content: &[u8], fallback: String) -> Option<String> {
     match frontmatter_head(content) {
-        FrontmatterHead::Valid(meta) => Some(title_or_fallback(meta, fallback).0),
-        FrontmatterHead::Missing => Some(fallback),
+        FrontmatterHead::Valid(meta) if meta.title_present => Some(meta.title),
+        FrontmatterHead::Valid(_) | FrontmatterHead::Missing => Some(fallback),
         FrontmatterHead::Unreadable => None,
-    }
-}
-
-/// The frontmatter at the head of a Markdown source, read up to its closing
-/// line and no further than [`MAX_FRONTMATTER_HEAD_BYTES`].
-enum FrontmatterHead {
-    Missing,
-    Valid(PageSourceMeta),
-    Unreadable,
-}
-
-fn frontmatter_head(mut reader: impl BufRead) -> FrontmatterHead {
-    let mut head = String::new();
-    let mut started = false;
-
-    loop {
-        let mut line = String::new();
-        let Ok(bytes) = reader.read_line(&mut line) else {
-            return FrontmatterHead::Unreadable;
-        };
-        if bytes == 0 {
-            break;
-        }
-
-        if !started {
-            if line.trim().is_empty() {
-                head.push_str(&line);
-                continue;
-            }
-            if line.trim_end() != "---" {
-                return FrontmatterHead::Missing;
-            }
-            if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
-                return FrontmatterHead::Unreadable;
-            }
-            started = true;
-            head.push_str(&line);
-            continue;
-        }
-
-        let is_closing = line.trim_end() == "---";
-        if head.len() + line.len() > MAX_FRONTMATTER_HEAD_BYTES {
-            return FrontmatterHead::Unreadable;
-        }
-        head.push_str(&line);
-        if is_closing {
-            return match parse_markdown(&head, "") {
-                ParsedMarkdown::Valid(meta, _) => FrontmatterHead::Valid(meta),
-                _ => FrontmatterHead::Unreadable,
-            };
-        }
-    }
-
-    if started {
-        FrontmatterHead::Unreadable
-    } else {
-        FrontmatterHead::Missing
     }
 }
 
 fn repo_path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
-}
-
-fn title_or_fallback(
-    meta: PageSourceMeta,
-    fallback: String,
-) -> (String, Option<String>, Option<String>) {
-    let title = if meta.title_present {
-        meta.title
-    } else {
-        fallback
-    };
-    (title, meta.icon, meta.description)
 }
 
 /// Read order.json from space .svode directory.
@@ -791,9 +717,8 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, ContentTreeError> {
     let order = read_order(root);
     let skip_dirs = child_folder_names(root);
     let policy = TreeIgnorePolicy::from_space_root(root);
-    let mut nodes = read_dir_recursive(root, root, &order, &skip_dirs, &policy)?;
-    annotate_recursive_name_conflicts(root, &mut nodes)?;
-    Ok(nodes)
+    let mut names = DocumentNames::new(root);
+    read_dir_recursive(root, root, &order, &skip_dirs, &policy, &mut names)
 }
 
 #[derive(Debug, Serialize)]
@@ -827,21 +752,47 @@ impl From<std::io::Error> for TreeLoadError {
     }
 }
 
+impl From<TreeLoadError> for ContentTreeError {
+    fn from(error: TreeLoadError) -> Self {
+        match error {
+            TreeLoadError::Missing { path } | TreeLoadError::Hidden { path } => {
+                ContentTreeError::FileNotFound(path)
+            }
+            TreeLoadError::Unavailable { source, .. } => source,
+        }
+    }
+}
+
 pub fn list_tree_children(
     space: &str,
     parent_path: Option<&str>,
 ) -> Result<Vec<TreeChildNode>, ContentTreeError> {
-    list_tree_children_checked(space, parent_path).map_err(|error| match error {
-        TreeLoadError::Missing { path } | TreeLoadError::Hidden { path } => {
-            ContentTreeError::FileNotFound(path)
-        }
-        TreeLoadError::Unavailable { source, .. } => source,
-    })
+    Ok(list_tree_children_checked(space, parent_path)?)
 }
 
+/// Direct children of `parent_path` with the name conflicts of their
+/// documents marked.
 pub fn list_tree_children_checked(
     space: &str,
     parent_path: Option<&str>,
+) -> Result<Vec<TreeChildNode>, TreeLoadError> {
+    list_children(space, parent_path, true)
+}
+
+/// Direct children of `parent_path` without name conflict marks, for an
+/// operation that needs only what the children are, not whether their
+/// names collide.
+pub fn list_tree_children_unmarked(
+    space: &str,
+    parent_path: Option<&str>,
+) -> Result<Vec<TreeChildNode>, TreeLoadError> {
+    list_children(space, parent_path, false)
+}
+
+fn list_children(
+    space: &str,
+    parent_path: Option<&str>,
+    mark_conflicts: bool,
 ) -> Result<Vec<TreeChildNode>, TreeLoadError> {
     let root = Path::new(space);
     // Missing targets only authorize cleanup while the owning root is readable.
@@ -889,29 +840,43 @@ pub fn list_tree_children_checked(
     }
 
     let order = read_order(root);
-    let skip_dirs = child_folder_names(root);
-    let mut nodes = read_dir_direct(root, &dir, &parent_rel, &order, &skip_dirs, &policy)?;
-    for node in &mut nodes {
-        if node.path.to_lowercase().ends_with(".md") {
-            node.name_conflict = document_name_conflict(root, &node.path, &node.title)
-                .map_err(ContentTreeError::from)?;
-        }
-    }
-    Ok(nodes)
+    let mut names = mark_conflicts.then(|| DocumentNames::new(root));
+    Ok(read_dir_direct(
+        root,
+        &dir,
+        &parent_rel,
+        &order,
+        &skip_dirs,
+        &policy,
+        names.as_mut(),
+    )?)
 }
 
-fn annotate_recursive_name_conflicts(
-    space: &Path,
-    nodes: &mut [TreeNode],
-) -> Result<(), ContentTreeError> {
-    for node in nodes {
-        if node.path.to_lowercase().ends_with(".md") {
-            node.name_conflict = document_name_conflict(space, &node.path, &node.title)
-                .map_err(ContentTreeError::from)?;
-        }
-        annotate_recursive_name_conflicts(space, &mut node.children)?;
+/// Head of the document at `rel` (`abs` on disk): from the naming scopes
+/// when the listing marks conflicts, which read it once for both, otherwise
+/// read directly.
+fn document_head(
+    names: Option<&mut DocumentNames>,
+    rel: &str,
+    abs: &Path,
+) -> Result<DocumentHead, ContentTreeError> {
+    match names {
+        Some(names) => Ok(names.head(rel)?),
+        None => Ok(DocumentHead::read(abs)),
     }
-    Ok(())
+}
+
+/// The name conflict of the listed document at `path` shown as `title`,
+/// when the listing marks conflicts.
+fn listed_conflict(
+    names: Option<&mut DocumentNames>,
+    path: &str,
+    title: &str,
+) -> Result<Option<DocumentNameConflict>, ContentTreeError> {
+    match names {
+        Some(names) => Ok(names.conflict_of(path, title)?),
+        None => Ok(None),
+    }
 }
 
 pub fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, ContentTreeError> {
@@ -977,6 +942,7 @@ fn read_dir_direct(
     order: &HashMap<String, Vec<String>>,
     skip_dirs: &HashSet<String>,
     policy: &TreeIgnorePolicy,
+    mut names: Option<&mut DocumentNames>,
 ) -> Result<Vec<TreeChildNode>, ContentTreeError> {
     let mut nodes: Vec<TreeChildNode> = Vec::new();
     let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
@@ -1024,16 +990,6 @@ fn read_dir_direct(
             if !facts.is_child_of(parent_has_app) {
                 continue;
             }
-            let (title, icon, description) = if let Some(ref readme_path) = readme {
-                let (title, icon, description) = read_frontmatter_meta_head(readme_path);
-                if icon.is_none() && title.eq_ignore_ascii_case("readme") {
-                    (name.clone(), None, None)
-                } else {
-                    (title, icon, description)
-                }
-            } else {
-                (name.clone(), None, None)
-            };
             let node_path = if let Some(ref readme_path) = readme {
                 let readme_name = readme_path
                     .file_name()
@@ -1042,6 +998,17 @@ fn read_dir_direct(
                 format!("{rel_path}/{readme_name}")
             } else {
                 rel_path.clone()
+            };
+            let (title, icon, description) = if let Some(ref readme_path) = readme {
+                let head = document_head(names.as_deref_mut(), &node_path, readme_path)?;
+                folder_head_meta(head, readme_path, &name)
+            } else {
+                (name.clone(), None, None)
+            };
+            let name_conflict = if readme.is_some() {
+                listed_conflict(names.as_deref_mut(), &node_path, &title)?
+            } else {
+                None
             };
             let kind = tree_directory_kind(facts);
 
@@ -1058,10 +1025,12 @@ fn read_dir_direct(
                 has_children: has_visible_direct_children(base, &abs_path, skip_dirs, policy)?,
                 kind,
                 source_shape: SourceShape::Directory,
-                name_conflict: None,
+                name_conflict,
             });
         } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
-            let (title, icon, description) = read_frontmatter_meta_head(&abs_path);
+            let head = document_head(names.as_deref_mut(), &rel_path, &abs_path)?;
+            let (title, icon, description) = head_meta(head, file_stem(&abs_path));
+            let name_conflict = listed_conflict(names.as_deref_mut(), &rel_path, &title)?;
             debug_assert!(
                 resolve_markdown_identity(MarkdownIdentityFacts {
                     path: &rel_path,
@@ -1084,7 +1053,7 @@ fn read_dir_direct(
                 has_children: false,
                 kind: TreeChildKind::Page,
                 source_shape: SourceShape::File,
-                name_conflict: None,
+                name_conflict,
             });
         }
     }
@@ -1173,6 +1142,7 @@ fn read_dir_recursive(
     order: &HashMap<String, Vec<String>>,
     skip_dirs: &HashSet<String>,
     policy: &TreeIgnorePolicy,
+    names: &mut DocumentNames,
 ) -> Result<Vec<TreeNode>, ContentTreeError> {
     let mut nodes: Vec<TreeNode> = Vec::new();
     let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
@@ -1225,18 +1195,6 @@ fn read_dir_recursive(
                 continue;
             }
 
-            let (title, icon, description) = if let Some(ref rp) = readme {
-                let (t, i, d) = read_frontmatter_meta(rp);
-                // If frontmatter missing, title falls back to "README" — use folder name instead
-                if i.is_none() && t.eq_ignore_ascii_case("readme") {
-                    (name.clone(), None, None)
-                } else {
-                    (t, i, d)
-                }
-            } else {
-                (name.clone(), None, None)
-            };
-
             // For document folders: path = "dir/README.md" (actual filename)
             // For bare folders: path = "dir" (no .md extension)
             let node_path = if let Some(ref rp) = readme {
@@ -1246,9 +1204,20 @@ fn read_dir_recursive(
                 rel_path.clone()
             };
 
+            let (title, icon, description) = if let Some(ref rp) = readme {
+                folder_head_meta(names.head(&node_path)?, rp, &name)
+            } else {
+                (name.clone(), None, None)
+            };
+            let name_conflict = if readme.is_some() {
+                names.conflict_of(&node_path, &title)?
+            } else {
+                None
+            };
+
             // Recurse and filter out readme.md from children
             let children: Vec<TreeNode> =
-                read_dir_recursive(base, &abs_path, order, skip_dirs, policy)?
+                read_dir_recursive(base, &abs_path, order, skip_dirs, policy, names)?
                     .into_iter()
                     .filter(|node| node.name.to_lowercase() != "readme.md")
                     .collect();
@@ -1264,11 +1233,13 @@ fn read_dir_recursive(
                 has_app,
                 kind: tree_directory_kind(facts),
                 source_shape: SourceShape::Directory,
-                name_conflict: None,
+                name_conflict,
                 children,
             });
         } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
-            let (title, icon, description) = read_frontmatter_meta(&abs_path);
+            let (title, icon, description) =
+                head_meta(names.head(&rel_path)?, file_stem(&abs_path));
+            let name_conflict = names.conflict_of(&rel_path, &title)?;
             nodes.push(TreeNode {
                 name,
                 path: rel_path,
@@ -1280,7 +1251,7 @@ fn read_dir_recursive(
                 has_app: false,
                 kind: TreeChildKind::Page,
                 source_shape: SourceShape::File,
-                name_conflict: None,
+                name_conflict,
                 children: vec![],
             });
         }
@@ -1310,7 +1281,7 @@ pub fn reorder_content(
     ordered_children: Vec<String>,
 ) -> Result<ContentOrderOutcome, ContentTreeError> {
     let parent_path = normalize_tree_parent_path(Some(parent_path))?;
-    let actual_children = list_tree_children(space, Some(&parent_path))?;
+    let actual_children = list_tree_children_unmarked(space, Some(&parent_path))?;
     let previous_order = actual_children
         .iter()
         .map(|child| child.path.clone())

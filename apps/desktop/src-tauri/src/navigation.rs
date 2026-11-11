@@ -756,7 +756,7 @@ fn attachment(root: &Path, path: &str) -> Resolution {
 /// folder identity; the listing reports what it shows and what is gone.
 fn owner(root: &Path, path: &str) -> Resolution {
     let parent = path.rsplit_once('/').map(|(parent, _)| parent);
-    match content_tree::list_tree_children_checked(&root.to_string_lossy(), parent) {
+    match content_tree::list_tree_children_unmarked(&root.to_string_lossy(), parent) {
         Ok(nodes) => {
             let Some(node) = nodes.into_iter().find(|node| key_path(&node.path) == path) else {
                 return Resolution::Missing;

@@ -15,6 +15,7 @@ use super::schema_support::newer_view_error;
 use crate::actors::resolver::ActorCatalogState;
 use crate::git::cli::GitCli;
 use crate::page::PageError;
+use crate::page::naming::DocumentNames;
 use crate::page::store::{self, Page};
 
 pub async fn list_items_for_view(
@@ -122,9 +123,10 @@ pub fn items_from_rows(
     } else {
         rows
     };
+    let mut names = DocumentNames::new(Path::new(space));
     rows.into_iter()
         .map(|row| {
-            let mut item = store::read(space, &row.file_path)?;
+            let mut item = store::read_with_names(space, &row.file_path, &mut names)?;
             item.meta.created = row.created;
             item.meta.updated = row.updated;
             Ok(item)

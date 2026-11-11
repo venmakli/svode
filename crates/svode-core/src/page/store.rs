@@ -6,7 +6,9 @@ pub use model::{
     Cover, DeleteResult, Page, PageDetailForm, PageDetailState, PageMeta, PageWarning,
     REPOSITORY_ACCESS_DENIED_REASON, WriteResult,
 };
-pub use persistence::{page_from_source, read, read_with_git_dates, replaced_by_staged_copy};
+pub use persistence::{
+    page_from_source, read, read_with_git_dates, read_with_names, replaced_by_staged_copy,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -93,7 +95,7 @@ fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str)
 /// Names of the direct children of the folder `parent` in the order the tree
 /// shows them; empty when the folder cannot be listed.
 fn visible_child_names(space: &Path, parent: &str) -> Vec<String> {
-    content_tree::list_tree_children(space.to_string_lossy().as_ref(), Some(parent))
+    content_tree::list_tree_children_unmarked(space.to_string_lossy().as_ref(), Some(parent))
         .map(|children| children.into_iter().map(|child| child.name).collect())
         .unwrap_or_default()
 }

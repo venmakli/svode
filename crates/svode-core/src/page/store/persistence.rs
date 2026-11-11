@@ -50,6 +50,18 @@ pub fn read(space: &str, path: &str) -> Result<Page, PageError> {
     page_from_source(source)
 }
 
+/// [`read`] with its name conflict from `names`, which a reader of many
+/// pages of one Space shares, so each naming scope is read once.
+pub fn read_with_names(
+    space: &str,
+    path: &str,
+    names: &mut crate::page::naming::DocumentNames,
+) -> Result<Page, PageError> {
+    let target = crate::page::resolve_page_target(Path::new(space), path)?;
+    let source = crate::page::read_page_source_with_names(target, names)?;
+    page_from_source(source)
+}
+
 /// Source read of a page with dates from the Git history of its effective
 /// repository, for a reader without an index; falls back to file dates.
 pub async fn read_with_git_dates(space: &str, path: &str) -> Result<Page, PageError> {
