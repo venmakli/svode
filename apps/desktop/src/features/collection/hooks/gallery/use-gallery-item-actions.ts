@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useSpaceNames } from "@/features/space";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Page } from "@/features/page";
 import { itemParentDir, reorderVisibleItems } from "../../lib/item-tree";
@@ -28,6 +29,7 @@ export function useGalleryItemActions({
   loadItems,
   onCreatePage,
 }: UseGalleryItemActionsOptions) {
+  const spaceName = useSpaceNames();
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
     projectPath,
@@ -47,11 +49,19 @@ export function useGalleryItemActions({
         await loadItems();
         return created;
       } catch (error) {
-        handleItemCreateError(error);
+        handleItemCreateError(error, spaceName(spacePath));
         return null;
       }
     },
-    [collectionPath, loadItems, onCreatePage, reloadOrderParent, setItems],
+    [
+      collectionPath,
+      loadItems,
+      onCreatePage,
+      reloadOrderParent,
+      setItems,
+      spaceName,
+      spacePath,
+    ],
   );
 
   const reorderItems = useCallback(
@@ -82,7 +92,7 @@ export function useGalleryItemActions({
       } catch (error) {
         console.warn("Failed to reorder gallery items:", error);
         setItems(previousItems);
-        handleItemMoveError(error);
+        handleItemMoveError(error, spaceName(spacePath));
       }
     },
     [
@@ -94,6 +104,8 @@ export function useGalleryItemActions({
       saveOrder,
       setItems,
       topLevelItems,
+      spaceName,
+      spacePath,
     ],
   );
 

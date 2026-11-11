@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useSpaceNames } from "@/features/space";
 import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 import { itemParentDir } from "../../lib/item-tree";
@@ -53,6 +54,7 @@ export function useBoardItemActions({
   loadItems,
   onCreatePage,
 }: UseBoardItemActionsOptions) {
+  const spaceName = useSpaceNames();
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
     projectPath,
@@ -193,7 +195,7 @@ export function useBoardItemActions({
         setItems(previousItems);
         setManualOrderItems(previousManualOrderItems);
         void loadItems();
-        handleItemMoveError(error);
+        handleItemMoveError(error, spaceName(spacePath));
       }
     },
     [
@@ -209,6 +211,8 @@ export function useBoardItemActions({
       setItems,
       setManualOrderItems,
       topLevelItems,
+      spaceName,
+      spacePath,
     ],
   );
 
@@ -231,11 +235,19 @@ export function useBoardItemActions({
         await loadItems();
         return created;
       } catch (error) {
-        handleItemCreateError(error);
+        handleItemCreateError(error, spaceName(spacePath));
         return null;
       }
     },
-    [groupColumn, loadItems, onCreatePage, setItems, setManualOrderItems],
+    [
+      groupColumn,
+      loadItems,
+      onCreatePage,
+      setItems,
+      setManualOrderItems,
+      spaceName,
+      spacePath,
+    ],
   );
 
   return { commitField, createDraft, moveCard };

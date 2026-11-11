@@ -12,11 +12,15 @@ import type {
 } from "@fullcalendar/core";
 import { toast } from "sonner";
 import { propertyFieldSavePolicy, type Page } from "@/features/page";
-import { pageNameConflictFromError } from "@/features/page/page-api";
+import {
+  pageNameConflictFromError,
+  takenNameMessage,
+} from "@/features/page/page-api";
 import {
   resolveStandardPropertyColumn,
   type Column,
 } from "@/features/properties";
+import { useSpaceNames } from "@/features/space";
 import { getLocale } from "@/paraglide/runtime.js";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
@@ -101,6 +105,11 @@ export function useCalendarViewRuntime({
     null,
   );
   const { actors, loadActors } = useCollectionActors(spacePath);
+  const spaceName = useSpaceNames();
+  const reportError = useCallback(
+    (error: unknown) => reportCalendarError(error, spaceName(spacePath)),
+    [spaceName, spacePath],
+  );
   const { addDateColumn } = useCollectionColumnActions({
     schema,
     spacePath,
@@ -392,6 +401,7 @@ export function useCalendarViewRuntime({
     locale,
     propertyContext,
     addDateColumnForView,
+    reportError,
     handleDateClick,
     handleDayCellDidMount,
     handleEventClick,
@@ -412,9 +422,12 @@ export function useCalendarViewRuntime({
   };
 }
 
-export function reportCalendarError(error: unknown) {
-  if (pageNameConflictFromError(error)) {
-    handleItemCreateError(error);
+function reportCalendarError(error: unknown, spaceName: string | null) {
+  if (
+    pageNameConflictFromError(error) ||
+    takenNameMessage(error, spaceName) !== null
+  ) {
+    handleItemCreateError(error, spaceName);
     return;
   }
   console.error(error);

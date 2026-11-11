@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { TreeNode } from "../model/types";
 import type { Projection } from "../lib/tree-dnd-utilities";
 import { treeDragFailureToast } from "../lib/tree-drag-failure";
+import { useSpaceStore } from "../model/space-store";
 import { useFileTreeDragCommand } from "./use-file-tree-drag-command";
 
 interface UseSortableFileTreeActionsInput {
@@ -33,10 +34,17 @@ export function useSortableFileTreeActions({
         });
       } catch (err) {
         console.error("Failed to move content item:", err);
-        const { title, description } = treeDragFailureToast(err);
+        const { spaces, rootSpaces } = useSpaceStore.getState();
+        const space =
+          spaces.find((item) => item.id === spaceId) ??
+          rootSpaces.find((item) => item.id === spaceId);
+        const { title, description } = treeDragFailureToast(
+          err,
+          space?.name ?? null,
+        );
         toast.error(title, { description });
       }
     },
-    [commitFileTreeDrag, resetState],
+    [commitFileTreeDrag, resetState, spaceId],
   );
 }

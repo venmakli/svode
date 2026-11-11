@@ -14,6 +14,7 @@ import {
 import { useOpenPage } from "@/features/page/navigation";
 import { useOpenScopeOwner } from "@/features/artifact";
 import type { Page } from "@/features/page";
+import { handleStructuralError } from "@/features/page/detail";
 import { useOptionalPageDetailContext } from "@/features/page/scope-surface";
 import type { ScopePeekRenderer } from "@/features/scope-surfaces";
 import {
@@ -22,7 +23,7 @@ import {
 } from "@/features/git/app-shell";
 import { SchemaConflict } from "./schema-conflict";
 import { useSignalUserEdit } from "@/features/navigation";
-import { useSpace } from "@/features/space";
+import { useSpace, useSpaceNames } from "@/features/space";
 import { ContentDeleteDialog } from "@/features/content-actions";
 import { useViewQuery } from "../query/hooks";
 import { DeleteViewDialog } from "./delete-view-dialog";
@@ -135,6 +136,7 @@ export function CollectionViewsSurface({
   const [renameValue, setRenameValue] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [peekTarget, setPeekTarget] = useState<PagePeekTarget | null>(null);
+  const spaceName = useSpaceNames();
   const { itemsVersion, refreshItems, createItem, duplicateItem, deleteItem } =
     useCollectionItemActions({
       schema,
@@ -418,7 +420,9 @@ export function CollectionViewsSurface({
                 onReorderTemplates={reorderTemplatesForMenu}
                 onCreatePage={(asFolder) => {
                   if (focusActiveViewCreate(asFolder)) return;
-                  void createItem(asFolder).catch(handleError);
+                  void createItem(asFolder).catch((error) =>
+                    handleStructuralError(error, spaceName(spacePath)),
+                  );
                 }}
               />
             ) : null
@@ -504,11 +508,14 @@ export function CollectionViewsSurface({
         }}
         onDuplicatePage={(itemToDuplicate) => {
           setPeekTarget(null);
+          const itemSpacePath = peekTarget?.spacePath ?? spacePath;
           void duplicateItem(itemToDuplicate, {
-            spacePath: peekTarget?.spacePath ?? spacePath,
+            spacePath: itemSpacePath,
             projectPath: peekTarget?.projectPath ?? projectPath,
             spaceId: peekTarget?.spaceId ?? spaceId,
-          }).catch(handleError);
+          }).catch((error) =>
+            handleStructuralError(error, spaceName(itemSpacePath)),
+          );
         }}
         onDeletePage={(itemToDelete) => {
           const template = peekTarget?.template;

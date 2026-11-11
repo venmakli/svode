@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import {
   pageNameConflictFromError,
+  takenNameMessage,
   treeOrderUnreadableToast,
 } from "@/features/page/page-api";
 import * as m from "@/paraglide/messages.js";
@@ -10,14 +11,17 @@ export function handleError(error: unknown) {
   toast.error(m.toast_error());
 }
 
-export function handleItemCreateError(error: unknown) {
+export function handleItemCreateError(
+  error: unknown,
+  spaceName: string | null,
+) {
   console.error(error);
   const conflict = pageNameConflictFromError(error);
   const conflictPath = conflict?.conflicts[0]?.path;
   toast.error(
     conflictPath
       ? m.page_name_conflict({ path: conflictPath })
-      : m.board_create_error(),
+      : (takenNameMessage(error, spaceName) ?? m.board_create_error()),
   );
 }
 
@@ -29,6 +33,7 @@ export function notifyTreeOrderUnreadable(error: unknown) {
   return true;
 }
 
-export function handleItemMoveError(error: unknown) {
-  if (!notifyTreeOrderUnreadable(error)) toast.error(m.board_move_error());
+export function handleItemMoveError(error: unknown, spaceName: string | null) {
+  if (notifyTreeOrderUnreadable(error)) return;
+  toast.error(takenNameMessage(error, spaceName) ?? m.board_move_error());
 }

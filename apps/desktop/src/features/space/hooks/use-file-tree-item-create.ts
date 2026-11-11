@@ -1,7 +1,11 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { publishPageFilenameWarnings } from "@/features/page";
-import { convertPageToLeaf, duplicatePage } from "@/features/page/page-api";
+import {
+  convertPageToLeaf,
+  duplicatePage,
+  takenNameMessage,
+} from "@/features/page/page-api";
 import type { TreeNode } from "../model/types";
 import {
   convertTreeBareFolderToCollection,
@@ -79,7 +83,7 @@ export function useFileTreeItemCreate({
       toast.success(m.toast_page_created());
     } catch (err) {
       console.error("Failed to create page:", err);
-      toast.error(m.toast_error());
+      toast.error(takenNameMessage(err, space.name) ?? m.toast_error());
     }
   }
 
@@ -99,7 +103,7 @@ export function useFileTreeItemCreate({
       signalCreatedArtifact(spaceId, readmePath);
     } catch (err) {
       console.error("Failed to make page:", err);
-      toast.error(m.toast_error());
+      toast.error(takenNameMessage(err, space.name) ?? m.toast_error());
     }
   }
 
@@ -133,7 +137,7 @@ export function useFileTreeItemCreate({
       openCollectionOwner(readmePage.path, spaceId);
     } catch (err) {
       console.error("Failed to make collection:", err);
-      toast.error(m.toast_error());
+      toast.error(takenNameMessage(err, space.name) ?? m.toast_error());
     }
   }
 
@@ -150,7 +154,7 @@ export function useFileTreeItemCreate({
       openPage(leaf.path, spaceId);
     } catch (err) {
       console.error("Failed to make regular page:", err);
-      toast.error(m.toast_error());
+      toast.error(takenNameMessage(err, space.name) ?? m.toast_error());
     }
   }
 
@@ -169,7 +173,7 @@ export function useFileTreeItemCreate({
       signalCreatedArtifact(spaceId, duplicated.path);
     } catch (err) {
       console.error("Failed to duplicate page:", err);
-      toast.error(m.toast_error());
+      toast.error(takenNameMessage(err, space.name) ?? m.toast_error());
     }
   }
 
@@ -197,7 +201,7 @@ export function useFileTreeItemCreate({
       }
     } catch (err) {
       console.error("Failed to create folder:", err);
-      toast.error(m.toast_error());
+      toast.error(takenNameMessage(err, space.name) ?? m.toast_error());
     }
   }
 

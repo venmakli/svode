@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSpaceNames } from "@/features/space";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { PropertyType } from "@/features/properties";
 import { notifyPropertyAddFailed } from "@/features/properties";
@@ -39,6 +40,7 @@ export function useTableViewRuntime({
   onUpdateView,
   onCreatePage,
 }: TableViewProps) {
+  const spaceName = useSpaceNames();
   const [editing, setEditing] = useState<TableEditingCell | null>(null);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [openColumn, setOpenColumn] = useState<string | null>(null);
@@ -222,10 +224,10 @@ export function useTableViewRuntime({
           setComposerAsFolder(false);
         });
       } catch (error) {
-        handleItemCreateError(error);
+        handleItemCreateError(error, spaceName(spacePath));
       }
     },
-    [composerAsFolder, composerValue, createItem],
+    [composerAsFolder, composerValue, createItem, spaceName, spacePath],
   );
 
   const openComposer = useCallback((asFolder: boolean) => {

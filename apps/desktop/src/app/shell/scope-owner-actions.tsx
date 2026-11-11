@@ -2,6 +2,7 @@ import { useEffect, type ComponentProps } from "react";
 import { toast } from "sonner";
 import {
   useContentDeleteConfirmation,
+  useSpaceNames,
   useSpaceTreeSync,
 } from "@/features/space";
 import {
@@ -31,8 +32,11 @@ import {
   usePageDetailContext,
   usePageSurfaceSession,
 } from "@/features/page/scope-surface";
-import { handleError } from "@/features/page/detail";
-import { PageDetailActions } from "@/features/page/detail";
+import {
+  handleError,
+  handleStructuralError,
+  PageDetailActions,
+} from "@/features/page/detail";
 import { publishPageFilenameWarnings, type Page } from "@/features/page";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
@@ -104,6 +108,7 @@ function ReadmeOwnerActions({
   const pageSurface = usePageSurfaceSession();
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
+  const spaceName = useSpaceNames();
   const { confirmation, requestDelete, cancelDelete } =
     useContentDeleteConfirmation<Page | null>();
   const {
@@ -200,6 +205,9 @@ function ReadmeOwnerActions({
     toast.success(m.toast_page_created());
   }
 
+  const handleOwnerStructuralError = (error: unknown) =>
+    handleStructuralError(error, spaceName(context.spacePath));
+
   const directoryMenu: ComponentProps<typeof ContentHeaderMenu> = {
     groups: contentActionGroups({
       object: {
@@ -210,7 +218,7 @@ function ReadmeOwnerActions({
     }),
     pinItem,
     handlers: {
-      "new-item": () => void newItem().catch(handleError),
+      "new-item": () => void newItem().catch(handleOwnerStructuralError),
       rename: context.requestTitleFocus,
       delete: () =>
         ownerPage ? requestOwnerDelete(ownerPage) : requestFolderDelete(),
@@ -247,7 +255,9 @@ function ReadmeOwnerActions({
           openPage(page.path, context.spaceId);
         }
       }}
-      onDuplicatePage={(page) => void duplicateOwner(page).catch(handleError)}
+      onDuplicatePage={(page) =>
+        void duplicateOwner(page).catch(handleOwnerStructuralError)
+      }
       onDeletePage={requestOwnerDelete}
       readOnly={readOnly}
     />

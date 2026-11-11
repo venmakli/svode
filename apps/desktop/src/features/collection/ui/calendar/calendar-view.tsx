@@ -10,10 +10,7 @@ import {
 } from "./calendar-states";
 import { CalendarTitlePopover } from "./calendar-title-popover";
 import type { CalendarViewProps } from "../../model/calendar-types";
-import {
-  reportCalendarError,
-  useCalendarViewRuntime,
-} from "../../hooks/calendar/use-calendar-view-runtime";
+import { useCalendarViewRuntime } from "../../hooks/calendar/use-calendar-view-runtime";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarView({
@@ -64,6 +61,7 @@ export function CalendarView({
     periodLabel,
     pickerOpen,
     propertyContext,
+    reportError,
     scope,
     setCreateDraft,
     setListScope,
@@ -111,7 +109,7 @@ export function CalendarView({
         onAddDateColumn={
           readOnly
             ? undefined
-            : () => void addDateColumnForView().catch(reportCalendarError)
+            : () => void addDateColumnForView().catch(reportError)
         }
       />
     );
@@ -176,7 +174,7 @@ export function CalendarView({
           draft={createDraft}
           onCancel={() => setCreateDraft(null)}
           onCreate={(title, draft) =>
-            void createItemFromDraft(title, draft).catch(reportCalendarError)
+            void createItemFromDraft(title, draft).catch(reportError)
           }
         />
       ) : null}

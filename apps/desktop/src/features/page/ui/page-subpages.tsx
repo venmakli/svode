@@ -24,12 +24,16 @@ import {
   treeOrderUnreadableToast,
 } from "../page-api";
 import { useOpenPage } from "../navigation";
-import { getSpaceTreeSyncSnapshot, useSpaceTreeSync } from "@/features/space";
+import {
+  getSpaceTreeSyncSnapshot,
+  useSpaceNames,
+  useSpaceTreeSync,
+} from "@/features/space";
 import { detailPageSectionClassName } from "@/shared/ui/page-layout";
 import type { TreeNode } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 import { normalizePagePath } from "../lib/path";
-import { handleError } from "../lib/errors";
+import { handleError, handleStructuralError } from "../lib/errors";
 import { publishPageFilenameWarnings } from "../lib/filename-warning";
 import * as m from "@/paraglide/messages.js";
 
@@ -50,6 +54,7 @@ export function PageSubpages({
 }: PageSubpagesProps) {
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
+  const spaceName = useSpaceNames();
   const loadTreeChildren = useSpaceTreeSync((state) => state.loadTreeChildren);
   const [subpages, setSubpages] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -139,7 +144,11 @@ export function PageSubpages({
             variant="ghost"
             size="sm"
             className="text-muted-foreground"
-            onClick={() => void createSubpage().catch(handleError)}
+            onClick={() =>
+              void createSubpage().catch((error) =>
+                handleStructuralError(error, spaceName(spacePath)),
+              )
+            }
           >
             <Plus data-icon="inline-start" />
             {m.page_add_subpage()}

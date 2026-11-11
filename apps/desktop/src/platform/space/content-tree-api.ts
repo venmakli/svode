@@ -22,6 +22,18 @@ export function treeOrderUnreadablePath(error: unknown): string | null {
     : null;
 }
 
+/**
+ * Space-relative path a structural operation refused to take because its name
+ * is already taken there.
+ */
+export function takenNamePath(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = error as Record<string, unknown>;
+  return value.kind === "file_already_exists" && typeof value.path === "string"
+    ? value.path
+    : null;
+}
+
 export function createContentTreeFolder(input: {
   space: string;
   parentPath: string | null;

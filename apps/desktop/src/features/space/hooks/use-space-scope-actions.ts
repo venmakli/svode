@@ -4,9 +4,11 @@ import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
 import { useOpenScopeOwner } from "@/features/artifact";
 import { publishPageFilenameWarnings } from "@/features/page";
+import { takenNameMessage } from "@/features/page/page-api";
 import { useOpenPage } from "@/features/page/navigation";
 import { createTreeFolder } from "../api/content-tree-actions";
 import { useSpaceActions } from "./use-space-actions";
+import { useSpaceNames } from "./use-space-names";
 import { signalCreatedArtifact } from "@/features/navigation";
 
 export type ScopeTarget = { id: string; path: string };
@@ -30,6 +32,7 @@ export function useSpaceScopeActions({
   const { createPage } = useSpaceActions();
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
+  const spaceName = useSpaceNames();
 
   const handleNewPage = useCallback(
     async (scope: ScopeTarget) => {
@@ -47,10 +50,12 @@ export function useSpaceScopeActions({
         }
       } catch (err) {
         console.error("Failed to create page:", err);
-        toast.error(m.toast_error());
+        toast.error(
+          takenNameMessage(err, spaceName(scope.path)) ?? m.toast_error(),
+        );
       }
     },
-    [createPage, onActivateContent, onBeforeNavigation, openPage],
+    [createPage, onActivateContent, onBeforeNavigation, openPage, spaceName],
   );
 
   const handleNewFolder = useCallback(
@@ -67,10 +72,12 @@ export function useSpaceScopeActions({
         await reloadTreeParent(scope.id, null);
       } catch (err) {
         console.error("Failed to create folder:", err);
-        toast.error(m.toast_error());
+        toast.error(
+          takenNameMessage(err, spaceName(scope.path)) ?? m.toast_error(),
+        );
       }
     },
-    [activeRootPath, reloadTreeParent],
+    [activeRootPath, reloadTreeParent, spaceName],
   );
 
   const handleNewCollection = useCallback(
@@ -95,7 +102,9 @@ export function useSpaceScopeActions({
         signalCreatedArtifact(scope.id, page.path);
       } catch (err) {
         console.error("Failed to create collection:", err);
-        toast.error(m.toast_error());
+        toast.error(
+          takenNameMessage(err, spaceName(scope.path)) ?? m.toast_error(),
+        );
       }
     },
     [
@@ -104,6 +113,7 @@ export function useSpaceScopeActions({
       onBeforeNavigation,
       openScopeOwner,
       reloadTreeParent,
+      spaceName,
     ],
   );
 

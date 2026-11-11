@@ -5,10 +5,11 @@ import {
   type ContentObject,
 } from "@/features/content-actions";
 import type { NavigationItem } from "@/features/navigation";
+import { useSpaceNames } from "@/features/space";
 import { getPageDetailState } from "../page-api";
 import type { Page, PageDetailState } from "../model";
 import { normalizePagePath } from "../lib/path";
-import { handleError } from "../lib/errors";
+import { handleError, handleStructuralError } from "../lib/errors";
 import { usePageDetailContext } from "../hooks/page-detail-context";
 import { usePageContentOperations } from "../hooks/use-page-content-operations";
 
@@ -49,6 +50,7 @@ export function PageDetailActions({
   runMutation = (operation) => operation(),
 }: PageDetailActionsProps) {
   const { requestTitleFocus } = usePageDetailContext();
+  const spaceName = useSpaceNames();
   const [state, setState] = useState<{
     path: string;
     detail: PageDetailState;
@@ -149,7 +151,9 @@ export function PageDetailActions({
   }
 
   const mutate = (operation: () => Promise<void>) => () =>
-    void runMutation(operation).catch(handleError);
+    void runMutation(operation).catch((error) =>
+      handleStructuralError(error, spaceName(spacePath)),
+    );
 
   return (
     <ContentHeaderMenu

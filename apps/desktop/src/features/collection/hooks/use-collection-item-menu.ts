@@ -1,8 +1,10 @@
 import { pageNavigationItem, type Page } from "@/features/page";
-import { usePageContentOperations } from "@/features/page/detail";
-import { useSpace } from "@/features/space";
+import {
+  handleStructuralError,
+  usePageContentOperations,
+} from "@/features/page/detail";
+import { useSpace, useSpaceNames } from "@/features/space";
 import type { CollectionItemMenu } from "../model";
-import { handleError } from "./error-feedback";
 
 /**
  * The actions of the Collection items' context menu: the operations the Peek
@@ -29,6 +31,9 @@ export function useCollectionItemMenu({
   requestItemDelete: (page: Page) => void;
 }): CollectionItemMenu {
   const activeRootId = useSpace((state) => state.activeRootId);
+  const spaceName = useSpaceNames();
+  const handleError = (error: unknown) =>
+    handleStructuralError(error, spaceName(spacePath));
   const operations = usePageContentOperations({
     spacePath,
     projectPath: projectPath ?? null,

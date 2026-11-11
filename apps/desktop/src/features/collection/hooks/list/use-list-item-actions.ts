@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useSpaceNames } from "@/features/space";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Page } from "@/features/page";
 import {
@@ -31,6 +32,7 @@ export function useListItemActions({
   loadItems,
   onCreatePage,
 }: UseListItemActionsOptions) {
+  const spaceName = useSpaceNames();
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
     projectPath,
@@ -50,11 +52,19 @@ export function useListItemActions({
         await loadItems();
         return created;
       } catch (error) {
-        handleItemCreateError(error);
+        handleItemCreateError(error, spaceName(spacePath));
         return null;
       }
     },
-    [collectionPath, loadItems, onCreatePage, reloadOrderParent, setItems],
+    [
+      collectionPath,
+      loadItems,
+      onCreatePage,
+      reloadOrderParent,
+      setItems,
+      spaceName,
+      spacePath,
+    ],
   );
 
   const reorderItems = useCallback(
@@ -91,10 +101,19 @@ export function useListItemActions({
       } catch (error) {
         console.warn("Failed to reorder list items:", error);
         setItems(previousItems);
-        handleItemMoveError(error);
+        handleItemMoveError(error, spaceName(spacePath));
       }
     },
-    [items, loadItems, reloadOrderParent, rows, saveOrder, setItems],
+    [
+      items,
+      loadItems,
+      reloadOrderParent,
+      rows,
+      saveOrder,
+      setItems,
+      spaceName,
+      spacePath,
+    ],
   );
 
   return { createItem, reorderItems };
