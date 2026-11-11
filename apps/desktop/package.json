@@ -15,7 +15,7 @@
     "build:plugin": "node ../../scripts/plugin-payload.mjs build src-tauri/payload/svode",
     "check:sidecars": "node scripts/prepare-sidecar-placeholders.mjs && bun run build:plugin",
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --silent",
-    "typecheck": "bun run paraglide && NODE_OPTIONS='--max-old-space-size=8192' tsc -b --force && NODE_OPTIONS='--max-old-space-size=8192' tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "bun run paraglide && NODE_OPTIONS='--max-old-space-size=8192' tsc -b --force && NODE_OPTIONS='--max-old-space-size=8192' tsc --noEmit -p tsconfig.webview.json",
     "preview": "vite preview",
     "tauri": "tauri"
   },
