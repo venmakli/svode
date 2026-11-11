@@ -2,6 +2,8 @@ use std::path::{Component, Path, PathBuf};
 
 use super::read_tree_config;
 use crate::agent_adapters::PROJECT_INSTRUCTION_FILE_NAMES;
+use crate::storage::local_rules::{LOCAL_EXTENSIONS_END, LOCAL_EXTENSIONS_START};
+use crate::storage::routes::{LOCAL_PATHS_END, LOCAL_PATHS_START};
 
 const SYSTEM_EXCLUDED_DIRS: &[&str] = &[".git", ".svode", ".assets", ".templates"];
 const ROOT_AGENT_CONTEXT_FILES: &[&str] = &["GEMINI.md", "SOUL.md", "USER.md", "MEMORY.md"];
@@ -135,13 +137,34 @@ struct GitIgnoreRule {
     pattern: TreePattern,
 }
 
+/// Blocks of the `local` assets strategy keep files out of Git, not out of
+/// Svode: the tree, the index and the file search still show those files.
+const LOCAL_STORAGE_BLOCKS: &[(&str, &str)] = &[
+    (LOCAL_PATHS_START, LOCAL_PATHS_END),
+    (LOCAL_EXTENSIONS_START, LOCAL_EXTENSIONS_END),
+];
+
 fn read_gitignore_rules(root: &Path) -> Vec<GitIgnoreRule> {
     let Ok(raw) = std::fs::read_to_string(root.join(".gitignore")) else {
         return Vec::new();
     };
+    let mut local_block_end: Option<&str> = None;
     raw.lines()
         .filter_map(|line| {
             let line = line.trim();
+            if let Some(end) = local_block_end {
+                if line == end {
+                    local_block_end = None;
+                }
+                return None;
+            }
+            if let Some((_, end)) = LOCAL_STORAGE_BLOCKS
+                .iter()
+                .find(|(start, _)| line == *start)
+            {
+                local_block_end = Some(end);
+                return None;
+            }
             if line.is_empty() || line.starts_with('#') {
                 return None;
             }
@@ -421,6 +444,24 @@ mod tests {
         assert!(pattern.matches("docs/guides/index.md"));
         assert!(!pattern.matches("docs/guides/image.png"));
         assert!(!pattern.matches("src/docs/index.md"));
+    }
+
+    #[test]
+    fn local_storage_blocks_keep_files_visible_in_svode() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join(".gitignore"),
+            format!(
+                "*.tmp\n{LOCAL_PATHS_START}\n# svode:path \"docs/big.bin\"\n/docs/big.bin\n{LOCAL_PATHS_END}\n{LOCAL_EXTENSIONS_START}\n*.[jJ][pP][gG]\n*.jpg\n{LOCAL_EXTENSIONS_END}\nafter/\n"
+            ),
+        )
+        .unwrap();
+        let policy = TreeIgnorePolicy::system_only(temp.path());
+
+        assert!(!policy.is_ignored_rel(Path::new("docs/big.bin"), TreePathKind::File));
+        assert!(!policy.is_ignored_rel(Path::new("docs/photo.jpg"), TreePathKind::File));
+        assert!(policy.is_ignored_rel(Path::new("docs/scratch.tmp"), TreePathKind::File));
+        assert!(policy.is_ignored_rel(Path::new("after/page.md"), TreePathKind::File));
     }
 
     #[test]

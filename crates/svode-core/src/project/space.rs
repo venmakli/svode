@@ -232,6 +232,7 @@ async fn write(
     let mut initial_branch = None;
     if let Some(cli) = cli {
         ops::init_with_optional_scaffold_commit(cli, &space_dir, false).await?;
+        crate::storage::local_rules::repair_local_rules(cli, &space_dir).await?;
         changed.push(space_dir.join(".gitignore"));
         initial_branch = current_branch(cli, &space_dir).await;
         if project_repository

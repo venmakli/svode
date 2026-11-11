@@ -91,6 +91,11 @@ pub struct BinaryRoutingConfig {
     pub lfs_extensions: Vec<String>,
     #[serde(default)]
     pub lfs_threshold_bytes: Option<u64>,
+    /// Extensions the `local` strategy keeps out of Git. An absent list means
+    /// the default set of `policy::DEFAULT_LOCAL_EXTENSIONS`; an empty one
+    /// leaves only the size rule. The threshold is `lfs_threshold_bytes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_extensions: Option<Vec<String>>,
     /// Preserve fields written by a future Svode version even though current
     /// asset mutations fail closed when `version` is unsupported.
     #[serde(flatten)]
@@ -103,6 +108,7 @@ impl BinaryRoutingConfig {
             version: BINARY_ROUTING_VERSION,
             lfs_extensions: Vec::new(),
             lfs_threshold_bytes: Some(DEFAULT_LFS_THRESHOLD_BYTES),
+            local_extensions: None,
             extensions: BTreeMap::new(),
         }
     }

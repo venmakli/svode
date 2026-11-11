@@ -32,7 +32,7 @@ use crate::page::identity::{
 use crate::page::store;
 use crate::page::write::SourceSnapshot;
 use crate::page::{PageError, ensure_path_in_space};
-use crate::storage::config::{AssetsSpaceConfig, AssetsStrategy};
+use crate::storage::config::AssetsSpaceConfig;
 use crate::storage::managed_route::apply_managed_import_route;
 use crate::storage::policy::{self, ManagedBinaryRoute};
 use crate::storage::scope::resolve_assets_scope_for_key;
@@ -136,7 +136,6 @@ pub struct ManagedImportPlan {
     source_path: PathBuf,
     requested_file_name: String,
     requires_conversion: bool,
-    storage_strategy: AssetsStrategy,
     storage_config: AssetsSpaceConfig,
     binary_route: ManagedBinaryRoute,
     affected_paths: Vec<PathBuf>,
@@ -297,7 +296,7 @@ pub async fn plan_managed_import(
     }
     affected_paths.push(scope.repo_dir.clone());
     match binary_route {
-        ManagedBinaryRoute::Local => {
+        ManagedBinaryRoute::LocalExtension | ManagedBinaryRoute::LocalThreshold => {
             affected_paths.push(scope.repo_dir.join(".gitignore"));
         }
         ManagedBinaryRoute::LfsThreshold => {
@@ -320,7 +319,6 @@ pub async fn plan_managed_import(
         source_path,
         requested_file_name,
         requires_conversion,
-        storage_strategy: scope.config.strategy.clone(),
         storage_config: scope.config,
         binary_route,
         affected_paths,
@@ -445,12 +443,15 @@ pub async fn execute_managed_import(
             &attachment_abs,
             RootMode::Reject,
         )?;
+        let local_extensions = policy::supported_binary_routing(&revalidated.storage_config)
+            .map(|routing| policy::effective_local_extensions(&routing))?;
         let policy_paths = apply_managed_import_route(
             runtime.repository,
             runtime.cli,
             &revalidated.repository_path,
             revalidated.binary_route,
             &repository_attachment_path,
+            &local_extensions,
         )
         .await?;
         #[cfg(test)]
@@ -473,7 +474,10 @@ pub async fn execute_managed_import(
 
         if let Some(commits) = steps.commits {
             let mut commit_paths = policy_paths.clone();
-            if revalidated.storage_strategy != AssetsStrategy::Local {
+            if !matches!(
+                revalidated.binary_route,
+                ManagedBinaryRoute::LocalExtension | ManagedBinaryRoute::LocalThreshold
+            ) {
                 commit_paths.push(attachment_abs.clone());
             }
             if !commit_paths.is_empty() {

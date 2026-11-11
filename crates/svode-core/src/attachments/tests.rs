@@ -508,3 +508,71 @@ async fn an_import_into_a_leaf_registers_its_history_once_it_succeeds() {
     assert!(!project.join("Area/Tasks/Item.md").exists());
     assert!(*sink.0.lock().unwrap() > 0);
 }
+
+#[tokio::test]
+async fn local_import_keeps_listed_formats_by_the_block_and_large_files_by_an_exact_rule() {
+    let Ok(cli) = GitCli::detect() else {
+        return;
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    assert_eq!(cli.exec(&project, &["init"]).await.unwrap().exit_code, 0);
+    write_space_config(
+        &project,
+        Some(
+            r#"{ "strategy": "local", "binaryRouting": { "version": 1, "lfsExtensions": [], "lfsThresholdBytes": 100 } }"#,
+        ),
+    );
+    fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+    fs::write(project.join(".gitignore"), "user/\n").unwrap();
+    let sources = temp.path().join("sources");
+    fs::create_dir_all(&sources).unwrap();
+    for (name, size) in [("photo.jpg", 10), ("big.odt", 200), ("note.odt", 10)] {
+        fs::write(sources.join(name), vec![b'x'; size]).unwrap();
+    }
+
+    let index = IndexRuntimeState::default();
+    let repository = GitRepositoryState::new();
+    let mut import = runtime(&index, &repository);
+    import.cli = Some(&cli);
+    let mut routes = Vec::new();
+    for name in ["photo.jpg", "big.odt", "note.odt"] {
+        let plan = plan_managed_import(
+            &index,
+            &project,
+            None,
+            "README.md",
+            &sources.join(name),
+            None,
+        )
+        .await
+        .unwrap();
+        routes.push(plan.binary_route);
+        execute_managed_import(import, MutationOrigin::Mcp, plan)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        routes,
+        [
+            ManagedBinaryRoute::LocalExtension,
+            ManagedBinaryRoute::LocalThreshold,
+            ManagedBinaryRoute::DirectGit,
+        ]
+    );
+
+    let gitignore = fs::read_to_string(project.join(".gitignore")).unwrap();
+    assert!(gitignore.starts_with("user/\n"), "{gitignore}");
+    assert!(gitignore.contains("*.[jJ][pP][gG]"), "{gitignore}");
+    assert!(gitignore.contains("/big.odt"), "{gitignore}");
+    assert!(!gitignore.contains("photo.jpg"), "{gitignore}");
+    assert!(!gitignore.contains("note.odt"), "{gitignore}");
+    for (path, hidden) in [("photo.jpg", true), ("big.odt", true), ("note.odt", false)] {
+        let out = cli
+            .exec(&project, &["check-ignore", "--quiet", "--", path])
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code == 0, hidden, "{path}");
+    }
+}

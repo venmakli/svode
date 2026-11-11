@@ -1,6 +1,6 @@
-//! Binary routing policy: which managed file goes to Git LFS, to a local
-//! ignore rule or straight into Git, and whether the repository attributes
-//! still match the configured routing.
+//! Binary routing policy: which managed file goes to Git LFS, stays out of
+//! Git on this device or goes straight into Git, and whether the repository
+//! attributes still match the configured routing.
 //!
 //! The rules are portable: they read the assets config and repository policy
 //! files, and use the Git CLI only to verify effective attributes.
@@ -31,6 +31,10 @@ pub const REPOSITORY_LFS_EXTENSIONS: &[&str] = &[
     "mp3", "wav", "flac", "m4a", "ogg", "mp4", "mov", "m4v", "webm", "avi", "mkv", "pdf", "doc",
     "docx", "ppt", "pptx", "xls", "xlsx", "zip", "7z", "rar",
 ];
+
+/// Extensions the `local` strategy keeps out of Git when its config names no
+/// list of its own: the same media, document and archive set.
+pub const DEFAULT_LOCAL_EXTENSIONS: &[&str] = REPOSITORY_LFS_EXTENSIONS;
 
 const PROTECTED_EXTENSIONS: &[&str] = &["md", "markdown", "yaml", "yml", "json", "csv", "svg"];
 const PROTECTED_FILE_NAMES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
@@ -81,11 +85,17 @@ pub struct EffectiveBinaryRouting {
     pub version: Option<u32>,
     pub lfs_extensions: Vec<String>,
     pub lfs_threshold_bytes: Option<u64>,
+    /// The effective list of the `local` strategy: the configured one or the
+    /// default set when the config names none.
+    pub local_extensions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedBinaryRoute {
-    Local,
+    /// `local`: the repository-wide extension block keeps the file out of Git.
+    LocalExtension,
+    /// `local`: an exact rule keeps a large file of another format out of Git.
+    LocalThreshold,
     LfsExtension,
     LfsThreshold,
     DirectGit,
@@ -124,18 +134,21 @@ pub fn effective_binary_routing(config: &AssetsSpaceConfig) -> EffectiveBinaryRo
                 .map(|extension| (*extension).to_string())
                 .collect(),
             lfs_threshold_bytes: None,
+            local_extensions: default_local_extensions(),
         },
         Some(routing) if routing.version == BINARY_ROUTING_VERSION => EffectiveBinaryRouting {
             status: BinaryRoutingStatus::V1,
             version: Some(routing.version),
             lfs_extensions: routing.lfs_extensions.clone(),
             lfs_threshold_bytes: routing.lfs_threshold_bytes,
+            local_extensions: effective_local_extensions(routing),
         },
         Some(routing) => EffectiveBinaryRouting {
             status: BinaryRoutingStatus::Unsupported,
             version: Some(routing.version),
             lfs_extensions: Vec::new(),
             lfs_threshold_bytes: None,
+            local_extensions: Vec::new(),
         },
     }
 }
@@ -152,6 +165,7 @@ pub fn supported_binary_routing(
                 .map(|extension| (*extension).to_string())
                 .collect(),
             lfs_threshold_bytes: None,
+            local_extensions: None,
             extensions: Default::default(),
         }),
         Some(routing) if routing.version == BINARY_ROUTING_VERSION => {
@@ -179,8 +193,24 @@ pub fn normalize_binary_routing(
         ));
     }
 
+    routing.lfs_extensions =
+        normalize_extensions(routing.lfs_extensions, "LFS", "routed to Git LFS")?;
+    routing.local_extensions = routing
+        .local_extensions
+        .map(|extensions| normalize_extensions(extensions, "local", "kept out of Git"))
+        .transpose()?;
+    Ok(routing)
+}
+
+/// Lowercase without the dot, sorted and unique; masks, paths and protected
+/// text formats are refused.
+fn normalize_extensions(
+    extensions: Vec<String>,
+    list: &str,
+    protected_action: &str,
+) -> Result<Vec<String>, StoragePolicyError> {
     let mut normalized = BTreeSet::new();
-    for extension in routing.lfs_extensions {
+    for extension in extensions {
         let extension = extension.trim();
         if extension.is_empty() {
             continue;
@@ -188,18 +218,32 @@ pub fn normalize_binary_routing(
         let extension = extension.trim_start_matches('.').to_ascii_lowercase();
         if !valid_extension(&extension) {
             return Err(StoragePolicyError::Storage(format!(
-                "invalid LFS extension `{extension}`"
+                "invalid {list} extension `{extension}`"
             )));
         }
         if PROTECTED_EXTENSIONS.contains(&extension.as_str()) {
             return Err(StoragePolicyError::Storage(format!(
-                "protected text extension `{extension}` cannot be routed to Git LFS"
+                "protected text extension `{extension}` cannot be {protected_action}"
             )));
         }
         normalized.insert(extension);
     }
-    routing.lfs_extensions = normalized.into_iter().collect();
-    Ok(routing)
+    Ok(normalized.into_iter().collect())
+}
+
+fn default_local_extensions() -> Vec<String> {
+    DEFAULT_LOCAL_EXTENSIONS
+        .iter()
+        .map(|extension| (*extension).to_string())
+        .collect()
+}
+
+/// The extensions the `local` strategy keeps out of Git for `routing`.
+pub fn effective_local_extensions(routing: &BinaryRoutingConfig) -> Vec<String> {
+    routing
+        .local_extensions
+        .clone()
+        .unwrap_or_else(default_local_extensions)
 }
 
 pub fn evaluate_managed_binary_route(
@@ -208,12 +252,20 @@ pub fn evaluate_managed_binary_route(
     size_bytes: u64,
 ) -> Result<ManagedBinaryRoute, StoragePolicyError> {
     let routing = supported_binary_routing(config)?;
-    match config.strategy {
-        AssetsStrategy::Local => return Ok(ManagedBinaryRoute::Local),
+    let (extensions, by_extension, by_threshold) = match config.strategy {
+        AssetsStrategy::Local => (
+            effective_local_extensions(&routing),
+            ManagedBinaryRoute::LocalExtension,
+            ManagedBinaryRoute::LocalThreshold,
+        ),
         AssetsStrategy::InGit => return Ok(ManagedBinaryRoute::DirectGit),
-        AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3 => {}
+        AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3 => (
+            routing.lfs_extensions.clone(),
+            ManagedBinaryRoute::LfsExtension,
+            ManagedBinaryRoute::LfsThreshold,
+        ),
         AssetsStrategy::Unknown(_) => unreachable!("supported_binary_routing refuses it"),
-    }
+    };
     if is_protected_source(path) {
         return Ok(ManagedBinaryRoute::DirectGit);
     }
@@ -223,15 +275,15 @@ pub fn evaluate_managed_binary_route(
         .map(str::to_ascii_lowercase);
     if extension
         .as_ref()
-        .is_some_and(|extension| routing.lfs_extensions.contains(extension))
+        .is_some_and(|extension| extensions.contains(extension))
     {
-        return Ok(ManagedBinaryRoute::LfsExtension);
+        return Ok(by_extension);
     }
     if routing
         .lfs_threshold_bytes
         .is_some_and(|threshold| size_bytes >= threshold)
     {
-        return Ok(ManagedBinaryRoute::LfsThreshold);
+        return Ok(by_threshold);
     }
     Ok(ManagedBinaryRoute::DirectGit)
 }
@@ -493,7 +545,7 @@ fn limit_uncovered_paths(mut paths: Vec<String>) -> (Vec<String>, usize) {
     (paths, truncated_count)
 }
 
-fn case_insensitive_extension_pattern(extension: &str) -> String {
+pub(super) fn case_insensitive_extension_pattern(extension: &str) -> String {
     let mut pattern = String::from("*.");
     for character in extension.chars() {
         if character.is_ascii_alphabetic() {

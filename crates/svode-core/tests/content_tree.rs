@@ -295,10 +295,11 @@ fn a_file_search_walks_each_space_with_its_policy_and_finds_local_assets() {
     .unwrap();
     fs::write(
         root.join(".gitignore"),
-        "build/\n# svode:spaces:start\nchild/\n# svode:spaces:end\n# svode:assets-local-paths:start\n# svode:path \"photo.jpg\"\n/photo.jpg\n# svode:path \"docs/scan.jpeg\"\n/docs/scan.jpeg\n# svode:assets-local-paths:end\n",
+        "build/\n# svode:spaces:start\nchild/\n# svode:spaces:end\n# svode:assets-local-paths:start\n# svode:path \"photo.jpg\"\n/photo.jpg\n# svode:path \"docs/scan.jpeg\"\n/docs/scan.jpeg\n# svode:assets-local-paths:end\n# svode:assets-local-extensions:start\n*.[pP][nN][gG]\n*.png\n# svode:assets-local-extensions:end\n",
     )
     .unwrap();
     fs::write(root.join("photo.jpg"), "").unwrap();
+    fs::write(root.join("cover.png"), "").unwrap();
     fs::create_dir_all(root.join("docs")).unwrap();
     fs::write(root.join("docs/scan.jpeg"), "").unwrap();
     fs::create_dir_all(root.join("build")).unwrap();
@@ -314,6 +315,7 @@ fn a_file_search_walks_each_space_with_its_policy_and_finds_local_assets() {
     assert_eq!(
         find_project_files(root, "", 10),
         [
+            root.join("cover.png"),
             root.join("photo.jpg"),
             root.join("docs/scan.jpeg"),
             child.join("offer.pdf"),

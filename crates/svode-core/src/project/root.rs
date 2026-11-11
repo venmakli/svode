@@ -202,6 +202,7 @@ async fn write(
         journal.keep_gitignore()?;
         journal.git = true;
         ops::init_with_optional_scaffold_commit(cli, path, false).await?;
+        crate::storage::local_rules::repair_local_rules(cli, path).await?;
         if journal.gitignore_changed() {
             changed.push(path.join(".gitignore"));
         }

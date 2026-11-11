@@ -341,8 +341,10 @@ fn asset_import_copies_by_the_local_routing_of_its_space_without_a_commit() {
     let attachment = value["attachmentPath"].as_str().unwrap();
     assert_eq!(fs::read(root.join(attachment)).unwrap(), b"image");
     assert!(value["markdownUrl"].as_str().unwrap().contains("chart.png"));
+    // A listed format stays local by the extension block, not by an exact rule.
     let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
-    assert!(gitignore.contains("chart.png"), "{gitignore}");
+    assert!(gitignore.contains("*.[pP][nN][gG]"), "{gitignore}");
+    assert!(!gitignore.contains("chart.png"), "{gitignore}");
     let changed = value["changedPaths"].to_string();
     assert!(changed.contains(".gitignore"), "{value}");
     assert!(elsewhere.join("photo.png").is_file(), "source kept");

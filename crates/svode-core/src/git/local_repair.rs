@@ -52,11 +52,21 @@ pub enum RepairOutcome {
     Skipped,
 }
 
+/// Whether a repair also brings the rules of the `local` assets strategy up
+/// to date. Only opening the Project does: a save or a commit must not add
+/// a `.gitignore` change of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StorageRules {
+    Skip,
+    Repair,
+}
+
 /// The caller holds the effective repository lock and supplies current access evidence.
 async fn repair_authorized(
     cli: &GitCli,
     repository: &Path,
     inline: bool,
+    storage_rules: StorageRules,
     authorization: Result<(), GitError>,
 ) -> Result<RepairOutcome, GitError> {
     if let Err(error) = authorization {
@@ -77,6 +87,9 @@ async fn repair_authorized(
     ops::ensure_svode_gitignore(repository)?;
     if inline {
         ops::ensure_inline_gitignore(repository)?;
+    }
+    if storage_rules == StorageRules::Repair {
+        crate::storage::local_rules::repair_local_rules(cli, repository).await?;
     }
     // Only a readable config registers children; one that cannot be read
     // leaves their rollout to an open after it is fixed.
@@ -140,6 +153,16 @@ pub async fn repair_scope(
     project: &Path,
     space: &Path,
 ) -> Result<RepairOutcome, GitError> {
+    repair_scope_with(runtime, host, project, space, StorageRules::Skip).await
+}
+
+async fn repair_scope_with(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    project: &Path,
+    space: &Path,
+    storage_rules: StorageRules,
+) -> Result<RepairOutcome, GitError> {
     if !space.is_dir() {
         tracing::info!(space = %space.display(), "local ignore repair skipped for missing space");
         return Ok(RepairOutcome::Skipped);
@@ -157,7 +180,7 @@ pub async fn repair_scope(
         return Ok(RepairOutcome::Skipped);
     };
     let authorization = host.authorize_repository(repository).await;
-    repair_authorized(cli, repository, inline, authorization).await
+    repair_authorized(cli, repository, inline, storage_rules, authorization).await
 }
 
 /// A repair that has to happen: `Changed` or `Unchanged`, never `Skipped`.
@@ -178,7 +201,9 @@ pub async fn require_scope_repair(
 /// Exact-path callers already serialize their repository before preflight/publication.
 pub async fn repair_locked_best_effort(host: &dyn GitHost, cli: &GitCli, repository: &Path) {
     let authorization = host.authorize_repository(repository).await;
-    if let Err(error) = repair_authorized(cli, repository, false, authorization).await {
+    if let Err(error) =
+        repair_authorized(cli, repository, false, StorageRules::Skip, authorization).await
+    {
         tracing::warn!(repository = %repository.display(), error_kind = error.kind(), "local ignore repair failed before exact-path staging; retry on next open");
     }
 }
@@ -195,18 +220,27 @@ pub async fn repair_scope_best_effort(
     }
 }
 
+/// Opening a Project repairs its repository and those of its ready Spaces,
+/// the rules of the `local` assets strategy included.
 pub async fn repair_project(runtime: &GitRuntime, host: &dyn GitHost, root: &Path) {
-    repair_scope_best_effort(runtime, host, root, root).await;
+    repair_on_open(runtime, host, root, root).await;
     match ready_children(root) {
         Ok(children) => {
             for child in children {
-                repair_scope_best_effort(runtime, host, root, &child).await;
+                repair_on_open(runtime, host, root, &child).await;
             }
         }
         Err(error) => tracing::warn!(
             error_kind = error.kind(),
             "local ignore child inventory failed; retry on next open"
         ),
+    }
+}
+
+async fn repair_on_open(runtime: &GitRuntime, host: &dyn GitHost, project: &Path, space: &Path) {
+    if let Err(error) = repair_scope_with(runtime, host, project, space, StorageRules::Repair).await
+    {
+        tracing::warn!(space = %space.display(), error_kind = error.kind(), "local ignore repair failed; retry on next open");
     }
 }
 
@@ -223,7 +257,7 @@ mod tests {
             .require_mutation(cli, root, &root.join("access-test.json"))
             .await
             .map(|_| ());
-        repair_authorized(cli, root, inline, authorization).await
+        repair_authorized(cli, root, inline, StorageRules::Skip, authorization).await
     }
 
     fn legacy(root: &Path) {
@@ -376,6 +410,58 @@ mod tests {
         let repaired = std::fs::read_to_string(root.path().join(".gitignore")).unwrap();
         assert!(repaired.starts_with("# user rules\ncustom.tmp\n# svode:local:start\n"));
         assert!(!repaired.contains("# Svode local files"));
+    }
+
+    #[tokio::test]
+    async fn opening_the_project_adds_local_storage_rules_and_a_save_repair_does_not() {
+        use crate::git::staging_tests::{TestHost, scaffold};
+        use crate::storage::local_rules::LOCAL_EXTENSIONS_START;
+
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        let root = root.path();
+        scaffold(root, "Root");
+        let child = root.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        git(&cli, &child, &["init"]).await;
+        scaffold(&child, "Child");
+        write(
+            root,
+            ".svode/config.json",
+            r#"{"name":"Root","spaces":[{"id":"child","path":"child","repo":null}],"assets":{"strategy":"local"}}"#,
+        );
+        write(
+            &child,
+            ".svode/config.json",
+            r#"{"name":"Child","assets":{"strategy":"in-git"}}"#,
+        );
+        let runtime = GitRuntime::with_cli(cli.clone());
+        let host = TestHost::default();
+
+        repair_scope(&runtime, &host, root, root).await.unwrap();
+        let saved = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(!saved.contains(LOCAL_EXTENSIONS_START), "{saved}");
+
+        repair_project(&runtime, &host, root).await;
+        let opened = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(opened.starts_with(&saved), "{opened}");
+        assert!(opened.contains(LOCAL_EXTENSIONS_START), "{opened}");
+        let child_rules = std::fs::read_to_string(child.join(".gitignore")).unwrap();
+        assert!(
+            !child_rules.contains(LOCAL_EXTENSIONS_START),
+            "{child_rules}"
+        );
+        let photo = cli
+            .exec(root, &["check-ignore", "--quiet", "--", "notes/photo.png"])
+            .await
+            .unwrap();
+        assert_eq!(photo.exit_code, 0);
+
+        repair_project(&runtime, &host, root).await;
+        assert_eq!(
+            std::fs::read_to_string(root.join(".gitignore")).unwrap(),
+            opened
+        );
     }
 
     #[tokio::test]
@@ -562,7 +648,7 @@ mod tests {
             reason: "auth_required".into(),
         };
         assert_eq!(
-            repair_authorized(&cli, root.path(), false, Err(denial))
+            repair_authorized(&cli, root.path(), false, StorageRules::Skip, Err(denial))
                 .await
                 .unwrap(),
             RepairOutcome::Skipped
@@ -629,7 +715,7 @@ mod recovery_tests {
         let root = repo(&cli, true).await;
         crate::git::status::untracked_bulk(root.path(), 0..21_000);
         assert_eq!(
-            repair_authorized(&cli, root.path(), false, Ok(()))
+            repair_authorized(&cli, root.path(), false, StorageRules::Skip, Ok(()))
                 .await
                 .unwrap(),
             RepairOutcome::Changed
@@ -655,7 +741,7 @@ mod recovery_tests {
             0
         );
         assert_eq!(
-            repair_authorized(&cli, root.path(), false, Ok(()))
+            repair_authorized(&cli, root.path(), false, StorageRules::Skip, Ok(()))
                 .await
                 .unwrap(),
             RepairOutcome::Skipped
@@ -669,7 +755,7 @@ mod recovery_tests {
         );
         git(&cli, root.path(), &["merge", "--abort"]).await;
         assert_eq!(
-            repair_authorized(&cli, root.path(), false, Ok(()))
+            repair_authorized(&cli, root.path(), false, StorageRules::Skip, Ok(()))
                 .await
                 .unwrap(),
             RepairOutcome::Changed
@@ -696,7 +782,7 @@ mod recovery_tests {
         assert_eq!(children.len(), 2);
         let mut outcomes = Vec::new();
         for child in children {
-            outcomes.push(repair_authorized(&cli, &child, false, Ok(())).await);
+            outcomes.push(repair_authorized(&cli, &child, false, StorageRules::Skip, Ok(())).await);
         }
         assert!(outcomes[0].is_err());
         assert_eq!(outcomes[1].as_ref().unwrap(), &RepairOutcome::Changed);
@@ -707,13 +793,13 @@ mod recovery_tests {
         write(&missing, "README.md", "# Restored existing scaffold");
         assert_eq!(ready_children(root.path()).unwrap().len(), 3);
         assert_eq!(
-            repair_authorized(&cli, &missing, false, Ok(()))
+            repair_authorized(&cli, &missing, false, StorageRules::Skip, Ok(()))
                 .await
                 .unwrap(),
             RepairOutcome::Changed
         );
         assert_eq!(
-            repair_authorized(&cli, &missing, false, Ok(()))
+            repair_authorized(&cli, &missing, false, StorageRules::Skip, Ok(()))
                 .await
                 .unwrap(),
             RepairOutcome::Unchanged
@@ -733,12 +819,12 @@ mod recovery_tests {
         write(root.path(), ".gitignore", "# retained\n");
         let path = root.path().join(".gitignore");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
-        let result = repair_authorized(&cli, root.path(), false, Ok(())).await;
+        let result = repair_authorized(&cli, root.path(), false, StorageRules::Skip, Ok(())).await;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "# retained\n");
         assert_eq!(
-            repair_authorized(&cli, root.path(), false, Ok(()))
+            repair_authorized(&cli, root.path(), false, StorageRules::Skip, Ok(()))
                 .await
                 .unwrap(),
             RepairOutcome::Changed

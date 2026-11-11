@@ -183,8 +183,11 @@ async fn a_new_folder_gets_the_scaffold_a_repository_and_a_registration_without_
         "sha1"
     );
     assert_eq!(commit_count(&path), 0);
-    crate::git::system_files::assert_rules_above_local_block(
-        &std::fs::read_to_string(path.join(".gitignore")).unwrap(),
+    let gitignore = std::fs::read_to_string(path.join(".gitignore")).unwrap();
+    crate::git::system_files::assert_rules_above_local_block(&gitignore);
+    assert!(
+        gitignore.contains(crate::storage::local_rules::LOCAL_EXTENSIONS_START),
+        "{gitignore}"
     );
     let mut changed = created.changed_paths.clone();
     changed.sort();

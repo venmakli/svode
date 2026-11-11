@@ -776,6 +776,28 @@ mod tests {
     }
 
     #[test]
+    fn files_the_local_strategy_keeps_out_of_git_stay_attachments() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::write(
+            root.join(".gitignore"),
+            "# svode:assets-local-paths:start\n# svode:path \"big.odt\"\n/big.odt\n# svode:assets-local-paths:end\n# svode:assets-local-extensions:start\n*.[jJ][pP][gG]\n# svode:assets-local-extensions:end\n",
+        )
+        .unwrap();
+        fs::write(root.join("photo.JPG"), "jpg").unwrap();
+        fs::write(root.join("big.odt"), "odt").unwrap();
+
+        let mut paths = scan_mixed_children(root, root, ".", false)
+            .unwrap()
+            .0
+            .into_iter()
+            .map(|item| item.path)
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(paths, ["big.odt", "photo.JPG"]);
+    }
+
+    #[test]
     fn html_outside_an_app_is_a_document() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();

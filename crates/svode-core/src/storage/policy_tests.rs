@@ -5,8 +5,9 @@ use super::config::{
 };
 use super::lfs_declaration::LfsDeclarationState;
 use super::policy::{
-    LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, ManagedBinaryRoute, REPOSITORY_LFS_EXTENSIONS,
-    StoragePolicyError, check_lfs_filters, diagnose_repo_lfs_policy, evaluate_managed_binary_route,
+    BinaryRoutingStatus, DEFAULT_LOCAL_EXTENSIONS, LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START,
+    ManagedBinaryRoute, REPOSITORY_LFS_EXTENSIONS, StoragePolicyError, check_lfs_filters,
+    diagnose_repo_lfs_policy, effective_binary_routing, evaluate_managed_binary_route,
     is_repository_lfs_candidate, managed_lfs_attributes_body, managed_policy_current,
     normalize_binary_routing, supported_binary_routing,
 };
@@ -202,6 +203,7 @@ fn routing_normalizes_and_applies_extension_before_threshold() {
         version: BINARY_ROUTING_VERSION,
         lfs_extensions: vec![" ZIP ".into(), ".psd".into(), "zip".into()],
         lfs_threshold_bytes: Some(10),
+        local_extensions: None,
         extensions: Default::default(),
     })
     .expect("routing");
@@ -224,10 +226,131 @@ fn routing_normalizes_and_applies_extension_before_threshold() {
             version: BINARY_ROUTING_VERSION,
             lfs_extensions: vec![".".into()],
             lfs_threshold_bytes: None,
+            local_extensions: None,
             extensions: Default::default(),
         })
         .is_err()
     );
+}
+
+fn local_config(assets: &str) -> AssetsSpaceConfig {
+    serde_json::from_str(assets).expect("assets config")
+}
+
+#[test]
+fn local_route_keeps_listed_formats_and_large_files_out_of_git() {
+    let defaults = local_config(
+        r#"{ "strategy": "local", "binaryRouting": { "version": 1, "lfsExtensions": [], "lfsThresholdBytes": 100 } }"#,
+    );
+    for (path, size, route) in [
+        ("docs/photo.JPG", 1, ManagedBinaryRoute::LocalExtension),
+        ("docs/archive.7z", 1, ManagedBinaryRoute::LocalExtension),
+        ("docs/data.bin", 100, ManagedBinaryRoute::LocalThreshold),
+        ("docs/notes.txt", 99, ManagedBinaryRoute::DirectGit),
+        ("docs/big.svg", 1_000, ManagedBinaryRoute::DirectGit),
+        ("docs/table.csv", 1_000, ManagedBinaryRoute::DirectGit),
+    ] {
+        assert_eq!(
+            evaluate_managed_binary_route(&defaults, path, size).unwrap(),
+            route,
+            "{path}"
+        );
+    }
+
+    let custom = local_config(
+        r#"{ "strategy": "local", "binaryRouting": { "version": 1, "lfsExtensions": ["png"], "lfsThresholdBytes": null, "localExtensions": ["bin"] } }"#,
+    );
+    assert_eq!(
+        evaluate_managed_binary_route(&custom, "a.BIN", 1).unwrap(),
+        ManagedBinaryRoute::LocalExtension
+    );
+    assert_eq!(
+        evaluate_managed_binary_route(&custom, "a.png", u64::MAX).unwrap(),
+        ManagedBinaryRoute::DirectGit
+    );
+
+    let legacy = local_config(r#"{ "strategy": "local" }"#);
+    assert_eq!(
+        evaluate_managed_binary_route(&legacy, "a.mp4", 1).unwrap(),
+        ManagedBinaryRoute::LocalExtension
+    );
+}
+
+#[test]
+fn local_extensions_normalize_like_lfs_and_absence_means_the_default_set() {
+    let routing = normalize_binary_routing(BinaryRoutingConfig {
+        version: BINARY_ROUTING_VERSION,
+        lfs_extensions: Vec::new(),
+        lfs_threshold_bytes: None,
+        local_extensions: Some(vec![" .PSD ".into(), "zip".into(), "psd".into(), "".into()]),
+        extensions: Default::default(),
+    })
+    .expect("routing");
+    assert_eq!(
+        routing.local_extensions,
+        Some(vec!["psd".into(), "zip".into()])
+    );
+    for invalid in ["*.png", "docs/a", "md", "SVG"] {
+        assert!(
+            normalize_binary_routing(BinaryRoutingConfig {
+                local_extensions: Some(vec![invalid.into()]),
+                ..routing.clone()
+            })
+            .is_err(),
+            "{invalid}"
+        );
+    }
+
+    let defaults: Vec<String> = DEFAULT_LOCAL_EXTENSIONS
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    for (assets, status, local) in [
+        (
+            r#"{ "strategy": "local" }"#,
+            BinaryRoutingStatus::LegacyPreset,
+            defaults.clone(),
+        ),
+        (
+            r#"{ "strategy": "local", "binaryRouting": { "version": 1 } }"#,
+            BinaryRoutingStatus::V1,
+            defaults.clone(),
+        ),
+        (
+            r#"{ "strategy": "local", "binaryRouting": { "version": 1, "localExtensions": [] } }"#,
+            BinaryRoutingStatus::V1,
+            Vec::new(),
+        ),
+        (
+            r#"{ "strategy": "local", "binaryRouting": { "version": 2, "localExtensions": ["png"] } }"#,
+            BinaryRoutingStatus::Unsupported,
+            Vec::new(),
+        ),
+    ] {
+        let effective = effective_binary_routing(&local_config(assets));
+        assert_eq!(effective.status, status, "{assets}");
+        assert_eq!(effective.local_extensions, local, "{assets}");
+    }
+}
+
+#[test]
+fn local_extensions_round_trip_and_stay_absent_when_absent() {
+    let absent = local_config(
+        r#"{ "strategy": "local", "binaryRouting": { "version": 1, "lfsExtensions": [] } }"#,
+    );
+    let json = serde_json::to_value(&absent).unwrap();
+    assert!(json["binaryRouting"].get("localExtensions").is_none());
+    assert!(json["binaryRouting"].get("version").is_some());
+
+    let listed = local_config(
+        r#"{ "strategy": "local", "binaryRouting": { "version": 1, "localExtensions": ["png"], "future": true } }"#,
+    );
+    let json = serde_json::to_value(&listed).unwrap();
+    assert_eq!(
+        json["binaryRouting"]["localExtensions"],
+        serde_json::json!(["png"])
+    );
+    assert_eq!(json["binaryRouting"]["future"], serde_json::json!(true));
 }
 
 #[test]
@@ -236,6 +359,7 @@ fn unknown_routing_version_fails_closed_for_mutation() {
         version: 2,
         lfs_extensions: vec!["psd".into()],
         lfs_threshold_bytes: None,
+        local_extensions: None,
         extensions: Default::default(),
     };
     for strategy in [

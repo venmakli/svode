@@ -316,8 +316,10 @@ async fn asset_import_follows_the_routing_of_its_space() {
     .await;
     ok(exit, &value);
     let attachment = value["attachmentPath"].as_str().unwrap();
+    // A listed format stays local by the extension block, not by an exact rule.
     let gitignore = fs::read_to_string(local.project.join(".gitignore")).unwrap();
-    assert!(gitignore.contains("photo.png"), "{gitignore}");
+    assert!(gitignore.contains("*.[pP][nN][gG]"), "{gitignore}");
+    assert!(!gitignore.contains("photo.png"), "{gitignore}");
     assert!(changed(&value).contains(".gitignore"), "{value}");
     assert!(local.project.join(attachment).is_file());
 

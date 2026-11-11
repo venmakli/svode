@@ -243,6 +243,11 @@ async fn each_type_writes_its_scaffold_and_git_effects_without_a_commit() {
     assert!(!notes.join(".git").exists());
     assert!(!notes.join(".gitignore").exists());
     assert!(space_config::read(&notes).unwrap().assets.is_none());
+    let clients_rules = std::fs::read_to_string(f.root.join("clients/.gitignore")).unwrap();
+    assert!(
+        clients_rules.contains(crate::storage::local_rules::LOCAL_EXTENSIONS_START),
+        "{clients_rules}"
+    );
     let gitignore = std::fs::read_to_string(f.root.join(".gitignore")).unwrap();
     assert!(gitignore.contains("*/.svode/local.json"), "{gitignore}");
     assert!(inline.storage.inherited);

@@ -20,7 +20,6 @@ use crate::page::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown
 use crate::page::naming::{DocumentHead, DocumentNameConflict, DocumentNames};
 use crate::page::{FrontmatterHead, frontmatter_head};
 use crate::page::{SpaceReadiness, space_reference_status};
-use crate::storage::routes::{LOCAL_PATHS_END, LOCAL_PATHS_START, parse_managed_paths};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContentTreeError {
@@ -607,7 +606,6 @@ pub fn find_project_files(root: &Path, query: &str, limit: usize) -> Vec<std::pa
     while let Some(space) = spaces.pop_front() {
         let policy = TreeIgnorePolicy::from_space_root(&space);
         let child_spaces = child_folder_names(&space);
-        let local_assets = local_asset_paths(&space);
         let mut directories = std::collections::VecDeque::from([space.clone()]);
         while let Some(directory) = directories.pop_front() {
             let Ok(entries) = fs::read_dir(&directory) else {
@@ -635,8 +633,7 @@ pub fn find_project_files(root: &Path, query: &str, limit: usize) -> Vec<std::pa
                     } else if !policy.is_ignored_abs(&path, TreePathKind::Directory) {
                         directories.push_back(path);
                     }
-                } else if (!policy.is_ignored_abs(&path, TreePathKind::File)
-                    || local_assets.contains(&path))
+                } else if !policy.is_ignored_abs(&path, TreePathKind::File)
                     && !name.to_lowercase().ends_with(".md")
                     && name.to_lowercase().contains(&query)
                 {
@@ -646,24 +643,6 @@ pub fn find_project_files(root: &Path, query: &str, limit: usize) -> Vec<std::pa
         }
     }
     found
-}
-
-/// Files of a repository root that Svode keeps out of Git as local assets.
-fn local_asset_paths(root: &Path) -> HashSet<std::path::PathBuf> {
-    let Ok(gitignore) = fs::read_to_string(root.join(".gitignore")) else {
-        return HashSet::new();
-    };
-    parse_managed_paths(&gitignore, LOCAL_PATHS_START, LOCAL_PATHS_END)
-        .map(|paths| {
-            paths
-                .iter()
-                .map(|path| {
-                    path.split('/')
-                        .fold(root.to_path_buf(), |abs, part| abs.join(part))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Sort nodes by order.json for a given directory key.

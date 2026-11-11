@@ -10,10 +10,11 @@ use crate::git::GitError;
 use crate::git::cli::GitCli;
 use crate::git::state::GitRepositoryState;
 
+use super::local_rules::local_gitignore;
 use super::policy::{self, ManagedBinaryRoute, StoragePolicyError};
 use super::routes::{
-    LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, parse_managed_paths,
-    read_or_empty, rewrite_managed_path_block, write_or_remove,
+    LFS_PATHS_END, LFS_PATHS_START, parse_managed_paths, read_or_empty, rewrite_managed_path_block,
+    write_or_remove,
 };
 
 fn restore_file(path: &Path, contents: Option<&str>) {
@@ -27,13 +28,16 @@ fn restore_file(path: &Path, contents: Option<&str>) {
     }
 }
 
-/// Materialize only the exact rule required by one Svode-managed import.
+/// Materialize only the exact rule required by one Svode-managed import. A
+/// `local` route also keeps the extension block of `local_extensions` in
+/// place and drops exact rules of gone paths.
 pub async fn apply_managed_import_route(
     repository: &GitRepositoryState,
     cli: Option<&GitCli>,
     repo_dir: &Path,
     route: ManagedBinaryRoute,
     repo_relative_path: &str,
+    local_extensions: &[String],
 ) -> Result<Vec<PathBuf>, StoragePolicyError> {
     let cli = cli.ok_or(GitError::GitNotFound)?;
     if matches!(
@@ -50,31 +54,40 @@ pub async fn apply_managed_import_route(
     let _guard = lock.lock().await;
     let mut changed = Vec::new();
     let policy_path = match route {
-        ManagedBinaryRoute::Local => Some((
-            repo_dir.join(".gitignore"),
-            LOCAL_PATHS_START,
-            LOCAL_PATHS_END,
-            false,
-        )),
-        ManagedBinaryRoute::LfsThreshold => Some((
-            repo_dir.join(".gitattributes"),
-            LFS_PATHS_START,
-            LFS_PATHS_END,
-            true,
-        )),
+        ManagedBinaryRoute::LocalExtension | ManagedBinaryRoute::LocalThreshold => {
+            Some(repo_dir.join(".gitignore"))
+        }
+        ManagedBinaryRoute::LfsThreshold => Some(repo_dir.join(".gitattributes")),
         ManagedBinaryRoute::LfsExtension | ManagedBinaryRoute::DirectGit => None,
     };
 
-    let original = if let Some((path, start, end, lfs)) = policy_path.as_ref() {
+    let original = if let Some(path) = policy_path.as_ref() {
         let original = if path.exists() {
             Some(read_or_empty(path)?)
         } else {
             None
         };
         let current = original.as_deref().unwrap_or_default();
-        let mut paths = parse_managed_paths(current, start, end)?;
-        paths.insert(repo_relative_path.to_string());
-        let next = rewrite_managed_path_block(current, start, end, &paths, *lfs);
+        let next = match route {
+            ManagedBinaryRoute::LocalExtension => {
+                local_gitignore(cli, repo_dir, current, local_extensions, &[]).await?
+            }
+            ManagedBinaryRoute::LocalThreshold => {
+                local_gitignore(
+                    cli,
+                    repo_dir,
+                    current,
+                    local_extensions,
+                    &[repo_relative_path.to_string()],
+                )
+                .await?
+            }
+            _ => {
+                let mut paths = parse_managed_paths(current, LFS_PATHS_START, LFS_PATHS_END)?;
+                paths.insert(repo_relative_path.to_string());
+                rewrite_managed_path_block(current, LFS_PATHS_START, LFS_PATHS_END, &paths, true)
+            }
+        };
         if next != current {
             write_or_remove(path, &next)?;
             changed.push(path.clone());
@@ -85,7 +98,7 @@ pub async fn apply_managed_import_route(
     };
 
     let verification = match route {
-        ManagedBinaryRoute::Local => cli
+        ManagedBinaryRoute::LocalExtension | ManagedBinaryRoute::LocalThreshold => cli
             .exec(
                 repo_dir,
                 &["check-ignore", "--quiet", "--", repo_relative_path],
@@ -120,7 +133,7 @@ pub async fn apply_managed_import_route(
     if let Err(error) = verification {
         if let Some((path, contents)) = original.as_ref() {
             restore_file(path, Some(contents));
-        } else if let Some((path, ..)) = policy_path.as_ref() {
+        } else if let Some(path) = policy_path.as_ref() {
             restore_file(path, None);
         }
         return Err(error);
@@ -165,8 +178,9 @@ mod tests {
             &repository,
             Some(&cli),
             repo,
-            ManagedBinaryRoute::Local,
+            ManagedBinaryRoute::LocalThreshold,
             "Topic/file [1].bin",
+            &[],
         )
         .await?;
         let ignored = cli
@@ -188,6 +202,7 @@ mod tests {
             repo,
             ManagedBinaryRoute::LfsThreshold,
             "Topic/file.bin",
+            &[],
         )
         .await
         .expect_err("nested override must block LFS route");

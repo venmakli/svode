@@ -10,6 +10,7 @@ use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
 use svode_core::git::cli::{GitCli, GitOutput};
 use svode_core::storage::lfs::{teardown_managed_registration, write_managed_registration};
 use svode_core::storage::lfs_declaration::{self, LfsDeclarationWrite};
+use svode_core::storage::local_rules::rewrite_local_extensions_block;
 use svode_core::storage::policy;
 use svode_core::storage::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, append_block,
@@ -177,21 +178,26 @@ pub async fn apply_strategy(
     let gitignore_path = space_dir.join(".gitignore");
     let gitattributes_path = space_dir.join(".gitattributes");
 
-    // --- .gitignore: managed `.assets/` block only when Local. ---
+    // --- .gitignore: managed `.assets/` and extension blocks only when Local. ---
     {
+        let local = matches!(new, AssetsStrategy::Local);
         let current = read_or_empty(&gitignore_path)?;
         let stripped = strip_block(&current, IGNORE_START, IGNORE_END);
-        let stripped = if matches!(new, AssetsStrategy::Local) {
+        let stripped = if local {
             stripped
         } else {
             strip_block(&stripped, LOCAL_PATHS_START, LOCAL_PATHS_END)
         };
-        let next = if matches!(new, AssetsStrategy::Local) {
+        let next = if local {
             append_block(&stripped, IGNORE_START, IGNORE_BODY, IGNORE_END)
         } else {
             stripped
         };
-        let next = normalize_trailing_newline(next);
+        let local_extensions = policy::effective_local_extensions(binary_routing);
+        let next = rewrite_local_extensions_block(
+            &normalize_trailing_newline(next),
+            local.then_some(local_extensions.as_slice()),
+        );
         write_or_remove(&gitignore_path, &next)?;
     }
 
@@ -305,6 +311,7 @@ mod tests {
         AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig,
     };
     use svode_core::git::cli::GitCli;
+    use svode_core::storage::local_rules::LOCAL_EXTENSIONS_START;
     use svode_core::storage::policy::{
         LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
         supported_binary_routing,
@@ -500,6 +507,85 @@ mod tests {
         let merge_base = git_stdout(cli, &repo, &["merge-base", "HEAD", "origin/main"]).await?;
         assert_eq!(head_after, head_before);
         assert_eq!(merge_base, origin_head);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_apply_writes_the_extension_block_and_leaving_local_removes_it()
+    -> Result<(), AppError> {
+        let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.detected().expect("checked above");
+        std::fs::write(repo.join(".gitignore"), "user/\n")?;
+        let mut routing = BinaryRoutingConfig::new_project_default();
+
+        for _ in 0..2 {
+            apply_strategy(
+                &git_state,
+                &repo,
+                AssetsStrategy::Local,
+                &routing,
+                None,
+                None,
+            )
+            .await?;
+        }
+        let defaults = std::fs::read_to_string(repo.join(".gitignore"))?;
+        assert!(defaults.starts_with("user/\n"), "{defaults}");
+        assert!(defaults.contains(LOCAL_EXTENSIONS_START), "{defaults}");
+        assert_eq!(
+            git_stdout(cli, &repo, &["check-ignore", "docs/photo.JPG"]).await?,
+            "docs/photo.JPG"
+        );
+
+        routing.local_extensions = Some(vec!["bin".into()]);
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::Local,
+            &routing,
+            None,
+            None,
+        )
+        .await?;
+        let custom = std::fs::read_to_string(repo.join(".gitignore"))?;
+        assert!(custom.contains("*.[bB][iI][nN]"), "{custom}");
+        assert!(!custom.contains("*.[jJ][pP][gG]"), "{custom}");
+
+        routing.local_extensions = Some(Vec::new());
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::Local,
+            &routing,
+            None,
+            None,
+        )
+        .await?;
+        let size_only = std::fs::read_to_string(repo.join(".gitignore"))?;
+        assert!(!size_only.contains(LOCAL_EXTENSIONS_START), "{size_only}");
+
+        routing.local_extensions = None;
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::Local,
+            &routing,
+            None,
+            None,
+        )
+        .await?;
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::InGit,
+            &routing,
+            None,
+            None,
+        )
+        .await?;
+        assert_eq!(std::fs::read_to_string(repo.join(".gitignore"))?, "user/\n");
         Ok(())
     }
 
