@@ -12,10 +12,11 @@
     "allowJs": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["bun"],
+    "types": [],
     "paths": {
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "src-tauri/bindings", "tests"]
+  "include": ["src", "src-tauri/bindings"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/shared/testing"]
 }
