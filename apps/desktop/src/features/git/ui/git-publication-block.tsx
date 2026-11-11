@@ -152,7 +152,7 @@ function stepFailureText(step: GitSpacePublicationStep): string {
   switch (step.result?.type) {
     case "Conflict":
     case "UnmergedFiles":
-      return m.git_sync_conflict({ count: String(step.result.files.length) });
+      return m.git_sync_conflict({ count: step.result.files.length });
     case "AuthRequired":
       return m.git_sync_auth_required();
     case "OperationInProgress":

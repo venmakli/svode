@@ -16,7 +16,7 @@ import {
 } from "../ui/git-sync-stop-copy";
 
 export function notifyGitSyncConflict(fileCount: number): void {
-  toast.error(m.git_sync_conflict({ count: String(fileCount) }));
+  toast.error(m.git_sync_conflict({ count: fileCount }));
 }
 
 export function notifyGitSyncAuthRequired(): void {

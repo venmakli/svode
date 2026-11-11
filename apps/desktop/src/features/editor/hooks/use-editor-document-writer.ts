@@ -214,7 +214,7 @@ export function useEditorDocumentWriter({
 
         if (hasUnresolvedConflicts(editor.children)) {
           if (explicitSave) {
-            toast.error(m.git_sync_conflict({ count: "1" }));
+            toast.error(m.page_conflict_save_blocked());
           }
           return null;
         }

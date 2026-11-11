@@ -599,13 +599,14 @@ test("an ambiguous place is neither written nor resolved until Apply, and its ma
     await view.conflict([path, "pages/other.md"]);
 
     // While the field is open the place stays in the Page: an autosave
-    // writes nothing and ⌘S names the unresolved conflict as before.
+    // writes nothing and ⌘S asks to resolve the conflict in the Page, without
+    // a file count and without the sync conflict message (DF-304 R2).
     await view.save();
     const blocked = await toastsResolving(() => view.commitPage("notify"));
     expect(blocked).toEqual([
       {
         type: "error",
-        title: m.git_sync_conflict({ count: "1" }),
+        title: m.page_conflict_save_blocked(),
         description: undefined,
       },
     ]);

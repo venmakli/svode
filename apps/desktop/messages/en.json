@@ -933,7 +933,16 @@
   "git_remote_confirm_title": "Change remote?",
   "git_remote_confirm_description": "New URL: {url}",
   "git_remote_confirm_action": "Change",
-  "git_sync_conflict": "Sync conflict in {count} files",
+  "git_sync_conflict": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Sync conflict in {count} file",
+        "countPlural=*": "Sync conflict in {count} files"
+      }
+    }
+  ],
   "git_resolve_conflicts_remaining": "Conflict in “{page}” resolved. Files still in conflict: {count}",
   "git_resolve_page_failed": "Could not resolve the conflict in “{page}”",
   "git_resolve_page_markers": "Conflict marker lines remain in the file. Remove them to resolve the conflict.",
@@ -1032,7 +1041,6 @@
   "git_conflict_apply": "Apply",
   "git_conflict_cancel": "Cancel",
   "git_conflict_ambiguous_editing": "Remove the conflict marker lines you don't need and edit the text, then apply.",
-  "git_conflict_count": "{count} conflicts",
   "git_status_changed": "Changed",
   "git_status_untracked": "Untracked",
   "git_status_deleted": "Deleted",
@@ -1728,6 +1736,7 @@
   "collection_untitled": "Untitled collection",
   "editor_frontmatter_malformed_warning": "Frontmatter YAML is malformed. The Page opened as Markdown content; metadata edits are disabled until the YAML is repaired.",
   "page_merge_save_blocked": "Decide the disputed properties to save the page.",
+  "page_conflict_save_blocked": "Resolve the conflict in the page to save it.",
   "page_merge_unavailable_title": "Properties cannot be chosen one by one",
   "page_merge_missing_stage": "Git does not hold every version of this page.",
   "page_merge_unreadable_base": "The properties of the common version do not read: {message}",

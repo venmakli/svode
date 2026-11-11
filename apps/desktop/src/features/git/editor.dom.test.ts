@@ -118,7 +118,7 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
       useGitStore.getState().applyStatus(spacePath, conflictStatus(remaining));
       await continueGitResolve(spacePath, "notes.md", "Notes");
       expect(toasts).toEqual([
-        { kind: "error", message: m.git_sync_conflict({ count: "1" }) },
+        { kind: "error", message: m.git_sync_conflict({ count: 1 }) },
       ]);
     } finally {
       clearNativeMocks();

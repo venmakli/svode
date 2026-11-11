@@ -933,7 +933,16 @@
   "git_remote_confirm_title": "Изменить remote?",
   "git_remote_confirm_description": "Новый URL: {url}",
   "git_remote_confirm_action": "Изменить",
-  "git_sync_conflict": "Конфликт синхронизации в {count} файлах",
+  "git_sync_conflict": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Конфликт синхронизации в {count} файле",
+        "countPlural=*": "Конфликт синхронизации в {count} файлах"
+      }
+    }
+  ],
   "git_resolve_conflicts_remaining": "Конфликт в «{page}» разрешён. Осталось файлов в конфликте: {count}",
   "git_resolve_page_failed": "Не удалось разрешить конфликт в «{page}»",
   "git_resolve_page_markers": "В файле остались строки маркеров конфликта. Уберите их, чтобы разрешить конфликт.",
@@ -1032,7 +1041,6 @@
   "git_conflict_apply": "Применить",
   "git_conflict_cancel": "Отмена",
   "git_conflict_ambiguous_editing": "Удалите лишние строки маркеров и отредактируйте текст, затем примените.",
-  "git_conflict_count": "{count} конфликтов",
   "git_status_changed": "Изменён",
   "git_status_untracked": "Не отслеживается",
   "git_status_deleted": "Удалён",
@@ -1728,6 +1736,7 @@
   "collection_untitled": "Новая коллекция",
   "editor_frontmatter_malformed_warning": "YAML frontmatter повреждён. Страница открыта как Markdown-содержимое; metadata-правки недоступны, пока YAML не исправлен.",
   "page_merge_save_blocked": "Решите спорные свойства, чтобы сохранить страницу.",
+  "page_conflict_save_blocked": "Разрешите конфликт в странице, чтобы сохранить её.",
   "page_merge_unavailable_title": "Свойства не выбрать по одному",
   "page_merge_missing_stage": "В Git есть не все версии этой страницы.",
   "page_merge_unreadable_base": "Свойства общей версии не читаются: {message}",
