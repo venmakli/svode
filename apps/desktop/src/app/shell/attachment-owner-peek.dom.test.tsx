@@ -26,9 +26,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   mock.module("@/features/page/scope-surface", () => ({
     PageDetailProvider: ({ children }: { children: ReactNode }) => children,
     PageSurfaceSessionProvider: ({ children }: { children: ReactNode }) =>
@@ -365,7 +363,8 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
             surfaceId: kind === "collection" ? "pages" : "app",
           });
         }
-        if (kind === "collection") expect(observedView).toEqual("Board");
+        if (kind === "collection")
+          expect<string | null>(observedView).toEqual("Board");
       }
       expect(guardCalls >= 4).toBe(true);
     } finally {

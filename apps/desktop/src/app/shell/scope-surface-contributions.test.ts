@@ -7,6 +7,7 @@ import {
   resolveDefaultScopeSurface,
   resolveActiveScopeSurface,
   resolveScopeSurfaceContributions,
+  type ScopeSurfaceId,
 } from "@/features/scope-surfaces";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { attachmentOwnerFromScopeOwner } from "@/features/attachments";
@@ -97,7 +98,7 @@ test("canonical definitions cover the owner eligibility matrix without item or m
     status: "ready" as const,
   };
   for (const hasApp of [false, true]) {
-    const app = hasApp ? ["app"] : [];
+    const app: ScopeSurfaceId[] = hasApp ? ["app"] : [];
     for (const hasSchema of [false, true]) {
       for (const spacePath of ["/repo", "/repo/child"]) {
         const space = createRegisteredSpaceOwner({
@@ -114,7 +115,7 @@ test("canonical definitions cover the owner eligibility matrix without item or m
           "context",
           "readme",
           ...app,
-          ...(hasSchema ? ["pages"] : []),
+          ...(hasSchema ? (["pages"] as const) : []),
           "attachments",
           "actors",
           "routines",
@@ -276,7 +277,7 @@ test("DF-122 full/compact parity includes eligible Page Attachments and preserve
     createAppDirectoryOwner({ ...base, ownerPath: "Tool", hasApp: true }),
   ];
   const contributions = createScopeSurfaceContributions();
-  const expected = [
+  const expected: ScopeSurfaceId[][] = [
     ["readme"],
     ["readme"],
     ["readme", "attachments"],

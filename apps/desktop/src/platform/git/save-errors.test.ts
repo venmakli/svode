@@ -3,6 +3,7 @@ import {
   isGitSavePartial,
   rethrowGitSaveError,
   toGitSaveFailureDto,
+  type GitSaveFailureDto,
 } from "./save-errors";
 
 const failure = {
@@ -122,7 +123,7 @@ test("path samples remain bounded relative text and preserve literal Unicode nam
 });
 
 test("an unknown cause or a missing repository stays empty, not raw text", () => {
-  const expected = {
+  const expected: GitSaveFailureDto = {
     repository: null,
     stage: "verify",
     cause: null,

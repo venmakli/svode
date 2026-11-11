@@ -34,11 +34,7 @@ if (!isolatedProcess) {
   // Radix picks its layout effect by the presence of `document` at import.
   installDomGlobals(createDom());
   const typeChanges: unknown[] = [];
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   const realPropertiesPlatform =
     await import("@/platform/properties/properties-api");
 

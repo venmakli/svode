@@ -21,11 +21,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     expect(result.status).toBe(0);
   }, 20000);
 } else {
-  const mock = (
-    bunTest as typeof bunTest & {
-      mock: { module(name: string, factory: () => unknown): void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   let activeRootPath: string | null = "/project";
   const spaces = [
     { id: "docs", name: "Docs", path: "/project/docs", status: "ready" },

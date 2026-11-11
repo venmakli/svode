@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { JSDOM } from "jsdom";
+import { testFetch } from "@/shared/testing/fetch";
 
 if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
   test("agent text DOM", () => {
@@ -53,10 +54,10 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
   const checked: string[] = [];
   const shellOpened: string[] = [];
   let fetches = 0;
-  globalThis.fetch = (() => {
+  globalThis.fetch = testFetch(() => {
     fetches += 1;
     return Promise.reject(new Error("Agent text must not fetch"));
-  }) as typeof fetch;
+  });
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as { path?: string };
     if (command === "path_kind") {

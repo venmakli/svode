@@ -99,6 +99,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               value={source}
               onChange={(value) => changes.push(value)}
             />
@@ -133,6 +134,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               value={source}
               onChange={(value) => changes.push(value)}
             />
@@ -167,6 +169,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               value={source}
               onChange={(value) => changes.push(value)}
             />
@@ -199,6 +202,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
           root.render(
             <TooltipProvider>
               <ControlledMarkdownEditor
+                label="Body"
                 value={source}
                 onChange={(value) => changes.push(value)}
               />
@@ -228,6 +232,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
           root.render(
             <TooltipProvider>
               <ControlledMarkdownEditor
+                label="Body"
                 value={source}
                 onChange={(value) => changes.push(value)}
               />
@@ -264,6 +269,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               disabled
               value={source}
               onChange={(value) => changes.push(value)}
@@ -299,6 +305,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               value={source}
               onChange={(value) => changes.push(value)}
             />
@@ -336,6 +343,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               key="reopen"
               disabled
               value={saved}

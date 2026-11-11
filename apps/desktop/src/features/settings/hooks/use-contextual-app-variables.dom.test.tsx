@@ -19,31 +19,24 @@ import type { VariableSource, VariablesProblem } from "../model/app-variables";
 import type { useContextualAppVariables } from "./use-contextual-app-variables";
 
 if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
-  (test as (name: string, run: () => void, timeout: number) => void)(
-    "contextual Variables DOM and async lifecycle",
-    () => {
-      const child = spawnSync(
-        process.execPath,
-        ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
-        {
-          env: { ...process.env, SVODE_CONTEXTUAL_VARIABLES_TEST: "1" },
-          encoding: "utf8",
-        },
-      );
-      if (child.status !== 0) throw new Error(child.stdout + child.stderr);
-      expect(child.status).toBe(0);
-    },
-    120000,
-  );
+  test("contextual Variables DOM and async lifecycle", () => {
+    const child = spawnSync(
+      process.execPath,
+      ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
+      {
+        env: { ...process.env, SVODE_CONTEXTUAL_VARIABLES_TEST: "1" },
+        encoding: "utf8",
+      },
+    );
+    if (child.status !== 0) throw new Error(child.stdout + child.stderr);
+    expect(child.status).toBe(0);
+  }, 120000);
 } else {
   const dom = new JSDOM(
     '<!doctype html><html><body><div id="app"></div></body></html>',
     { pretendToBeVisual: true, url: "http://localhost/" },
   );
-  const { beforeAll, afterAll } = bunTest as typeof bunTest & {
-    beforeAll(run: () => void): void;
-    afterAll(run: () => void): void;
-  };
+  const { beforeAll, afterAll } = bunTest;
   let restore: () => void;
   beforeAll(() => {
     restore = installDomGlobals(dom);

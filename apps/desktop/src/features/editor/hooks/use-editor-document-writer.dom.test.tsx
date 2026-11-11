@@ -41,7 +41,7 @@ import * as m from "@/paraglide/messages.js";
 // the real toasts, so they run in a process of their own.
 const ISOLATED = process.env.SVODE_EDITOR_WRITER_DOM === "1";
 if (!ISOLATED) {
-  (bunTest as (name: string, run: () => void, timeout: number) => void)(
+  bunTest(
     "editor document writer",
     () => {
       const child = spawnSync(
@@ -827,7 +827,7 @@ async function toastsDuring(run: () => Promise<unknown>) {
 }
 
 const hookToast = {
-  type: "error",
+  type: "error" as const,
   title: gitSaveErrorDescription(gitSaveErrorFromError(hookRefusal)),
   description: undefined,
 };

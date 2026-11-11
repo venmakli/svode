@@ -14,22 +14,18 @@ import type {
 } from "../model/app-variables";
 
 if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
-  (test as (name: string, run: () => void, timeout: number) => void)(
-    "Variables catalog Git outcomes and recovery",
-    () => {
-      const child = spawnSync(
-        process.execPath,
-        ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
-        {
-          env: { ...process.env, SVODE_CATALOG_GIT_TEST: "1" },
-          encoding: "utf8",
-        },
-      );
-      if (child.status !== 0) throw new Error(child.stdout + child.stderr);
-      expect(child.status).toBe(0);
-    },
-    120000,
-  );
+  test("Variables catalog Git outcomes and recovery", () => {
+    const child = spawnSync(
+      process.execPath,
+      ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
+      {
+        env: { ...process.env, SVODE_CATALOG_GIT_TEST: "1" },
+        encoding: "utf8",
+      },
+    );
+    if (child.status !== 0) throw new Error(child.stdout + child.stderr);
+    expect(child.status).toBe(0);
+  }, 120000);
 } else {
   test("published mutations close drafts for commit, skip and failure; recovery reports its own attempt", async () => {
     const dom = new JSDOM(

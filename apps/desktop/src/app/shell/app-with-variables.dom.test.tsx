@@ -20,9 +20,7 @@ if (process.env.SVODE_APP_VARIABLES_HOST_TEST !== "1") {
     expect(child.status).toBe(0);
   });
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   let mounts = 0;
   mock.module("@/features/apps", () => ({
     AppSurface: ({

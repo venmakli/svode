@@ -90,9 +90,7 @@ if (process.env.SVODE_NAVIGATION_ITEM_ROWS_DOM !== "1") {
     },
   });
 
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const spaceState = {
     activeRootId: "root",
     activeRootName: "Svode",

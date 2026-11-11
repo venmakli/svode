@@ -31,12 +31,10 @@ if (process.env.SVODE_VARIABLES_PROBLEM_DOM !== "1") {
   );
   const restoreGlobals = installDomGlobals(dom);
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  (bunTest as typeof bunTest & { afterAll(run: () => void): void }).afterAll(
-    () => {
-      restoreGlobals();
-      dom.window.close();
-    },
-  );
+  bunTest.afterAll(() => {
+    restoreGlobals();
+    dom.window.close();
+  });
   const { createRoot } = await import("react-dom/client");
   const { GlobalVariablesSection, ProjectVariablesSection } =
     await import("./app-variables-section");

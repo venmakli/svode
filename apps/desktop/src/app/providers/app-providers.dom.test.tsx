@@ -29,11 +29,7 @@ if (!scenario) {
     });
   }
 } else {
-  const bunMock = (
-    bunTest as typeof bunTest & {
-      mock: { module(specifier: string, factory: () => unknown): void };
-    }
-  ).mock;
+  const bunMock = bunTest.mock;
   const passThrough = ({ children }: { children: ReactNode }) => children;
   const router = await import("@tanstack/react-router");
   // The routed screens behind the gates: the home without projects on a

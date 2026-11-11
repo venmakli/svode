@@ -37,11 +37,7 @@ if (process.env.SVODE_GENERAL_ACCESS_DOM !== "1") {
       writable: true,
       value,
     });
-  const mock = (
-    bunTest as typeof bunTest & {
-      mock: { module(name: string, factory: () => unknown): void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   const realSpace = await import("@/features/space");
   const spaces = [
     { id: "docs", name: "Docs", path: "/project/docs" },

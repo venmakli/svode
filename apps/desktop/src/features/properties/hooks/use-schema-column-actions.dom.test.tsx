@@ -33,11 +33,7 @@ if (!isolatedProcess) {
 
   const requests: PendingRequest[] = [];
   const toastErrors: unknown[] = [];
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
 
   function pending(kind: PendingRequest["kind"]) {
     return new Promise<CollectionSchema>((resolve, reject) => {

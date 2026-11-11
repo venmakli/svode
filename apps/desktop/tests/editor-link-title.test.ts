@@ -173,7 +173,7 @@ test("R2 a new address from the link toolbar keeps the title", () => {
 test("R2 repairing a broken Page link keeps the title", () => {
   const editor = editorFor('See [Plan](old.md "Plan title")\n');
   selectIn(editor, "Plan");
-  applyLinkUrl(editor, "new.md");
+  applyLinkUrl(editor as Parameters<typeof applyLinkUrl>[0], "new.md");
   expect(save(editor)).toBe('See [Plan](new.md "Plan title")\n');
 });
 

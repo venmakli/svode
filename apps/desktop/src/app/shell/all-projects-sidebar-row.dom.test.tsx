@@ -20,9 +20,7 @@ if (process.env.SVODE_ALL_PROJECTS_ROW_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 20000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost" },

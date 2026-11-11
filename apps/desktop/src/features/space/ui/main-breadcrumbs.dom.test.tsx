@@ -21,9 +21,7 @@ if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const dom = new JSDOM("<!doctype html><div id='app'></div>", {
     url: "http://localhost/",
     pretendToBeVisual: true,
@@ -440,8 +438,8 @@ if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
     ];
     useSpaceStore.setState({ fileTrees: { root: folders, docs: folders } });
     const attachments = (itemId: string) => ({
-      kind: "target",
-      surfaceId: "attachments",
+      kind: "target" as const,
+      surfaceId: "attachments" as const,
       itemId,
     });
     artifact.openArtifact({

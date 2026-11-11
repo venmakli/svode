@@ -23,11 +23,7 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
   });
 } else {
   const toasts: { kind: string; message: unknown }[] = [];
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
 
   mock.module("sonner", () => ({
     toast: {

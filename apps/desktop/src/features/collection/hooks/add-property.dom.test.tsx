@@ -39,11 +39,7 @@ if (!isolatedProcess) {
   const toastErrors: unknown[] = [];
   const addedColumns: Column[] = [];
   const server = { refuse: true, schema: { columns: [] } as CollectionSchema };
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   const realApi = await import("../api");
 
   async function addOnServer(column: Column) {

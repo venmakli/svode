@@ -13,11 +13,7 @@ interface PendingRequest {
 }
 
 const requests: PendingRequest[] = [];
-const mock = (
-  bunTest as unknown as {
-    mock: { module: (specifier: string, factory: () => unknown) => void };
-  }
-).mock;
+const mock = bunTest.mock;
 
 mock.module("../api", () => ({
   getCollectionSchema: (input: { collectionPath: string }) =>

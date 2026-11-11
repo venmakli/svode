@@ -283,18 +283,17 @@ test("two blocks in one code block are one place, with a base only when both hav
       "b0",
     ]);
     expect(outside).toEqual(["# T\n\n", "\nEnd\n"]);
-    expect(found).toEqual([
-      {
-        ours: "```js\na1\nm1\nm2\nm3\nm4\nm5\nb1\n```",
-        theirs: "```js\na2\nm1\nm2\nm3\nm4\nm5\nb2\n```",
-        base: "```js\na0\nm1\nm2\nm3\nm4\nm5\nb0\n```",
-      },
-    ]);
+    const place = {
+      ours: "```js\na1\nm1\nm2\nm3\nm4\nm5\nb1\n```",
+      theirs: "```js\na2\nm1\nm2\nm3\nm4\nm5\nb2\n```",
+      base: "```js\na0\nm1\nm2\nm3\nm4\nm5\nb0\n```",
+    };
+    expect(found).toEqual([place]);
     expect(places(fixtures.twoInCode[style], ["a0", null]).places).toEqual([
-      { ...found[0], base: null },
+      { ...place, base: null },
     ]);
     expect(places(fixtures.twoInCode[style]).places).toEqual([
-      { ...found[0], base: null },
+      { ...place, base: null },
     ]);
   }
 });

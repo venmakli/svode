@@ -154,6 +154,7 @@ if (process.env.SVODE_EDITOR_LINK_SHORTCUT_DOM !== "1") {
             root.render(
               <TooltipProvider>
                 <ControlledMarkdownEditor
+                  label="Body"
                   disabled={disabled}
                   value={SOURCE}
                   onChange={() => {}}

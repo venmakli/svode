@@ -5,6 +5,7 @@ import { act, type ReactNode } from "react";
 import type { Root } from "react-dom/client";
 import type { HeldMedia } from "@/features/media/app-shell";
 import { JSDOM } from "jsdom";
+import { testFetch } from "@/shared/testing/fetch";
 
 if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
   test("text media DOM", () => {
@@ -45,10 +46,10 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
   Object.assign(globalThis, { Image: RecordingImage });
   Object.assign(dom.window, { Image: RecordingImage });
   let fetches = 0;
-  globalThis.fetch = (() => {
+  globalThis.fetch = testFetch(() => {
     fetches += 1;
     return Promise.reject(new Error("Agent text must not fetch"));
-  }) as typeof fetch;
+  });
 
   const sources: string[] = [];
   const shellOpened: string[] = [];

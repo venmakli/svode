@@ -22,9 +22,7 @@ if (process.env.SVODE_FILE_PEEK_CHANGES_TEST !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   // The viewers stand in for the real ones: they place the Changes they get
   // into their peek top bar.
   const viewer =

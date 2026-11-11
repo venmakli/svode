@@ -350,7 +350,15 @@ const beforeArchiveB: Projection = {
   type: "before",
 };
 
-const cases = [
+const cases: {
+  name: string;
+  scenario: Scenario;
+  from: string;
+  projection: Projection;
+  toParent: string;
+  follows: Record<string, string>;
+  order: Record<string, string[]>;
+}[] = [
   {
     name: "dragging a Page into a leaf Page",
     scenario: intoLeaf,

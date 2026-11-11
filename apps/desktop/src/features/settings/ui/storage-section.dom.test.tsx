@@ -28,12 +28,10 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
   );
   const restore = installDomGlobals(dom);
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  (bunTest as typeof bunTest & { afterAll(run: () => void): void }).afterAll(
-    () => {
-      restore();
-      dom.window.close();
-    },
-  );
+  bunTest.afterAll(() => {
+    restore();
+    dom.window.close();
+  });
   const { createRoot } = await import("react-dom/client");
   const { setLocale } = await import("@/paraglide/runtime");
   const {

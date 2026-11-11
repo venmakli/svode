@@ -5,6 +5,7 @@ import {
   knownScopeOwnerFacts,
   type ScopeOwnerFacts,
 } from "./owner-facts";
+import type { ScopeCapability } from "./types";
 
 const space = {
   spaceId: "root",
@@ -17,7 +18,7 @@ const matrix: {
   facts: ScopeOwnerFacts;
   node: Parameters<typeof knownScopeOwnerFacts>[1];
   identityKind: string;
-  capabilities: string[];
+  capabilities: ScopeCapability[];
 }[] = [
   {
     name: "leaf Page",

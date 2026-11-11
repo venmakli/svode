@@ -74,7 +74,7 @@ test("a common property is the same in every Collection: key, label, type, displ
       items: [],
     }),
   ];
-  expect(routines.map(contract)).toEqual(sessions.map(contract));
+  expect<unknown>(routines.map(contract)).toEqual(sessions.map(contract));
   expect(routines.map(contract)).toEqual([
     {
       capabilities: {

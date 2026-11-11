@@ -37,11 +37,7 @@ if (!isolatedProcess) {
     viewName: string;
     patch: Record<string, unknown>;
   }> = [];
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   const realApi = await import("../api");
 
   mock.module("../api", () => ({

@@ -20,9 +20,7 @@ if (process.env.SVODE_TERMINAL_PANEL_TOGGLE_DOM !== "1") {
     expect(child.status).toBe(0);
   });
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const dom = new JSDOM("<!doctype html><div id='app'></div>", {
     url: "http://localhost/",
     pretendToBeVisual: true,

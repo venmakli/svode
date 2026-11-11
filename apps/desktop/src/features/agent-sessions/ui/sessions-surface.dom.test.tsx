@@ -22,9 +22,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const dom = new JSDOM(
     "<!doctype html><html><body><div id='app'></div></body></html>",
     { url: "http://localhost/", pretendToBeVisual: true },

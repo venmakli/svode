@@ -338,7 +338,7 @@ test("Space and Collection name the owner of the Routines of the project, a Spac
           : [],
     };
   };
-  const hidden = { status: "hidden" };
+  const hidden = { status: "hidden" as const };
   const owned = (ownership: RoutineOwnership) => {
     const { visible, ...values } = ownershipOf(ownership);
     return {

@@ -4,6 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
+import { testFetch } from "@/shared/testing/fetch";
 
 import {
   MarkdownReader,
@@ -357,10 +358,10 @@ test("Reader link activation uses the supplied callback without navigation or ne
   const opened: string[] = [];
   let fetchCount = 0;
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
+  globalThis.fetch = testFetch(() => {
     fetchCount += 1;
     return Promise.reject(new Error("Reader must not fetch"));
-  }) as typeof fetch;
+  });
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {

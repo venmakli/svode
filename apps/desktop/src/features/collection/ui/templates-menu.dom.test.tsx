@@ -27,11 +27,7 @@ if (!isolatedProcess) {
 } else {
   // Radix picks its layout effect by the presence of `document` at import.
   installDomGlobals(createDom());
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   mock.module("sonner", () => ({
     toast: {
       error: () => undefined,

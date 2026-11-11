@@ -36,11 +36,7 @@ if (!isolatedProcess) {
   installDomGlobals(createDom());
   const typeChanges: Array<{ columnName: string; newType: string }> = [];
   const deletions: Array<{ columnName: string; deleteValues: boolean }> = [];
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
   const realPlatform = await import("@/platform/properties/properties-api");
 
   mock.module("@/platform/properties/properties-api", () => ({

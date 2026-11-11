@@ -49,9 +49,7 @@ if (process.env.SVODE_ATTACHMENTS_OPEN_ITEM_TEST !== "1") {
     30_000,
   );
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   // The Page session of the owner stands outside this surface.
   mock.module("@/features/page/scope-surface", () => ({
     PageDetailProvider: ({ children }: { children: ReactNode }) => children,

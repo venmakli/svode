@@ -227,7 +227,7 @@ test("R3 repairing a broken Page link writes it inline", () => {
   const source = "See [Plan][p].\n\n[p]: old.md\n";
   const editor = editorFor(source);
   editor.tf.select({ ...pathOfText(editor, "Plan"), offset: 1 });
-  applyLinkUrl(editor, "new.md");
+  applyLinkUrl(editor as Parameters<typeof applyLinkUrl>[0], "new.md");
   expect(save(editor)).toBe("See [Plan](new.md).\n\n[p]: old.md\n");
 });
 

@@ -110,7 +110,7 @@ test("links the adapter replayed as text become badges, the rest stays text", ()
 test("replays of Claude Code and Codex show one badge per attached image", () => {
   const shot = "file:///p/flag%20shot.png";
   const badge = {
-    type: "attachment",
+    type: "attachment" as const,
     attachment: { path: "/p/flag shot.png", name: "flag shot.png" },
   };
   // Claude Code: a percent-encoded name, then the image block.

@@ -22,9 +22,7 @@ if (process.env.SVODE_COLLECTION_COMMIT_REFUSAL_DOM !== "1") {
     expect(child.status).toBe(0);
   });
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const toasts: {
     kind: string;
     message: string;

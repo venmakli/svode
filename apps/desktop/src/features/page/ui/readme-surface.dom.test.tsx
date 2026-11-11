@@ -23,7 +23,7 @@ if (!isolated) {
     expect(result.status).toBe(0);
   }, 30000);
 }
-const domTest: typeof test = isolated ? test : () => undefined;
+const domTest = (isolated ? test : () => undefined) as typeof test;
 
 domTest(
   "an explicit save failure stays silent while the save block indicator shows",

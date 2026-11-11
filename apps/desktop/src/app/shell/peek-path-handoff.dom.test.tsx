@@ -22,9 +22,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
     expect(child.status).toBe(0);
   }, 60_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   let convert: (path: string) => void = () => {};
   let mounts = 0;
   const record = () => {};

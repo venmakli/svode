@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { MarkdownPlugin } from "@platejs/markdown";
-import { NodeApi, type TElement } from "platejs";
+import { NodeApi, type TElement, type Value } from "platejs";
 import { createPlateEditor } from "platejs/react";
 import { deserializeImportedMarkdown } from "../src/components/ui/import-toolbar-button";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
@@ -181,7 +181,7 @@ test("R4 Routine field value keeps code when neighbouring text changes", () => {
   const editor = createPlateEditor({
     plugins: EditorKit,
     value: (instance) =>
-      deserializeEditorMarkdownInsertion(instance, pathSource) as never,
+      deserializeEditorMarkdownInsertion(instance, pathSource) as Value,
   });
   const [, path] = [...NodeApi.texts(editor)].find(([node]) =>
     node.text.startsWith("End"),

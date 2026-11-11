@@ -1,32 +1,16 @@
-import { expect, test } from "bun:test";
-import * as bunTest from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { act, StrictMode, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+import { testFetch } from "@/shared/testing/fetch";
 import {
   DogfoodUpdatesProvider,
   useDogfoodUpdates,
 } from "./use-dogfood-updates";
 import { DogfoodUpdateSettingsControls } from "../ui/update-settings-controls";
-
-interface TestSpy<F extends (...args: never[]) => unknown> {
-  mock: { calls: Parameters<F>[] };
-  mockImplementation(fn: (...args: Parameters<F>) => ReturnType<F>): TestSpy<F>;
-  mockReturnValue(value: ReturnType<F>): TestSpy<F>;
-  mockRestore(): void;
-}
-
-const { beforeEach, afterEach, spyOn } = bunTest as typeof bunTest & {
-  beforeEach(callback: () => void): void;
-  afterEach(callback: () => Promise<void>): void;
-  spyOn<T, K extends keyof T>(
-    object: T,
-    key: K,
-  ): TestSpy<Extract<T[K], (...args: never[]) => unknown>>;
-};
 
 const LAST_CHECK = "svode.updates.dogfood.lastCheckAt";
 const LAST_NOTIFIED = "svode.updates.dogfood.lastNotifiedId";
@@ -51,10 +35,12 @@ let spies: ReturnType<typeof setupSpies>;
 function setupSpies() {
   return {
     fetch: spyOn(globalThis, "fetch").mockImplementation(
-      (_url, options) =>
-        new Promise<Response>((resolve, reject) => {
-          requests.push({ signal: options?.signal, resolve, reject });
-        }),
+      testFetch(
+        (_url, options) =>
+          new Promise<Response>((resolve, reject) => {
+            requests.push({ signal: options?.signal, resolve, reject });
+          }),
+      ),
     ),
     date: spyOn(Date, "now").mockImplementation(() => now),
     info: spyOn(toast, "info").mockReturnValue(100),

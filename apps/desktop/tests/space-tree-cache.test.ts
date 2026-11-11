@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { TreeNode } from "../src/features/entry";
+import type { TreeNode } from "../src/features/space/model/types";
 import {
   applyReadmeMetaToParents,
   buildLoadedTree,

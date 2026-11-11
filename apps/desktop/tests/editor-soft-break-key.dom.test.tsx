@@ -163,6 +163,7 @@ if (process.env.SVODE_EDITOR_SOFT_BREAK_KEY_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               value={SOURCE}
               onChange={(value) => changes.push(value)}
             />

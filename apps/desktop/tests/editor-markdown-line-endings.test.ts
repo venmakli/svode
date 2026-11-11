@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { MarkdownPlugin } from "@platejs/markdown";
-import { NodeApi, type TElement } from "platejs";
+import { NodeApi, type TElement, type Value } from "platejs";
 import { createPlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
 import type { ConflictElement } from "../src/features/editor/conflict/parse-conflicts";
@@ -112,7 +112,7 @@ test("Routine field with a CRLF value gives the value of the LF field", () => {
     const editor = createPlateEditor({
       plugins: EditorKit,
       value: (instance) =>
-        deserializeEditorMarkdownInsertion(instance, value) as never,
+        deserializeEditorMarkdownInsertion(instance, value) as Value,
     });
     const [, path] = [...NodeApi.texts(editor)].find(([node]) =>
       node.text.startsWith("Step"),

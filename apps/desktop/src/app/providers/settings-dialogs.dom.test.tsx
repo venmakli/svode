@@ -28,11 +28,7 @@ if (!isolatedSettingsDialogsDomProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  const bunMock = (
-    bunTest as typeof bunTest & {
-      mock: { module(specifier: string, factory: () => unknown): void };
-    }
-  ).mock;
+  const bunMock = bunTest.mock;
   bunMock.module("./settings-shortcuts", () => ({
     settingsShortcutGroups: [],
   }));

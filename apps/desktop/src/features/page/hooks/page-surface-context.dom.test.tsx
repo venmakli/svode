@@ -10,7 +10,7 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 // Radix portals pick their layout effect when first imported, so the
 // confirmation dialog needs a process that loads it after the DOM exists.
 const isolated = process.env.SVODE_PAGE_SESSION_DOM === "1";
-const domTest: typeof test = isolated ? test : () => undefined;
+const domTest = (isolated ? test : () => undefined) as typeof test;
 if (!isolated) {
   test("Page session DOM scenarios", () => {
     const result = spawnSync(

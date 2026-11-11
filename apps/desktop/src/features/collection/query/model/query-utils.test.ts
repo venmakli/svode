@@ -10,7 +10,11 @@ import {
   viewQueryHash,
   viewUpdatePatch,
 } from "./query-utils";
-import type { CollectionView, StoredViewQueryState } from "./types";
+import type {
+  CollectionView,
+  QueryFilter,
+  StoredViewQueryState,
+} from "./types";
 
 test("queryFields exposes only groupable custom fields for board groups", () => {
   const fields = queryFields(schema(), "group").map((field) => field.name);
@@ -136,7 +140,7 @@ test("a saved multi-value contains reads as the any operator without rewriting t
 
   const resolved = resolveViewQuery(schema(), view, ephemeral);
 
-  const read = [
+  const read: QueryFilter[] = [
     { field: "Tags", op: "contains_any", values: ["Red", "Blue"] },
     {
       field: "Reviewers",

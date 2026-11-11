@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act } from "react";
 
+import type { ArtifactOpenTarget } from "@/features/artifact";
 import type { SearchItem } from "@/features/search";
 
 if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
@@ -86,14 +87,13 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
   }));
 
   // The neutral opening of an artifact (DF-317).
-  const openedArtifacts: { path: string; spaceId?: string | null }[] = [];
+  const openedArtifacts: ArtifactOpenTarget[] = [];
   const artifact = { ...(await import("@/features/artifact")) };
   mock.module("@/features/artifact", () => ({
     ...artifact,
-    useOpenArtifact:
-      () => (target: { path: string; spaceId?: string | null }) => {
-        openedArtifacts.push(target);
-      },
+    useOpenArtifact: () => (target: ArtifactOpenTarget) => {
+      openedArtifacts.push(target);
+    },
   }));
 
   const { clearNativeMocks, mockNativeIpc } =

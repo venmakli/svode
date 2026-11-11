@@ -10,8 +10,8 @@ test("a publication refusal is a project reason or a list of Spaces", () => {
     }),
   ).toEqual({ kind: "git_publication_blocked", reason: "target_changed" });
   const spaces = [
-    { path: "compliance", class: "local_commits" },
-    { path: "legal", class: "outside_branch" },
+    { path: "compliance", class: "local_commits" as const },
+    { path: "legal", class: "outside_branch" as const },
   ];
   expect(
     toGitPublicationBlockDto({
@@ -64,7 +64,7 @@ test("a publication guard refusal names the file, commit and finding", () => {
     path: "tasks/schema.yaml",
     commit: "abc",
   };
-  for (const finding of ["conflict_markers", "unreadable"])
+  for (const finding of ["conflict_markers", "unreadable"] as const)
     expect(toGitPublicationBlockDto({ ...guard, finding })).toEqual({
       kind: "git_publication_blocked",
       reason: "content",

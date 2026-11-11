@@ -103,7 +103,10 @@ if (!isolatedDomProcess) {
         );
         await nextFrame(dom);
       });
-      expect(selected).toEqual({ mode: "fixed", timezone: "Asia/Tokyo" });
+      expect<RoutineTimeBasis>(selected).toEqual({
+        mode: "fixed",
+        timezone: "Asia/Tokyo",
+      });
       expect(input.value).toBe("Tokyo — GMT+09:00");
 
       await act(async () => {

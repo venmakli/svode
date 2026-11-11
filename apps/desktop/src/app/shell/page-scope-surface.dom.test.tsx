@@ -22,9 +22,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   let mounts = 0;
   let unmounts = 0;
   let flushBody: () => Promise<void> = async () => {};

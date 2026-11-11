@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { testFetch } from "@/shared/testing/fetch";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 if (process.env.SVODE_UPDATE_FOOTER_DOM_PROCESS !== "1") {
@@ -76,10 +77,12 @@ if (process.env.SVODE_UPDATE_FOOTER_DOM_PROCESS !== "1") {
     const urls: string[] = [];
     const destinations: string[] = [];
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() =>
-      new Promise<Response>((resolve) => {
-        requests.push({ resolve });
-      })) as typeof fetch;
+    globalThis.fetch = testFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          requests.push({ resolve });
+        }),
+    );
     let autoCheck: (() => void) | undefined;
     const originalTimeout = dom.window.setTimeout.bind(dom.window);
     dom.window.setTimeout = ((handler: () => void, timeout: number) => {

@@ -134,6 +134,7 @@ if (process.env.SVODE_COMMENT_MARKER_DOM !== "1") {
       root.render(
         <TooltipProvider delayDuration={0}>
           <ControlledMarkdownEditor
+            label="Body"
             disabled={disabled}
             value={source}
             onChange={(value) => changes.push(value)}

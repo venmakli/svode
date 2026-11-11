@@ -30,11 +30,7 @@ if (!isolatedProcess) {
   const toastErrors: unknown[] = [];
   const addedColumns: Column[] = [];
   const server = { refuse: true, columns: [] as Column[] };
-  const mock = (
-    bunTest as unknown as {
-      mock: { module: (specifier: string, factory: () => unknown) => void };
-    }
-  ).mock;
+  const mock = bunTest.mock;
 
   mock.module("sonner", () => ({
     toast: {

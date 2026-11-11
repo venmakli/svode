@@ -209,7 +209,7 @@ test("activation remains an opaque owner callback", async () => {
 
   await descriptor.onActivate?.(page, { itemId: page.key });
 
-  expect(activated).toEqual(page);
+  expect<AttachmentItem | null>(activated).toEqual(page);
 });
 
 test("registered owner input distinguishes Project root from child Space", () => {

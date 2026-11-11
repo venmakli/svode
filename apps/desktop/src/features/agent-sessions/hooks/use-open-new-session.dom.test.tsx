@@ -19,9 +19,7 @@ if (process.env.SVODE_OPEN_NEW_SESSION_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const dom = await createTestDom();
 
   let offer: "available" | "outdated" = "outdated";

@@ -15,11 +15,7 @@ const revoked: string[] = [];
 const controls: string[] = [];
 const variablesListeners = new Set<() => void>();
 const processListeners = new Set<(ownerDirectory: string) => void>();
-const mock = (
-  bunTest as unknown as {
-    mock: { module(specifier: string, factory: () => unknown): void };
-  }
-).mock;
+const mock = bunTest.mock;
 
 mock.module("../api/app-api", () => ({
   controlAppProcess: (_owner: AppOwner, action: string) => {

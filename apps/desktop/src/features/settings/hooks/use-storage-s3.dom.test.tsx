@@ -15,31 +15,25 @@ import type { AppVariableEntry } from "../model";
 import type { UseSpaceStorageSettingsResult } from "./use-space-storage-settings";
 
 if (process.env.SVODE_S3_TEST !== "1") {
-  (test as (name: string, run: () => void, timeout: number) => void)(
-    "Storage S3 DOM and async lifecycle",
-    () => {
-      const child = spawnSync(
-        process.execPath,
-        ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
-        { env: { ...process.env, SVODE_S3_TEST: "1" }, encoding: "utf8" },
-      );
-      if (child.status !== 0) throw new Error(child.stdout + child.stderr);
-      expect(child.status).toBe(0);
-    },
-    120000,
-  );
+  test("Storage S3 DOM and async lifecycle", () => {
+    const child = spawnSync(
+      process.execPath,
+      ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
+      { env: { ...process.env, SVODE_S3_TEST: "1" }, encoding: "utf8" },
+    );
+    if (child.status !== 0) throw new Error(child.stdout + child.stderr);
+    expect(child.status).toBe(0);
+  }, 120000);
 } else {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
   });
   const restore = installDomGlobals(dom);
-  (bunTest as typeof bunTest & { afterAll(run: () => void): void }).afterAll(
-    () => {
-      restore();
-      dom.window.close();
-    },
-  );
+  bunTest.afterAll(() => {
+    restore();
+    dom.window.close();
+  });
   const { createRoot } = await import("react-dom/client");
   const { useSpaceStorageSettings } =
     await import("./use-space-storage-settings");

@@ -27,9 +27,7 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const spacePath = "/space";
   // The App directory of an HTML file, by its path; others are Documents.
   let htmlApps: Record<string, string> = {};

@@ -218,7 +218,7 @@ test("toolbar markdown import decision delegates to the injected editor insertio
   });
   const result = validateStructure(value);
 
-  expect(importedText).toBe(fixtures.gfmTableBareBr);
+  expect<string | null>(importedText).toBe(fixtures.gfmTableBareBr);
   expect(result.invalidTableChildren).toBe(0);
   expect(result.errors).toEqual([]);
 });

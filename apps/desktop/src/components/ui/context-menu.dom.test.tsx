@@ -24,7 +24,7 @@ if (!isChild) {
   }, 20000);
 }
 
-const scenario: typeof test = isChild ? test : () => undefined;
+const scenario = (isChild ? test : () => undefined) as typeof test;
 
 type MenuModule = typeof import("./context-menu");
 

@@ -218,7 +218,7 @@ test("retarget preserves an owner session and refreshes an Artifact request mark
       : null,
   ).toBe(firstSessionKey);
   expect(next.activePathRetarget).toEqual({
-    key: next.activePathRetarget?.key,
+    key: expect.any(Number),
     fromPath: "draft.md",
     path: "notes/README.md",
     spaceId: "root",

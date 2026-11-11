@@ -108,6 +108,7 @@ if (process.env.SVODE_EDITOR_SYSTEM_DICTATION_DOM !== "1") {
         root.render(
           <TooltipProvider>
             <ControlledMarkdownEditor
+              label="Body"
               disabled={disabled}
               value={source}
               onChange={(value) => changes.push(value)}

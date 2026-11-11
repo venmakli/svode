@@ -469,10 +469,10 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       finding: "conflict_markers",
     };
     const stop = {
-      kind: "publication",
+      kind: "publication" as const,
       path: "Задачи/schema.yaml",
       commit,
-      finding: "conflict_markers",
+      finding: "conflict_markers" as const,
     };
     const { useGitStore } = await import("../model/git-store");
     const { GitSyncStatusWidget } = await import("./git-sync-status-widget");

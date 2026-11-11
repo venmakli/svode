@@ -66,7 +66,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
   test("the Spaces that stop publication survive successful and failed counter refreshes", async () => {
     let failFetch = false;
     let fetches = 0;
-    const spaces = [{ path: "develop", class: "local_commits" }];
+    const spaces = [{ path: "develop", class: "local_commits" as const }];
     mockNativeIpc(async (command) => {
       if (command === "git_sync")
         throw {
@@ -534,8 +534,8 @@ if (process.env.SVODE_PUBLICATION_TEST === "1") {
     const { selectIndicator } = await import("../model/git-store");
     const repo = "/blocked-project";
     const spaces = [
-      { path: "compliance", class: "local_commits" },
-      { path: "legal", class: "missing" },
+      { path: "compliance", class: "local_commits" as const },
+      { path: "legal", class: "missing" as const },
     ];
     recordGitOperationOutcome({
       repository: repo,

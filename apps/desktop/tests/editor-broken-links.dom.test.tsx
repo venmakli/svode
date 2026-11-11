@@ -163,6 +163,7 @@ if (process.env.SVODE_EDITOR_BROKEN_LINKS_DOM !== "1") {
         {routine ? (
           <div data-editor="routine">
             <ControlledMarkdownEditor
+              label="Body"
               value={"[Gone A](Gone%20A.md)\n"}
               onChange={() => {}}
             />

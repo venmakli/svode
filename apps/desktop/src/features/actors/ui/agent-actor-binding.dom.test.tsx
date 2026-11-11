@@ -623,7 +623,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       expect(
         (
           writes[2]?.mutation as {
-            actor: { name: string; description: string };
+            actor: unknown;
           }
         ).actor,
       ).toEqual({

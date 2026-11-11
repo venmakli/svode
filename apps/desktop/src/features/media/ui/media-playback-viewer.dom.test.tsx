@@ -5,6 +5,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
+import type { MediaRuntimeMetadata } from "../model/types";
+
 const isolatedDomProcess = process.env.SVODE_MEDIA_PLAYBACK_DOM_PROCESS === "1";
 
 if (!isolatedDomProcess) {
@@ -60,7 +62,7 @@ if (!isolatedDomProcess) {
       disposer?: () => void | Promise<void>;
       suspender?: () => void | Promise<void>;
     } = {};
-    let readyMetadata: { durationSeconds?: number } | null = null;
+    let readyMetadata: MediaRuntimeMetadata | null = null;
     let viewState = {
       ...DEFAULT_MEDIA_VIEW_STATE,
       playback: {
@@ -136,7 +138,7 @@ if (!isolatedDomProcess) {
         );
         await nextTurn();
       });
-      expect(readyMetadata).toEqual({
+      expect<MediaRuntimeMetadata | null>(readyMetadata).toEqual({
         durationSeconds: 120,
         height: undefined,
         width: undefined,

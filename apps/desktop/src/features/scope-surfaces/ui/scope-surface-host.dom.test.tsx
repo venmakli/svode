@@ -354,7 +354,9 @@ test("Page owner conversion and rename retain one Readme instance and applied re
     expect(useScopeSurfaceStore.getState().openRequestKeyByOwnerKey).toEqual({
       [renamed.ownerKey]: 4,
     });
-    expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
+    expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual<
+      Record<string, string>
+    >({
       [renamed.ownerKey]: "app",
     });
     await act(async () => activateTab(dom, "Readme"));

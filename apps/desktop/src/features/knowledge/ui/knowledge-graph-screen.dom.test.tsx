@@ -20,9 +20,7 @@ if (process.env.SVODE_KNOWLEDGE_SCREEN_TEST !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   // Radix decides on layout effects when it loads, so the DOM comes first.
   const dom = await createTestDom();
   const doc = dom.document;

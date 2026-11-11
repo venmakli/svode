@@ -22,7 +22,7 @@ if (!isolated) {
     expect(result.status).toBe(0);
   }, 30000);
 }
-const domTest: typeof test = isolated ? test : () => undefined;
+const domTest = (isolated ? test : () => undefined) as typeof test;
 
 interface ToastCall {
   title: string;

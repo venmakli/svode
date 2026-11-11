@@ -18,9 +18,7 @@ if (process.env.SVODE_GENERAL_SPACES_FOLLOW_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 60_000);
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const { createTestDom } = await import("@/shared/testing/dom");
   const dom = await createTestDom();
   const doc = dom.document;

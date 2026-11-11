@@ -39,8 +39,10 @@ test("a first load failure is blocking and a new scope resets to initial", () =>
     spacePath: "/one",
   });
   expect(beginActorCatalogRefresh(failed, "/one")).toEqual({
-    ...failed,
+    error: "failed",
+    phase: "blocking_error",
     retrying: true,
+    spacePath: "/one",
   });
   expect(beginActorCatalogRefresh(initial, "/two")).toEqual({
     phase: "initial",

@@ -20,9 +20,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     expect(child.status).toBe(0);
   });
 } else {
-  const { mock } = bunTest as typeof bunTest & {
-    mock: { module(path: string, factory: () => unknown): void };
-  };
+  const { mock } = bunTest;
   const dom = new JSDOM(
     '<div id="app"></div><input id="input"><div class="xterm"><textarea></textarea></div><div data-agent-session-content><div class="xterm"><textarea id="session-terminal"></textarea></div></div>',
     { url: "http://localhost/" },
