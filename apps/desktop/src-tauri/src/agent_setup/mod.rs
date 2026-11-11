@@ -8,7 +8,7 @@ pub mod commands;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use svode_agents::adapters::{
     AdapterStore, ChatOffer, LaunchContext, LaunchUnavailable, RegistryPackageSource, adapter_pin,
@@ -26,6 +26,7 @@ use svode_core::agent_adapters::{
     AgentAdapterKind, AgentId, CustomAgentId, resolve_executable_path,
 };
 use svode_core::default_agent::{self, DefaultAgent};
+use tauri::{AppHandle, Emitter};
 
 use crate::agent_runtime::connections::{KeepFuture, LaunchPlanner, PlanFuture};
 use crate::error::AppError;
@@ -48,6 +49,41 @@ pub struct AgentSetupState {
     /// The last passed check of a form before it was saved, by the custom
     /// agent it edits; `None` adds one.
     draft_checks: Arc<Mutex<HashMap<Option<CustomAgentId>, DraftCheck>>>,
+    enabled: Arc<EnabledAgentsPublication>,
+}
+
+/// The set of enabled built-in agents the windows last learned and how they
+/// learn it changed (DF-257). Every computation of the set records it here,
+/// so an agent found or lost on the device is published like an enable or
+/// disable.
+#[derive(Default)]
+struct EnabledAgentsPublication {
+    published: Mutex<Option<Vec<AgentAdapterKind>>>,
+    notify: OnceLock<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl EnabledAgentsPublication {
+    /// Records `agents` as the set the windows know and tells them when it
+    /// differs from the one recorded before, or when `announce` asks to.
+    /// The first set recorded is the one its reader got, so it tells
+    /// nobody.
+    fn publish(&self, agents: &[AgentAdapterKind], announce: bool) {
+        let changed = {
+            let mut published = self.published.lock().unwrap();
+            let changed = published.as_deref().is_some_and(|last| last != agents);
+            *published = Some(agents.to_vec());
+            changed
+        };
+        if changed || announce {
+            self.notify();
+        }
+    }
+
+    fn notify(&self) {
+        if let Some(notify) = self.notify.get() {
+            notify();
+        }
+    }
 }
 
 struct DraftCheck {
@@ -63,6 +99,21 @@ impl AgentSetupState {
             config_dir,
             choices: Arc::new(Mutex::new(())),
             draft_checks: Arc::default(),
+            enabled: Arc::default(),
+        }
+    }
+
+    /// Every window hears `agents:enabled-changed` when the set of enabled
+    /// built-in agents changes.
+    pub(crate) fn publish_enabled_changes(&self, app: AppHandle) {
+        self.on_enabled_changed(move || {
+            let _ = app.emit(commands::AGENTS_ENABLED_CHANGED_EVENT, ());
+        });
+    }
+
+    fn on_enabled_changed(&self, notify: impl Fn() + Send + Sync + 'static) {
+        if self.enabled.notify.set(Box::new(notify)).is_err() {
+            tracing::warn!("enabled agent changes are already published");
         }
     }
 
@@ -233,7 +284,30 @@ impl AgentSetupState {
         let Ok(target) = commands::target().await else {
             return Vec::new();
         };
-        AgentAdapterKind::ALL
+        self.enabled_agents_in(&target, false)
+    }
+
+    /// An agent was enabled or disabled, or lost its adapter: every window
+    /// hears it once, whether or not the set changed.
+    pub(super) async fn announce_enabled_agents(&self) {
+        match commands::target().await {
+            Ok(target) => {
+                self.enabled_agents_in(&target, true);
+            }
+            Err(_) => self.enabled.notify(),
+        }
+    }
+
+    /// The enabled built-in agents with their executables looked up in
+    /// `target`. The windows hear the set when it differs from the one they
+    /// last heard, so an agent found or lost on the device reaches them at
+    /// the next computation (DF-257), or always with `announce`.
+    pub(super) fn enabled_agents_in(
+        &self,
+        target: &AdapterTarget,
+        announce: bool,
+    ) -> Vec<AgentAdapterKind> {
+        let agents: Vec<_> = AgentAdapterKind::ALL
             .into_iter()
             .filter(|agent| {
                 let install = adapter_pin(*agent).map(|pin| self.store.state(pin));
@@ -243,7 +317,9 @@ impl AgentSetupState {
                 resolve_executable_path(*agent, None, &target.cwd, target.search_path.as_deref())
                     .is_some()
             })
-            .collect()
+            .collect();
+        self.enabled.publish(&agents, announce);
+        agents
     }
 
     /// The custom ACP agents in the order the user added them.
@@ -698,6 +774,125 @@ pub(crate) async fn live_setup_with_pinned_adapters(root: &std::path::Path) -> A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Agent setup in `dir` that counts the enabled agent changes it
+    /// publishes, an executable directory for `target` and a built-in agent
+    /// without an adapter that is not found on this device.
+    #[cfg(unix)]
+    fn counting_setup(
+        dir: &Path,
+    ) -> (
+        AgentSetupState,
+        Arc<std::sync::atomic::AtomicUsize>,
+        AdapterTarget,
+        AgentAdapterKind,
+    ) {
+        let setup = AgentSetupState::new(&dir.join("data"), dir.join("config"));
+        let published = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = published.clone();
+        setup.on_enabled_changed(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let target = AdapterTarget {
+            cwd: dir.join("home"),
+            search_path: Some(bin.into_os_string()),
+        };
+        let agent = AgentAdapterKind::ALL
+            .into_iter()
+            .find(|agent| {
+                adapter_pin(*agent).is_none()
+                    && resolve_executable_path(
+                        *agent,
+                        None,
+                        &target.cwd,
+                        target.search_path.as_deref(),
+                    )
+                    .is_none()
+            })
+            .expect("a built-in agent without an adapter is missing on this device");
+        (setup, published, target, agent)
+    }
+
+    #[cfg(unix)]
+    fn place_executable(target: &AdapterTarget, agent: AgentAdapterKind) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = PathBuf::from(target.search_path.as_ref().unwrap()).join(agent.executable());
+        std::fs::write(&path, "#!/bin/sh\necho 1.0.0\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_agent_found_or_lost_on_the_device_publishes_the_enabled_agents_once() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (setup, published, target, agent) = counting_setup(dir.path());
+
+        // The first set is the one its reader got; an unchanged one is not
+        // published again.
+        assert!(!setup.enabled_agents_in(&target, false).contains(&agent));
+        assert!(!setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 0);
+
+        // Its executable appears: the next computation publishes once.
+        let executable = place_executable(&target, agent);
+        assert!(setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+        assert!(setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+
+        // Clones read the set through the same publication.
+        assert!(
+            setup
+                .clone()
+                .enabled_agents_in(&target, false)
+                .contains(&agent)
+        );
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+
+        // Removed outside Svode: published once again.
+        std::fs::remove_file(executable).unwrap();
+        assert!(!setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 2);
+        assert!(!setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enabling_and_disabling_an_agent_publish_once_each() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (setup, published, target, agent) = counting_setup(dir.path());
+        place_executable(&target, agent);
+        assert!(setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 0);
+
+        // Disabling changes the set and is announced: one event, and the
+        // reread it causes publishes nothing.
+        setup.set_choice(agent.as_str(), false).unwrap();
+        assert!(!setup.enabled_agents_in(&target, true).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+        assert!(!setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+
+        setup.set_choice(agent.as_str(), true).unwrap();
+        assert!(setup.enabled_agents_in(&target, true).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 2);
+        assert!(setup.enabled_agents_in(&target, false).contains(&agent));
+        assert_eq!(published.load(Ordering::SeqCst), 2);
+
+        // An announced choice is published even when the set stays.
+        setup.set_choice(agent.as_str(), true).unwrap();
+        setup.enabled_agents_in(&target, true);
+        assert_eq!(published.load(Ordering::SeqCst), 3);
+    }
 
     #[test]
     fn the_default_agent_starts_as_the_last_used_chat_agent_and_keeps_its_own_value() {

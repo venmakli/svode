@@ -74,6 +74,8 @@ pub async fn agent_setup_list(
     }
     let mut setups = reads.join_all().await;
     setups.sort_by_key(|(order, _)| *order);
+    // An agent found or lost on the device changes the enabled agents.
+    state.enabled_agents_in(&target, false);
     Ok(setups.into_iter().map(|(_, setup)| setup).collect())
 }
 
@@ -135,6 +137,8 @@ pub async fn agent_setup_chat_agents(
     }
     let mut read = reads.join_all().await;
     read.sort_by_key(|(order, ..)| *order);
+    // An agent found or lost on the device changes the enabled agents.
+    state.enabled_agents_in(&target, false);
     let mut agents = Vec::new();
     let mut unoffered = Vec::new();
     for (_, agent, name, offer) in read {
@@ -166,15 +170,15 @@ pub fn agent_default_set(
     state.set_default_agent(default_agent.as_ref())
 }
 
-/// An agent was enabled or disabled; every window reads what depends on the
+/// The enabled built-in agents changed: an agent was enabled or disabled, or
+/// found or lost on the device. Every window reads what depends on the
 /// enabled agents again, such as the Agent Context of a Space.
-const AGENTS_ENABLED_CHANGED_EVENT: &str = "agents:enabled-changed";
+pub(super) const AGENTS_ENABLED_CHANGED_EVENT: &str = "agents:enabled-changed";
 
 /// Enabling an agent with an adapter installs the adapter when none is
 /// installed; the choice is recorded only after that succeeds.
 #[tauri::command]
 pub async fn agent_setup_enable(
-    app: AppHandle,
     state: State<'_, AgentSetupState>,
     agent: AgentAdapterKind,
 ) -> Result<AgentSetup, AppError> {
@@ -188,7 +192,7 @@ pub async fn agent_setup_enable(
         )
         .await?;
     state.set_choice(agent.as_str(), true)?;
-    let _ = app.emit(AGENTS_ENABLED_CHANGED_EVENT, ());
+    state.announce_enabled_agents().await;
     setup(&state, agent).await
 }
 
@@ -196,14 +200,13 @@ pub async fn agent_setup_enable(
 /// of the agent as they are.
 #[tauri::command]
 pub async fn agent_setup_disable(
-    app: AppHandle,
     state: State<'_, AgentSetupState>,
     connections: State<'_, Arc<AgentConnections>>,
     agent: AgentAdapterKind,
 ) -> Result<AgentSetup, AppError> {
     state.set_choice(agent.as_str(), false)?;
     connections.forget_agent(agent.as_str());
-    let _ = app.emit(AGENTS_ENABLED_CHANGED_EVENT, ());
+    state.announce_enabled_agents().await;
     setup(&state, agent).await
 }
 
@@ -226,13 +229,12 @@ pub async fn agent_setup_update_adapter(
 
 #[tauri::command]
 pub async fn agent_setup_remove_adapter(
-    app: AppHandle,
     state: State<'_, AgentSetupState>,
     agent: AgentAdapterKind,
 ) -> Result<AgentSetup, AppError> {
     state.store.uninstall(agent).await?;
     // Without its adapter the agent is disabled.
-    let _ = app.emit(AGENTS_ENABLED_CHANGED_EVENT, ());
+    state.announce_enabled_agents().await;
     setup(&state, agent).await
 }
 

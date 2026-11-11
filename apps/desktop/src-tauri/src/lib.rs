@@ -146,6 +146,7 @@ pub fn run() {
                 &app.path().app_data_dir()?,
                 app.path().app_config_dir()?,
             );
+            agent_setup.publish_enabled_changes(app.handle().clone());
             if let Err(error) = agent_setup.seed_default_agent() {
                 tracing::warn!("the initial default agent was not stored: {error}");
             }
