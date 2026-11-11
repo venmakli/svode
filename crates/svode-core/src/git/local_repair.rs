@@ -1,4 +1,6 @@
-//! Roll out local Git policy independently of scaffold creation.
+//! Roll out local Git policy independently of scaffold creation: the
+//! `# svode:local` block of `.gitignore` and the block of system file rules
+//! in `info/exclude`.
 
 use std::path::Path;
 
@@ -91,11 +93,45 @@ async fn repair_authorized(
             }
         }
     }
-    Ok(if std::fs::read(path)? == before {
+    let outcome = if std::fs::read(path)? == before {
         RepairOutcome::Unchanged
     } else {
         RepairOutcome::Changed
-    })
+    };
+    ensure_system_exclude(cli, repository).await?;
+    Ok(outcome)
+}
+
+/// Keep the `system_files` block in `info/exclude` of the Git directory of
+/// `repository` (DF-273 R3). Git resolves the path, so a submodule or a
+/// worktree with a `.git` file gets the file of its own Git directory. The
+/// file lies outside the working tree, so its change is not a `Changed`
+/// outcome, which reports `.gitignore`.
+async fn ensure_system_exclude(cli: &GitCli, repository: &Path) -> Result<(), GitError> {
+    let out = cli
+        .exec(
+            repository,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "info/exclude",
+            ],
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(out.stderr.trim().to_string()));
+    }
+    let path = Path::new(out.stdout.trim_end_matches(['\n', '\r']));
+    let content = ops::read_gitignore(path)?;
+    let updated = super::system_files::exclude_with_block(&content);
+    if updated != content {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, updated)?;
+    }
+    Ok(())
 }
 
 pub async fn repair_scope(
@@ -376,6 +412,143 @@ mod tests {
             !crate::git::system_files::has_any_rule(&repaired),
             "{repaired}"
         );
+    }
+
+    const SYSTEM_FILES: [&str; 5] = [
+        ".DS_Store",
+        "docs/.DS_Store",
+        "Thumbs.db",
+        "~$a.docx",
+        "desktop.ini",
+    ];
+
+    /// Untracked paths of `root` by `git status`, without the global excludes
+    /// of the machine running the test.
+    async fn untracked(cli: &GitCli, root: &Path) -> Vec<String> {
+        let none = format!("core.excludesFile={}", root.join(".no-excludes").display());
+        git(
+            cli,
+            root,
+            &[
+                "-c",
+                &none,
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ],
+        )
+        .await
+        .lines()
+        .filter_map(|line| line.strip_prefix("?? "))
+        .map(str::to_string)
+        .collect()
+    }
+
+    fn system_block() -> String {
+        let (start, end) = crate::git::system_files::EXCLUDE_BLOCK;
+        let rules = crate::git::system_files::RULES.join("\n");
+        format!("{start}\n{rules}\n{end}\n")
+    }
+
+    #[tokio::test]
+    async fn repair_keeps_the_system_file_block_in_info_exclude_with_the_lines_of_the_user() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        let user = "# user excludes\nsecret.txt\n";
+        write(root.path(), ".git/info/exclude", user);
+        for name in SYSTEM_FILES.iter().chain(&["secret.txt"]) {
+            write(root.path(), name, "bytes");
+        }
+        let visible = untracked(&cli, root.path()).await;
+        for name in SYSTEM_FILES {
+            assert!(visible.iter().any(|path| path == name), "{visible:?}");
+        }
+
+        assert_eq!(
+            repair(&cli, root.path(), false).await.unwrap(),
+            RepairOutcome::Changed
+        );
+        let exclude = root.path().join(".git/info/exclude");
+        let repaired = std::fs::read_to_string(&exclude).unwrap();
+        assert_eq!(repaired, format!("{user}{}", system_block()));
+        let visible = untracked(&cli, root.path()).await;
+        assert_eq!(visible, [".gitignore"], "{visible:?}");
+        let gitignore = std::fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(
+            !crate::git::system_files::has_any_rule(&gitignore),
+            "{gitignore}"
+        );
+
+        assert_eq!(
+            repair(&cli, root.path(), false).await.unwrap(),
+            RepairOutcome::Unchanged
+        );
+        assert_eq!(std::fs::read_to_string(&exclude).unwrap(), repaired);
+
+        // A removed block comes back on the next open; the outcome reports
+        // only `.gitignore` of the working tree.
+        write(root.path(), ".git/info/exclude", user);
+        assert_eq!(
+            repair(&cli, root.path(), false).await.unwrap(),
+            RepairOutcome::Unchanged
+        );
+        assert_eq!(std::fs::read_to_string(&exclude).unwrap(), repaired);
+        std::fs::remove_dir_all(root.path().join(".git/info")).unwrap();
+        repair(&cli, root.path(), false).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&exclude).unwrap(), system_block());
+
+        // `.gitignore` outranks `info/exclude`: the negation of the user
+        // returns the file to Git.
+        write(
+            root.path(),
+            ".gitignore",
+            &format!("{gitignore}!desktop.ini\n"),
+        );
+        let visible = untracked(&cli, root.path()).await;
+        assert!(
+            visible.iter().any(|path| path == "desktop.ini"),
+            "{visible:?}"
+        );
+        assert!(
+            !visible.iter().any(|path| path.ends_with(".DS_Store")),
+            "{visible:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn repair_writes_the_system_file_block_into_the_git_directory_of_a_submodule() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        let source = repo(&cli, true).await;
+        git(
+            &cli,
+            root.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.path().to_str().unwrap(),
+                "submodule",
+            ],
+        )
+        .await;
+        let submodule = root.path().join("submodule");
+        git(&cli, &submodule, &["remote", "remove", "origin"]).await;
+        assert!(submodule.join(".git").is_file());
+        for name in SYSTEM_FILES {
+            write(&submodule, name, "bytes");
+        }
+
+        repair(&cli, &submodule, false).await.unwrap();
+
+        let exclude = root.path().join(".git/modules/submodule/info/exclude");
+        let repaired = std::fs::read_to_string(&exclude).unwrap();
+        assert!(repaired.ends_with(&system_block()), "{repaired}");
+        let visible = untracked(&cli, &submodule).await;
+        assert_eq!(visible, [".gitignore"], "{visible:?}");
+        repair(&cli, &submodule, false).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&exclude).unwrap(), repaired);
     }
 
     #[tokio::test]

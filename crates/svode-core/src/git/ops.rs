@@ -1065,7 +1065,7 @@ fn local_records(lines: &[&str]) -> Vec<LocalRecord> {
     records
 }
 
-fn read_gitignore(path: &Path) -> Result<String, GitError> {
+pub(super) fn read_gitignore(path: &Path) -> Result<String, GitError> {
     match std::fs::read_to_string(path) {
         Ok(content) => Ok(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -1075,7 +1075,7 @@ fn read_gitignore(path: &Path) -> Result<String, GitError> {
 
 /// Lines of `.gitignore` with their own endings, so untouched lines keep their
 /// bytes, and the line ending the file uses.
-fn gitignore_lines(content: &str) -> (Vec<&str>, &'static str) {
+pub(super) fn gitignore_lines(content: &str) -> (Vec<&str>, &'static str) {
     let eol = match content.split_once('\n') {
         Some((first, _)) if first.ends_with('\r') => "\r\n",
         _ => "\n",
@@ -1083,14 +1083,18 @@ fn gitignore_lines(content: &str) -> (Vec<&str>, &'static str) {
     (content.split_inclusive('\n').collect(), eol)
 }
 
-fn line_text(line: &str) -> &str {
+pub(super) fn line_text(line: &str) -> &str {
     let line = line.strip_suffix('\n').unwrap_or(line);
     line.strip_suffix('\r').unwrap_or(line)
 }
 
 /// Line of the end marker closing the block opened at `start`, unless another
 /// start marker comes first.
-fn block_end(lines: &[&str], start: usize, (open, close): (&str, &str)) -> Option<usize> {
+pub(super) fn block_end(
+    lines: &[&str],
+    start: usize,
+    (open, close): (&str, &str),
+) -> Option<usize> {
     let end = start
         + 1
         + lines[start + 1..].iter().position(|line| {
@@ -1118,7 +1122,7 @@ fn managed_block<'a>(
     block
 }
 
-fn append_block(content: &str, block: &str, eol: &str) -> String {
+pub(super) fn append_block(content: &str, block: &str, eol: &str) -> String {
     let mut updated = content.to_owned();
     if !updated.is_empty() && !updated.ends_with('\n') {
         updated.push_str(eol);
