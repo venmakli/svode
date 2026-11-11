@@ -1,41 +1,34 @@
 import { expect, test } from "bun:test";
-import type { WatchedSpaceEntry } from "../src/features/space/api/space-watch-actions";
 import {
   applySpaceFileEvent,
   inferSpaceFileEventKind,
   shouldApplySpaceFileEvent,
-  watchedEntryToTreeNode,
+  watchedPageToTreeNode,
   type SpaceFileEventTreeStore,
 } from "../src/features/space/lib/space-file-watch-events";
+import type { WatchedSpacePage } from "../src/features/space/model/space-watch-events";
 
-function entry(
-  path: string,
+function page(
   title: string,
   icon: string | null = null,
   description: string | null = null,
-): WatchedSpaceEntry {
-  return {
-    path,
-    body: "",
-    meta: {
-      title,
-      icon,
-      description,
-      created: "",
-      updated: "",
-      extra: {},
-    },
-  };
+): WatchedSpacePage {
+  return { meta: { title, icon, description } };
 }
 
 function createStore() {
   const calls: Array<[string, ...unknown[]]> = [];
   const store: SpaceFileEventTreeStore = {
+    patchSpaceSchemaCapability: (...args) =>
+      calls.push(["patchSpaceSchemaCapability", ...args]),
+    patchSpaceAppCapability: (...args) =>
+      calls.push(["patchSpaceAppCapability", ...args]),
     applyReadmeMeta: (...args) => calls.push(["applyReadmeMeta", ...args]),
     removeReadmeMeta: (...args) => calls.push(["removeReadmeMeta", ...args]),
     removeTreePath: (...args) => calls.push(["removeTreePath", ...args]),
     updateNodeMeta: (...args) => calls.push(["updateNodeMeta", ...args]),
     updateNodeSchema: (...args) => calls.push(["updateNodeSchema", ...args]),
+    updateNodeApp: (...args) => calls.push(["updateNodeApp", ...args]),
     upsertTreeNode: (...args) => calls.push(["upsertTreeNode", ...args]),
   };
   return { calls, store };
@@ -43,7 +36,7 @@ function createStore() {
 
 test("inferSpaceFileEventKind falls back from path and directory flags", () => {
   expect(inferSpaceFileEventKind({ path: "docs/schema.yaml" })).toBe("schema");
-  expect(inferSpaceFileEventKind({ path: "docs/note.md" })).toBe("document");
+  expect(inferSpaceFileEventKind({ path: "docs/note.md" })).toBe("page");
   expect(inferSpaceFileEventKind({ path: "docs", isDir: true })).toBe("folder");
   expect(inferSpaceFileEventKind({ path: "image.png" })).toBe("unknown");
 });
@@ -62,16 +55,17 @@ test("shouldApplySpaceFileEvent filters unrelated spaces and no-op payloads", ()
   expect(shouldApplySpaceFileEvent({ path: "image.png" }, "/repo")).toBe(false);
 });
 
-test("watchedEntryToTreeNode normalizes markdown metadata", () => {
+test("watchedPageToTreeNode normalizes markdown metadata", () => {
   expect(
-    watchedEntryToTreeNode("docs/note.md", entry("docs/note.md", "Note", "N")),
+    watchedPageToTreeNode("docs/note.md", page("Note", "N")),
   ).toMatchObject({
     name: "note.md",
     path: "docs/note.md",
     title: "Note",
     icon: "N",
     parent: "docs",
-    kind: "document",
+    kind: "page",
+    source_shape: "file",
   });
 });
 
@@ -82,13 +76,14 @@ test("applySpaceFileEvent applies created nested readme as folder metadata", asy
     eventName: "file:created",
     getStore: () => store,
     payload: { path: "docs/README.md" },
-    readEntry: async (path) => entry(path, "Docs", "D", "Guide"),
-    repairTree: () => calls.push(["repairTree"]),
+    readPage: async () => page("Docs", "D", "Guide"),
+    repairTree: (parentPath) => calls.push(["repairTree", parentPath]),
     spaceId: "space-1",
   });
 
   expect(calls).toEqual([
     ["applyReadmeMeta", "space-1", "docs/README.md", "Docs", "D", "Guide"],
+    ["repairTree", ""],
   ]);
 });
 
@@ -99,7 +94,7 @@ test("applySpaceFileEvent repairs changed folders by parent path", async () => {
     eventName: "file:changed",
     getStore: () => store,
     payload: { path: "docs/guides", kind: "folder", parentPath: "docs" },
-    readEntry: async (path) => entry(path, path),
+    readPage: async (path) => page(path),
     repairTree: (parentPath) => calls.push(["repairTree", parentPath]),
     spaceId: "space-1",
   });
@@ -114,10 +109,13 @@ test("applySpaceFileEvent removes schema marker on deleted schema files", async 
     eventName: "file:deleted",
     getStore: () => store,
     payload: { path: "docs/schema.yaml" },
-    readEntry: async (path) => entry(path, path),
-    repairTree: () => calls.push(["repairTree"]),
+    readPage: async (path) => page(path),
+    repairTree: (parentPath) => calls.push(["repairTree", parentPath]),
     spaceId: "space-1",
   });
 
-  expect(calls).toEqual([["updateNodeSchema", "space-1", "docs", false]]);
+  expect(calls).toEqual([
+    ["updateNodeSchema", "space-1", "docs", false],
+    ["repairTree", ""],
+  ]);
 });

@@ -1,20 +1,21 @@
 import { expect, test } from "bun:test";
-import { propertyFieldSavePolicy, type Entry } from "../src/features/entry";
+import { propertyFieldSavePolicy, type Page } from "../src/features/page";
 import {
-  ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
-  entryFieldSavePolicy,
-  mergeSavedEntryField,
-  patchEntryField,
-  rollbackEntryField,
-} from "../src/features/entry/model/field-save";
-import { enqueueEntryFieldSave } from "../src/features/entry/lib/entry-field-save-queue";
+  PAGE_FIELD_TEXT_SAVE_DELAY_MS,
+  pageFieldSavePolicy,
+} from "../src/features/page/field-save";
+import { enqueuePageFieldSave } from "../src/features/page/lib/page-field-save-queue";
+import {
+  mergeSavedPageField,
+  patchPageField,
+  rollbackPageField,
+} from "../src/features/page/model/field-save";
 
-function entry(overrides: Partial<Entry> = {}): Entry {
+function page(overrides: Partial<Page> = {}): Page {
   return {
     path: "tasks/item.md",
     body: "",
     meta: {
-      id: "id",
       title: "Task",
       icon: null,
       description: null,
@@ -27,27 +28,27 @@ function entry(overrides: Partial<Entry> = {}): Entry {
   };
 }
 
-test("entry system field policy separates text-like and action-like saves", () => {
-  expect(entryFieldSavePolicy("title")).toEqual({
+test("Page system field policy separates text-like and action-like saves", () => {
+  expect(pageFieldSavePolicy("title")).toEqual({
     mode: "debounced",
-    delayMs: ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
+    delayMs: PAGE_FIELD_TEXT_SAVE_DELAY_MS,
   });
-  expect(entryFieldSavePolicy("description")).toEqual({
+  expect(pageFieldSavePolicy("description")).toEqual({
     mode: "debounced",
-    delayMs: ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
+    delayMs: PAGE_FIELD_TEXT_SAVE_DELAY_MS,
   });
-  expect(entryFieldSavePolicy("icon")).toEqual({ mode: "immediate" });
-  expect(entryFieldSavePolicy("cover")).toEqual({ mode: "immediate" });
+  expect(pageFieldSavePolicy("icon")).toEqual({ mode: "immediate" });
+  expect(pageFieldSavePolicy("cover")).toEqual({ mode: "immediate" });
 });
 
 test("property field policy keeps property type semantics in properties owner", () => {
   expect(propertyFieldSavePolicy({ type: "text" })).toEqual({
     mode: "debounced",
-    delayMs: ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
+    delayMs: PAGE_FIELD_TEXT_SAVE_DELAY_MS,
   });
   expect(propertyFieldSavePolicy({ type: "number" })).toEqual({
     mode: "debounced",
-    delayMs: ENTRY_FIELD_TEXT_SAVE_DELAY_MS,
+    delayMs: PAGE_FIELD_TEXT_SAVE_DELAY_MS,
   });
   expect(propertyFieldSavePolicy({ type: "select" })).toEqual({
     mode: "immediate",
@@ -57,10 +58,10 @@ test("property field policy keeps property type semantics in properties owner", 
   });
 });
 
-test("patchEntryField clears empty custom values but preserves false", () => {
-  const base = entry({
+test("patchPageField clears empty custom values but preserves false", () => {
+  const base = page({
     meta: {
-      ...entry().meta,
+      ...page().meta,
       extra: {
         status: "Open",
         done: true,
@@ -68,19 +69,19 @@ test("patchEntryField clears empty custom values but preserves false", () => {
     },
   });
 
-  expect(patchEntryField(base, "status", "").meta.extra).toEqual({
+  expect(patchPageField(base, "status", "").meta.extra).toEqual({
     done: true,
   });
-  expect(patchEntryField(base, "done", false).meta.extra).toEqual({
+  expect(patchPageField(base, "done", false).meta.extra).toEqual({
     status: "Open",
     done: false,
   });
 });
 
-test("mergeSavedEntryField updates only the saved field", () => {
-  const current = entry({
+test("mergeSavedPageField updates only the saved field", () => {
+  const current = page({
     meta: {
-      ...entry().meta,
+      ...page().meta,
       title: "Local title",
       icon: "L",
       description: "Local description",
@@ -91,9 +92,9 @@ test("mergeSavedEntryField updates only the saved field", () => {
       },
     },
   });
-  const saved = entry({
+  const saved = page({
     meta: {
-      ...entry().meta,
+      ...page().meta,
       title: "Stale server title",
       icon: "S",
       description: "Stale server description",
@@ -104,7 +105,7 @@ test("mergeSavedEntryField updates only the saved field", () => {
     },
   });
 
-  expect(mergeSavedEntryField(current, "icon", saved).meta).toMatchObject({
+  expect(mergeSavedPageField(current, "icon", saved).meta).toMatchObject({
     title: "Local title",
     icon: "S",
     description: "Local description",
@@ -115,19 +116,19 @@ test("mergeSavedEntryField updates only the saved field", () => {
     },
   });
 
-  expect(mergeSavedEntryField(current, "status", saved).meta.extra).toEqual({
+  expect(mergeSavedPageField(current, "status", saved).meta.extra).toEqual({
     status: "Done",
     priority: "High",
   });
-  expect(mergeSavedEntryField(current, "priority", saved).meta.extra).toEqual({
+  expect(mergeSavedPageField(current, "priority", saved).meta.extra).toEqual({
     status: "Todo",
   });
 });
 
-test("rollbackEntryField preserves newer metadata timestamp", () => {
-  const current = entry({
+test("rollbackPageField preserves newer metadata timestamp", () => {
+  const current = page({
     meta: {
-      ...entry().meta,
+      ...page().meta,
       title: "Optimistic title",
       icon: "I",
       updated: "2026-06-18T00:00:03Z",
@@ -136,9 +137,9 @@ test("rollbackEntryField preserves newer metadata timestamp", () => {
       },
     },
   });
-  const previous = entry({
+  const previous = page({
     meta: {
-      ...entry().meta,
+      ...page().meta,
       title: "Previous title",
       icon: null,
       updated: "2026-06-18T00:00:00Z",
@@ -148,7 +149,7 @@ test("rollbackEntryField preserves newer metadata timestamp", () => {
     },
   });
 
-  expect(rollbackEntryField(current, "title", previous).meta).toMatchObject({
+  expect(rollbackPageField(current, "title", previous).meta).toMatchObject({
     title: "Previous title",
     icon: "I",
     updated: "2026-06-18T00:00:03Z",
@@ -158,20 +159,20 @@ test("rollbackEntryField preserves newer metadata timestamp", () => {
   });
 });
 
-test("enqueueEntryFieldSave serializes writes for the same entry", async () => {
+test("enqueuePageFieldSave serializes writes for the same Page", async () => {
   const events: string[] = [];
   let releaseFirst!: () => void;
   const firstDone = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
 
-  const first = enqueueEntryFieldSave("space:entry.md", async () => {
+  const first = enqueuePageFieldSave("space:page.md", async () => {
     events.push("first:start");
     await firstDone;
     events.push("first:end");
     return "first";
   });
-  const second = enqueueEntryFieldSave("space:entry.md", async () => {
+  const second = enqueuePageFieldSave("space:page.md", async () => {
     events.push("second:start");
     return "second";
   });

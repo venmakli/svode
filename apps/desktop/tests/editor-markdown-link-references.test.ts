@@ -6,7 +6,7 @@ import { createPlateEditor } from "platejs/react";
 import { deserializeImportedMarkdown } from "../src/components/ui/import-toolbar-button";
 import { DEFAULT_CONFLICT_MARKER_SIZE } from "../src/features/editor/conflict/conflict-markers";
 import {
-  deserializeConflictBranch,
+  deserializeConflictBranches,
   deserializeWithConflicts,
 } from "../src/features/editor/conflict/parse-conflicts";
 import { applyLinkUrl } from "../src/features/editor/lib/page-link-editor-actions";
@@ -177,17 +177,22 @@ test("a reference resolves by a definition on the other side of a conflict block
   ).toBe(3);
 });
 
-test("a segment that ends inside a block keeps its text and resolves by its own definitions", () => {
+test("a conflict place inside a code block keeps the code whole and the segment before resolves by its own definitions", () => {
   const editor = editorFor(
     "See [own].\n\n[own]: https://own.dev\n\n```\ncode [a]\n<<<<<<< HEAD\nOurs\n=======\nTheirs\n>>>>>>> branch\n```\n\n[a]: https://a.dev\n",
   );
   expect(links(editor.children).map(({ url }) => url)).toEqual([
     "https://own.dev",
   ]);
-  const code = editor.children.find(
-    (node) => (node as TElement).type === "code_block",
-  );
-  expect(NodeApi.string(code!)).toBe("code [a]");
+  // The place grows over the fenced code block its markers cut.
+  const conflict = editor.children.find(
+    (node) => (node as TElement).type === "conflict",
+  ) as (TElement & { ours: string; theirs: string }) | undefined;
+  expect(conflict?.ours).toBe("```\ncode [a]\nOurs\n```");
+  expect(conflict?.theirs).toBe("```\ncode [a]\nTheirs\n```");
+  expect(
+    editor.children.some((node) => (node as TElement).type === "code_block"),
+  ).toBe(false);
 });
 
 // R3: the reference form is kept while the definition matches the target.
@@ -291,7 +296,7 @@ test("R4 Page load and watcher reload resolve references", () => {
 test("R4 Accept of a conflict branch resolves by the branch and the document definitions", () => {
   const conflicted =
     "# Title [doc]\n\n<<<<<<< HEAD\nOurs [doc] and [o]\n\n[o]: https://ours.dev\n=======\nTheirs [doc]\n>>>>>>> branch\n\n[doc]: https://doc.dev\n";
-  for (const choice of ["ours", "theirs", "edit"] as const) {
+  for (const choice of ["ours", "theirs", "both"] as const) {
     const editor = editorFor(conflicted);
     const index = editor.children.findIndex(
       (node) => (node as TElement).type === "conflict",
@@ -300,14 +305,14 @@ test("R4 Accept of a conflict branch resolves by the branch and the document def
       ours: string;
       theirs: string;
     };
-    const markdown =
+    const markdowns =
       choice === "ours"
-        ? conflict.ours
+        ? [conflict.ours]
         : choice === "theirs"
-          ? conflict.theirs
-          : `${conflict.ours}\n\n---\n\n${conflict.theirs}`;
-    // Same insertion as `ConflictElementComponent.replaceWithMarkdown`.
-    const fragment = deserializeConflictBranch(editor, markdown.trim() + "\n");
+          ? [conflict.theirs]
+          : [conflict.ours, conflict.theirs];
+    // Same insertion as Accept mine / incoming / both of `SidesConflict`.
+    const fragment = deserializeConflictBranches(editor, markdowns);
     editor.tf.removeNodes({ at: [index] });
     editor.tf.insertNodes(fragment as never, { at: [index] });
     const saved = save(editor);

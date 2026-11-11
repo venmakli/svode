@@ -14,6 +14,9 @@ import type { AttachmentOwnerRef, AttachmentItem } from "../model/types";
 import { useAttachmentsActivation } from "./use-attachments-activation";
 
 test("typed activation and source refresh reject stale owner, marker and request results", async () => {
+  // Activation must not select content: start without a selection another
+  // test of the process may have left.
+  closeActiveContent();
   const dom = new JSDOM("<div id='app'></div>", { url: "http://localhost/" });
   const previous = new Map<string, PropertyDescriptor | undefined>();
   for (const [key, value] of Object.entries({

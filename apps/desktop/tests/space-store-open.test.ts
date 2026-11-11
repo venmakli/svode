@@ -1,6 +1,10 @@
-import { beforeEach, expect, mock, test } from "bun:test";
-import type { TreeNode } from "../src/features/entry";
-import type { SpaceInfo } from "../src/features/space/model";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { JSDOM } from "jsdom";
+import type { SpaceInfo, TreeNode } from "../src/features/space/model";
+import {
+  clearNativeMocks,
+  mockNativeIpc,
+} from "../src/platform/native/testing";
 
 const readmeNode: TreeNode = {
   name: "README.md",
@@ -50,73 +54,65 @@ const rootSpace: SpaceInfo = {
   description: "",
   path: "/project",
   hasSpaces: true,
+  hasSchema: false,
   lastOpened: null,
   status: "ready",
   lfsState: "n/a",
 };
 
-const childSpace: SpaceInfo = {
+const childSpaceAt = (path: string): SpaceInfo => ({
   id: "space-1",
   name: "Develop",
   icon: "D",
   description: "",
-  path: "/project/develop",
+  path,
   hasSpaces: false,
+  hasSchema: false,
   lastOpened: null,
   status: "ready",
   lfsState: "n/a",
-};
+});
 
-const listEntries = mock(async () => [readmeNode]);
-const listTreeChildren = mock(
-  async (_space: string, parentPath: string | null) =>
-    parentPath === "docs" ? [newChildNode] : [readmeNode],
-);
-const getExpandedPaths = mock(async () => [] as string[]);
-const moveEntry = mock(async () => "README.md");
+// The store keeps the tree expansion of a Space path for its lifetime, so
+// each test opens the Space at its own path.
+let childSpaceCount = 0;
+let childSpace = childSpaceAt("/project/develop-0");
 
-mock.module("sonner", () => ({
-  toast: {
-    success: mock(() => undefined),
-    error: mock(() => undefined),
-  },
-}));
+type Ipc = { command: string; args: Record<string, unknown> };
 
-mock.module("@/platform/mcp", () => ({
-  clearMcpActiveContext: mock(async () => undefined),
-  setMcpActiveContext: mock(async () => undefined),
-}));
+let ipcCalls: Ipc[] = [];
 
-mock.module("@/platform/entries/entries-api", () => ({
-  createEntry: mock(async () => null),
-  getExpandedPaths,
-  listEntries,
-  listTreeChildren,
-  moveEntry,
-  saveExpandedPaths: mock(async () => undefined),
-  saveTreeOrder: mock(async () => undefined),
-  updateEntryField: mock(async () => null),
-}));
+function treeChildrenFor(parentPath: unknown): TreeNode[] {
+  return parentPath === "docs" ? [newChildNode] : [readmeNode];
+}
 
-mock.module("@/platform/space/space-api", () => ({
-  createProject: mock(async () => rootSpace),
-  createSpace: mock(async () => childSpace),
-  deleteProject: mock(async () => undefined),
-  deleteSpace: mock(async () => undefined),
-  ensureAssetsScope: mock(async () => undefined),
-  ensureSpaceScaffold: mock(async () => undefined),
-  getLastActiveProject: mock(async () => null),
-  listProjects: mock(async () => [rootSpace]),
-  listSpaces: mock(async () => [childSpace]),
-  openProject: mock(async () => ({
-    name: rootSpace.name,
-    description: rootSpace.description,
-    icon: rootSpace.icon,
-    spaces: [],
-  })),
-  openProjectFolder: mock(async () => rootSpace),
-  reorderSpaces: mock(async () => [childSpace]),
-}));
+// The store reaches Desktop only through these commands; an unexpected one
+// fails the test instead of passing silently.
+function handleIpc(command: string, args: Record<string, unknown>) {
+  ipcCalls.push({ command, args });
+  switch (command) {
+    case "list_tree_children":
+      return treeChildrenFor(args.parentPath);
+    case "navigation_expanded_paths":
+      return [];
+    case "move_content":
+      return { newPath: "archive/old.md", convertedParents: [] };
+    case "ensure_space_scaffold":
+    case "ensure_assets_scope":
+    case "mcp_set_active_context":
+    case "mcp_clear_active_context":
+    case "navigation_save_expanded_paths":
+      return null;
+    default:
+      throw new Error(`Unexpected command: ${command}`);
+  }
+}
+
+function callsOf(command: string) {
+  return ipcCalls
+    .filter((call) => call.command === command)
+    .map((call) => call.args);
+}
 
 const { useSpaceStore } =
   await import("../src/features/space/model/space-store");
@@ -127,8 +123,15 @@ async function flushBackgroundTasks() {
   await Promise.resolve();
 }
 
+let restoreWindow: () => void = () => undefined;
+
 beforeEach(() => {
-  mock.clearAllMocks();
+  restoreWindow = installTestWindow();
+  childSpace = childSpaceAt(`/project/develop-${++childSpaceCount}`);
+  ipcCalls = [];
+  mockNativeIpc((command, args) =>
+    handleIpc(command, (args ?? {}) as Record<string, unknown>),
+  );
   useSpaceStore.setState({
     rootSpaces: [rootSpace],
     rootsLoaded: true,
@@ -138,6 +141,7 @@ beforeEach(() => {
     activeRootPath: rootSpace.path,
     spaces: [childSpace],
     activeSpaceId: null,
+    treeLifetimes: {},
     fileTrees: {},
     childrenByParentPath: {},
     treeCache: {},
@@ -152,6 +156,26 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  restoreWindow();
+});
+
+function installTestWindow() {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>");
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+    writable: true,
+  });
+  return () => {
+    clearNativeMocks();
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
+    dom.window.close();
+  };
+}
+
 test("cached openSpace return does not force a tree refresh", async () => {
   useSpaceStore.setState({
     fileTrees: { [childSpace.id]: [readmeNode] },
@@ -165,7 +189,7 @@ test("cached openSpace return does not force a tree refresh", async () => {
   await flushBackgroundTasks();
 
   expect(useSpaceStore.getState().activeSpaceId).toBe(childSpace.id);
-  expect(listTreeChildren).not.toHaveBeenCalled();
+  expect(callsOf("list_tree_children")).toEqual([]);
 });
 
 test("missing tree loads in the background after active scope changes", async () => {
@@ -175,7 +199,9 @@ test("missing tree loads in the background after active scope changes", async ()
 
   await flushBackgroundTasks();
 
-  expect(listTreeChildren).toHaveBeenCalledTimes(1);
+  expect(callsOf("list_tree_children")).toEqual([
+    { space: childSpace.path, parentPath: null },
+  ]);
   expect(useSpaceStore.getState().fileTrees[childSpace.id]).toEqual([
     readmeNode,
   ]);
@@ -206,9 +232,10 @@ test("dirty expanded parent reloads direct children without full tree refresh", 
 
   await useSpaceStore.getState().ensureTreeLoaded(childSpace.id);
 
-  expect(listEntries).not.toHaveBeenCalled();
-  expect(listTreeChildren).toHaveBeenCalledTimes(1);
-  expect(listTreeChildren).toHaveBeenCalledWith(childSpace.path, "docs");
+  expect(callsOf("list_content_tree")).toEqual([]);
+  expect(callsOf("list_tree_children")).toEqual([
+    { space: childSpace.path, parentPath: "docs" },
+  ]);
   expect(useSpaceStore.getState().fileTrees[childSpace.id]?.[0]).toMatchObject({
     path: "docs",
     children: [newChildNode],
@@ -242,9 +269,10 @@ test("reloadTreePathParents reloads only affected direct parents", async () => {
     .getState()
     .reloadTreePathParents(childSpace.id, ["docs/new.md"]);
 
-  expect(listEntries).not.toHaveBeenCalled();
-  expect(listTreeChildren).toHaveBeenCalledTimes(1);
-  expect(listTreeChildren).toHaveBeenCalledWith(childSpace.path, "docs");
+  expect(callsOf("list_content_tree")).toEqual([]);
+  expect(callsOf("list_tree_children")).toEqual([
+    { space: childSpace.path, parentPath: "docs" },
+  ]);
 });
 
 test("reloadTreeParents treats null as root parent", async () => {
@@ -270,13 +298,13 @@ test("reloadTreeParents treats null as root parent", async () => {
 
   await useSpaceStore.getState().reloadTreeParents(childSpace.id, [null, ""]);
 
-  expect(listEntries).not.toHaveBeenCalled();
-  expect(listTreeChildren).toHaveBeenCalledTimes(1);
-  expect(listTreeChildren).toHaveBeenCalledWith(childSpace.path, null);
+  expect(callsOf("list_content_tree")).toEqual([]);
+  expect(callsOf("list_tree_children")).toEqual([
+    { space: childSpace.path, parentPath: null },
+  ]);
 });
 
-test("moveEntry reloads old and new direct parents without full tree refresh", async () => {
-  moveEntry.mockImplementationOnce(async () => "archive/old.md");
+test("moveContentItem reloads old and new direct parents without full tree refresh", async () => {
   useSpaceStore.setState({
     fileTrees: {
       [childSpace.id]: [{ ...docsNode, children: [oldChildNode] }],
@@ -303,20 +331,19 @@ test("moveEntry reloads old and new direct parents without full tree refresh", a
 
   await useSpaceStore
     .getState()
-    .moveEntry(childSpace.id, "docs/old.md", "archive");
+    .moveContentItem(childSpace.id, "docs/old.md", "archive");
 
-  expect(listEntries).not.toHaveBeenCalled();
-  expect(moveEntry).toHaveBeenCalledWith({
-    space: childSpace.path,
-    from: "docs/old.md",
-    toParent: "archive",
-    projectPath: rootSpace.path,
-  });
-  expect(listTreeChildren).toHaveBeenCalledTimes(2);
-  expect(listTreeChildren).toHaveBeenNthCalledWith(1, childSpace.path, "docs");
-  expect(listTreeChildren).toHaveBeenNthCalledWith(
-    2,
-    childSpace.path,
-    "archive",
-  );
+  expect(callsOf("list_content_tree")).toEqual([]);
+  expect(callsOf("move_content")).toEqual([
+    {
+      space: childSpace.path,
+      from: "docs/old.md",
+      toParent: "archive",
+      projectPath: rootSpace.path,
+    },
+  ]);
+  expect(callsOf("list_tree_children")).toEqual([
+    { space: childSpace.path, parentPath: "docs" },
+    { space: childSpace.path, parentPath: "archive" },
+  ]);
 });

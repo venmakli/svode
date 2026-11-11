@@ -7,8 +7,8 @@ import {
 test("space home selection does not create an active reveal target", () => {
   expect(
     getSpaceScopeActiveRevealKey({
-      activeDocument: null,
-      activeDocumentSpaceId: "root",
+      activeContentPath: null,
+      activeContentSpaceId: "root",
       activeRevealRequest: null,
       scopeId: "root",
     }),
@@ -16,8 +16,8 @@ test("space home selection does not create an active reveal target", () => {
 
   expect(
     getSpaceScopeActiveRevealKey({
-      activeDocument: "README.md",
-      activeDocumentSpaceId: "space-a",
+      activeContentPath: "README.md",
+      activeContentSpaceId: "space-a",
       activeRevealRequest: null,
       scopeId: "space-a",
     }),
@@ -27,8 +27,8 @@ test("space home selection does not create an active reveal target", () => {
 test("active reveal key is computed the same way for root and nested document routes", () => {
   expect(
     getSpaceScopeActiveRevealKey({
-      activeDocument: "docs/note.md",
-      activeDocumentSpaceId: "space-a",
+      activeContentPath: "docs/note.md",
+      activeContentSpaceId: "space-a",
       activeRevealRequest: {
         key: 1,
         path: "docs/note.md",
@@ -40,8 +40,8 @@ test("active reveal key is computed the same way for root and nested document ro
 
   expect(
     getSpaceScopeActiveRevealKey({
-      activeDocument: "README.md",
-      activeDocumentSpaceId: "space-a",
+      activeContentPath: "README.md",
+      activeContentSpaceId: "space-a",
       activeRevealRequest: {
         key: 2,
         path: "README.md",
@@ -53,8 +53,8 @@ test("active reveal key is computed the same way for root and nested document ro
 
   expect(
     getSpaceScopeActiveRevealKey({
-      activeDocument: "docs/note.md",
-      activeDocumentSpaceId: "space-a",
+      activeContentPath: "docs/note.md",
+      activeContentSpaceId: "space-a",
       activeRevealRequest: {
         key: 3,
         path: "docs/note.md",
