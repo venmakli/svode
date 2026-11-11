@@ -3,6 +3,12 @@ import type { InspectionItemStats } from "../api/inspection";
 
 export type ChangesFilter = "all" | FileGitState;
 
+/** The loaded statistics of the paths of a list, by path. */
+export type ChangesStats = Pick<
+  ReadonlyMap<string, InspectionItemStats>,
+  "get"
+>;
+
 export function filterChanges(
   paths: string[],
   files: ReadonlyMap<string, { state: FileGitState }>,
@@ -23,16 +29,13 @@ export function filterChanges(
   return { paths: filtered, counts };
 }
 
-export function summarizeChanges(
-  paths: string[],
-  stats: Readonly<Record<string, InspectionItemStats>>,
-) {
+export function summarizeChanges(paths: string[], stats: ChangesStats) {
   let additions = 0;
   let deletions = 0;
   let counted = 0;
   let pending = 0;
   for (const path of paths) {
-    const item = stats[path];
+    const item = stats.get(path);
     if (!item) pending++;
     else if (item.additions !== null && item.deletions !== null) {
       additions += item.additions;

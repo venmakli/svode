@@ -665,6 +665,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       { path: "removed.md", state: "deleted" },
     ];
     const allPaths = files.map((file) => file.path);
+    const initialFiles = files;
     const batches: number[] = [];
     let finishStats: (() => void) | undefined;
     const commits: unknown[] = [];
@@ -812,6 +813,21 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         spacePath: "/root-scope",
         filePaths: allPaths,
       });
+      // DF-276 R1: ⇧⌘S without the Sheet commits the same set in one call.
+      files = initialFiles;
+      const { commitSaveScopeAndMaybeSync } =
+        await import("@/features/git/editor");
+      await act(async () => {
+        await commitSaveScopeAndMaybeSync(
+          "/root-scope",
+          { kind: "space", path: "", label: "space" },
+          [],
+        );
+      });
+      expect(commits.length).toBe(2);
+      expect((commits[1] as { filePaths: string[] }).filePaths).toEqual(
+        committed.filePaths,
+      );
     } finally {
       await act(async () => {
         root.unmount();

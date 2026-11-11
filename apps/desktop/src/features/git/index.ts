@@ -55,6 +55,7 @@ export {
   isGitStatusPathDescendant,
   containerPathForNodePath,
 } from "./model/git-paths";
+export { gitStatusFileAt } from "./model/git-status-index";
 export { useRepositoryAccess } from "./hooks/use-repository-access";
 export { useRepositoryIds } from "./hooks/use-repository-ids";
 export {

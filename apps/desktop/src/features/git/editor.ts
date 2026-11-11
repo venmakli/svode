@@ -1,5 +1,5 @@
 import {
-  normalizeGitStatusPath,
+  gitStatusPathInConflict,
   useGitStore,
   type GitSaveScope,
   type GitStatus,
@@ -82,14 +82,7 @@ export function commitSaveScopeAndMaybeSync(
 
 /** Git holds the Page `path` of the Space unresolved, in a merge or without an operation. */
 export function gitPathInConflict(spacePath: string, path: string): boolean {
-  const normalized = normalizeGitStatusPath(path);
-  return Boolean(
-    getGitSpaceStatus(spacePath)?.files.some(
-      (file) =>
-        file.state === "conflict" &&
-        normalizeGitStatusPath(file.path) === normalized,
-    ),
-  );
+  return gitStatusPathInConflict(getGitSpaceStatus(spacePath), path);
 }
 
 /**

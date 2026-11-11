@@ -2,10 +2,10 @@ import { Accordion } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import type { GitConflictKind, GitStatus } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
-import type { InspectionItemStats } from "../api/inspection";
 import { useChangesItemNames } from "../hooks/use-changes-item-names";
 import type { useChangesAccordion } from "../hooks/use-changes-accordion";
 import type { ItemReader } from "../model/item-reader";
+import type { ChangesStats } from "../model/list-summary";
 import type { InspectionScope } from "../model/scope";
 import { ChangedItem } from "./changed-item";
 
@@ -22,7 +22,7 @@ export function ChangesItemList({
   accordion: ReturnType<typeof useChangesAccordion>;
   scope: InspectionScope;
   status: GitStatus;
-  stats: Record<string, InspectionItemStats>;
+  stats: ChangesStats;
   reader: ItemReader;
   ownerName: string;
   conflictKinds?: ReadonlyMap<string, GitConflictKind>;
@@ -47,7 +47,7 @@ export function ChangesItemList({
             state={files.get(path)!.state}
             status={status}
             expanded={accordion.expanded.includes(path)}
-            stats={stats[path]}
+            stats={stats.get(path)}
             conflictKind={conflictKinds?.get(path)}
           />
         ))}

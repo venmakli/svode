@@ -6,6 +6,7 @@ import {
   joinGitStatusPath,
   normalizeGitStatusPath,
 } from "./git-paths";
+import { gitStatusFileAt } from "./git-status-index";
 
 export type GitSaveScopeLabel = "page" | "folder" | "collection" | "space";
 
@@ -85,9 +86,7 @@ export function gitStatusHasDirtyPath(
 ): boolean {
   const normalized = normalizeGitStatusPath(path ?? "");
   if (!normalized) return false;
-  return (status?.files ?? []).some(
-    (file) => normalizeGitStatusPath(file.path) === normalized,
-  );
+  return gitStatusFileAt(status, normalized) !== undefined;
 }
 
 export function gitSaveScopeContainsPath(

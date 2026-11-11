@@ -20,12 +20,14 @@ test("filters count only the inspection scope and retain conflicts as their own 
 });
 
 test("summary distinguishes loading, unavailable files and known zero changes", () => {
-  const stats = {
-    a: { path: "a", additions: 7, deletions: 3 },
-    b: { path: "b", additions: 0, deletions: 0 },
-    c: { path: "c", additions: null, deletions: null },
-    outside: { path: "outside", additions: 999, deletions: 999 },
-  };
+  const stats = new Map(
+    [
+      { path: "a", additions: 7, deletions: 3 },
+      { path: "b", additions: 0, deletions: 0 },
+      { path: "c", additions: null, deletions: null },
+      { path: "outside", additions: 999, deletions: 999 },
+    ].map((item) => [item.path, item]),
+  );
   expect(summarizeChanges(["a", "b", "c", "pending"], stats)).toEqual({
     additions: 7,
     deletions: 3,

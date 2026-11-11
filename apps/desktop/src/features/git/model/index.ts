@@ -4,6 +4,7 @@ export * from "./sync-stop";
 export * from "./publication-block";
 export * from "./spaces-publication";
 export * from "./git-paths";
+export * from "./git-status-index";
 export * from "./save-scope";
 export * from "./save-shortcuts";
 export * from "./remote-auth";

@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type {
   FileGitState,
-  FileGitStatus,
   GitCloneProgress,
   GitStatus,
   GitStatusFailure,
@@ -15,6 +14,7 @@ import {
   isGitStatusPathDescendant,
   normalizeGitStatusPath,
 } from "./git-paths";
+import { gitStatusPathIndex } from "./git-status-index";
 
 /**
  * Per-space git state.
@@ -521,7 +521,7 @@ export function selectFileChangeIndicator(
   pendingWrite = false,
 ): FileChangeIndicator {
   return selectFileTargetChangeIndicator(state, spacePath, {
-    selfPaths: [filePath],
+    selfPath: filePath,
     pendingWrite,
   });
 }
@@ -537,7 +537,7 @@ export function selectTreeNodeChangeIndicator(
     : null;
 
   return selectFileTargetChangeIndicator(state, spacePath, {
-    selfPaths: [nodePath],
+    selfPath: nodePath,
     descendantPath: containerPath,
     pendingWrite: target.pendingWrite,
   });
@@ -548,13 +548,13 @@ export function selectSpaceRootChangeIndicator(
   spacePath: string,
 ): FileChangeIndicator {
   return selectFileTargetChangeIndicator(state, spacePath, {
-    selfPaths: ["README.md"],
+    selfPath: "README.md",
     descendantPath: "",
   });
 }
 
 interface FileTargetChangeInput {
-  selfPaths: string[];
+  selfPath: string;
   descendantPath?: string | null;
   pendingWrite?: boolean;
 }
@@ -565,36 +565,36 @@ function selectFileTargetChangeIndicator(
   target: FileTargetChangeInput,
 ): FileChangeIndicator {
   const status = state.statuses[spacePath];
-  const selfPaths = new Set(target.selfPaths.map(normalizeGitStatusPath));
+  const index = status ? gitStatusPathIndex(status) : undefined;
+  const selfPath = normalizeGitStatusPath(target.selfPath);
   const descendantPath =
     target.descendantPath == null
       ? null
       : normalizeGitStatusPath(target.descendantPath);
 
-  const selfFiles: FileGitStatus[] = [];
-  const descendantFiles: FileGitStatus[] = [];
-
-  for (const file of status?.files ?? []) {
-    const filePath = normalizeGitStatusPath(file.path);
-    if (selfPaths.has(filePath)) {
-      selfFiles.push(file);
-    } else if (
-      descendantPath !== null &&
-      isGitStatusPathDescendant(filePath, descendantPath)
-    ) {
-      descendantFiles.push(file);
-    }
-  }
+  const self = index?.paths.get(selfPath);
+  const folder =
+    descendantPath === null ? undefined : index?.folders.get(descendantPath);
+  // Files at the target's own path never count as its descendants.
+  const selfInFolder =
+    self &&
+    descendantPath !== null &&
+    isGitStatusPathDescendant(selfPath, descendantPath)
+      ? self
+      : undefined;
+  const selfCount = self?.files.length ?? 0;
+  const descendantCount =
+    (folder?.count ?? 0) - (selfInFolder?.files.length ?? 0);
 
   if (
-    selfFiles.some((file) => file.state === "conflict") ||
-    descendantFiles.some((file) => file.state === "conflict")
+    (self?.conflicts ?? 0) > 0 ||
+    (folder?.conflicts ?? 0) > (selfInFolder?.conflicts ?? 0)
   ) {
     return CONFLICT_FILE_INDICATOR;
   }
 
-  const hasSelfChanges = selfFiles.length > 0 || target.pendingWrite === true;
-  const hasDescendantChanges = descendantFiles.length > 0;
+  const hasSelfChanges = selfCount > 0 || target.pendingWrite === true;
+  const hasDescendantChanges = descendantCount > 0;
   if (hasSelfChanges || hasDescendantChanges) {
     const scope =
       hasSelfChanges && hasDescendantChanges
@@ -602,11 +602,10 @@ function selectFileTargetChangeIndicator(
         : hasSelfChanges
           ? "self"
           : "descendants";
-    const firstFile = selfFiles[0] ?? descendantFiles[0];
+    const firstFile =
+      self?.files[0] ?? (hasDescendantChanges ? folder?.first : undefined);
     return dirtyFileChangeIndicator(
-      target.pendingWrite && selfFiles.length === 0
-        ? "pending_write"
-        : "git_dirty",
+      target.pendingWrite && selfCount === 0 ? "pending_write" : "git_dirty",
       scope,
       firstFile?.state,
     );

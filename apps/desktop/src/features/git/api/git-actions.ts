@@ -229,12 +229,12 @@ export async function commitPathsAndMaybeSync(
   const targetPaths = uniqueGitStatusPaths(filePaths);
   if (targetPaths.length === 0) return null;
 
+  const targets = new Set(targetPaths);
   const previousDirtyPaths =
     useGitStore
       .getState()
       .statuses[spacePath]?.files.map((file) => file.path)
-      .filter((path) => targetPaths.includes(normalizeGitStatusPath(path))) ??
-    [];
+      .filter((path) => targets.has(normalizeGitStatusPath(path))) ?? [];
   let result: GitCommitResult;
   try {
     const saved = await commitGitPaths({
