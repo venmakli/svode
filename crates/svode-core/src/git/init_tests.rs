@@ -1,12 +1,14 @@
 #![cfg(unix)]
 //! Repositories Svode creates keep SHA-1 objects and take their first branch
-//! from the user's `init.defaultBranch`, else `main`.
+//! from the user's `init.defaultBranch`, else `main`; their `.gitignore` gets
+//! the system file rules once (DF-273 R2), an existing repository keeps its own.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::cli::GitCli;
-use super::ops::init_with_optional_scaffold_commit;
+use super::ops::{ensure_svode_gitignore, init_with_optional_scaffold_commit};
+use super::system_files::{RULES, assert_rules_above_local_block, has_any_rule};
 
 struct Machine {
     temp: tempfile::TempDir,
@@ -134,4 +136,144 @@ async fn reinitializing_keeps_the_format_and_branch_of_an_existing_repository() 
         machine.git(&repo, &["rev-parse", "--show-object-format"]),
         "sha256"
     );
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap()
+}
+
+#[tokio::test]
+async fn a_new_repository_ignores_system_files_from_its_scaffold_commit_on() {
+    let machine = Machine::new("");
+    let repo = machine.dir("project");
+
+    init_with_optional_scaffold_commit(&machine.cli, &repo, true)
+        .await
+        .unwrap();
+
+    let gitignore = read(&repo.join(".gitignore"));
+    assert_rules_above_local_block(&gitignore);
+    assert!(
+        gitignore.starts_with("# Files that operating systems"),
+        "{gitignore}"
+    );
+    assert!(
+        machine
+            .git(&repo, &["show", "--name-only", "--format=", "HEAD"])
+            .lines()
+            .any(|path| path == ".gitignore")
+    );
+    assert_eq!(
+        machine.git(&repo, &["show", "HEAD:.gitignore"]),
+        gitignore.trim_end()
+    );
+
+    // Files of the systems and office lock files stay out of Git at any
+    // depth; lock files of projects and temporary files do not.
+    for file in [
+        ".DS_Store",
+        "docs/.DS_Store",
+        "Thumbs.db",
+        "docs/desktop.ini",
+        "~$report.docx",
+        "docs/.~lock.report.docx#",
+        "._photo.png",
+        "Cargo.lock",
+        "bun.lock",
+        "draft.tmp",
+    ] {
+        let path = repo.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
+    }
+    let mut status = machine
+        .git(&repo, &["status", "--porcelain", "--untracked-files=all"])
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    status.sort();
+    assert_eq!(status, ["?? Cargo.lock", "?? bun.lock", "?? draft.tmp"]);
+}
+
+#[tokio::test]
+async fn a_folder_with_its_own_gitignore_gets_only_the_missing_rules() {
+    let machine = Machine::new("");
+    let repo = machine.dir("notes");
+    std::fs::write(
+        repo.join(".gitignore"),
+        "target/\r\n!desktop.ini\r\n.DS_Store",
+    )
+    .unwrap();
+
+    machine.init(&repo).await;
+
+    let gitignore = read(&repo.join(".gitignore"));
+    assert!(
+        gitignore.starts_with("target/\r\n!desktop.ini\r\n.DS_Store\r\n\r\n# Files"),
+        "{gitignore}"
+    );
+    assert_eq!(gitignore.matches(".DS_Store").count(), 1, "{gitignore}");
+    assert!(!gitignore.replace("\r\n", "").contains('\n'), "{gitignore}");
+    // The user's negation keeps `desktop.ini` in Git.
+    assert!(
+        !gitignore.lines().any(|line| line.trim() == "desktop.ini"),
+        "{gitignore}"
+    );
+    std::fs::write(repo.join("desktop.ini"), "x").unwrap();
+    assert_eq!(
+        machine.git(
+            &repo,
+            &[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "desktop.ini"
+            ]
+        ),
+        "?? desktop.ini"
+    );
+    for rule in RULES.iter().filter(|rule| **rule != "desktop.ini") {
+        assert!(gitignore.lines().any(|line| line.trim() == *rule), "{rule}");
+    }
+}
+
+#[tokio::test]
+async fn the_rules_are_written_once_and_a_deleted_one_stays_deleted() {
+    let machine = Machine::new("");
+    let repo = machine.dir("project");
+    machine.init(&repo).await;
+    let gitignore = repo.join(".gitignore");
+    let trimmed = read(&gitignore).replace(".DS_Store\n", "");
+    std::fs::write(&gitignore, &trimmed).unwrap();
+
+    // Neither the local block repair nor a later `git init` of the existing
+    // repository brings the rule back or adds the others again.
+    assert!(!ensure_svode_gitignore(&repo).unwrap());
+    machine.init(&repo).await;
+
+    assert_eq!(read(&gitignore), trimmed);
+    for rule in RULES.iter().filter(|rule| **rule != ".DS_Store") {
+        assert_eq!(
+            trimmed.lines().filter(|line| line == rule).count(),
+            1,
+            "{rule}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_existing_repository_keeps_its_gitignore_without_the_rules() {
+    let machine = Machine::new("");
+    let repo = machine.dir("existing");
+    machine.git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join(".gitignore"), "build/\n").unwrap();
+
+    machine.init(&repo).await;
+
+    let gitignore = read(&repo.join(".gitignore"));
+    assert!(
+        gitignore.starts_with("build/\n# svode:local:start\n"),
+        "{gitignore}"
+    );
+    assert!(!has_any_rule(&gitignore), "{gitignore}");
 }

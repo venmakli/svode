@@ -183,7 +183,9 @@ async fn a_new_folder_gets_the_scaffold_a_repository_and_a_registration_without_
         "sha1"
     );
     assert_eq!(commit_count(&path), 0);
-    assert!(path.join(".gitignore").is_file());
+    crate::git::system_files::assert_rules_above_local_block(
+        &std::fs::read_to_string(path.join(".gitignore")).unwrap(),
+    );
     let mut changed = created.changed_paths.clone();
     changed.sort();
     let mut expected = vec![
@@ -273,8 +275,13 @@ async fn an_existing_repository_is_prepared_without_git_init_or_commit() {
     let status = stdout(git(&path, &["status", "--porcelain", "-uall"]));
     assert!(!status.contains("local.json"), "{status}");
     assert!(status.contains(".svode/config.json"), "{status}");
-    // The preparation wrote `.gitignore`, so the answer names it.
-    assert!(path.join(".gitignore").is_file());
+    // The preparation wrote `.gitignore`, so the answer names it; the
+    // system file rules are only for a repository Svode creates.
+    let gitignore = std::fs::read_to_string(path.join(".gitignore")).unwrap();
+    assert!(
+        !crate::git::system_files::has_any_rule(&gitignore),
+        "{gitignore}"
+    );
     let mut changed = created.changed_paths.clone();
     changed.sort();
     let mut expected = vec![

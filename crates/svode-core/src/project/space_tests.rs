@@ -241,6 +241,7 @@ async fn each_type_writes_its_scaffold_and_git_effects_without_a_commit() {
     assert!(notes.join(".svode/local.json").is_file());
     assert!(notes.join("README.md").is_file());
     assert!(!notes.join(".git").exists());
+    assert!(!notes.join(".gitignore").exists());
     assert!(space_config::read(&notes).unwrap().assets.is_none());
     let gitignore = std::fs::read_to_string(f.root.join(".gitignore")).unwrap();
     assert!(gitignore.contains("*/.svode/local.json"), "{gitignore}");
@@ -286,7 +287,9 @@ async fn each_type_writes_its_scaffold_and_git_effects_without_a_commit() {
                 .trim(),
             "fixture@example.test"
         );
-        assert!(dir.join(".gitignore").is_file());
+        crate::git::system_files::assert_rules_above_local_block(
+            &std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+        );
         assert!(!outcome.storage.inherited);
         let new = &outcome.repositories[1];
         assert_eq!(new.path, space);

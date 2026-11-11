@@ -180,6 +180,7 @@ pub async fn init_with_optional_scaffold_commit(
     space_dir: &Path,
     commit_scaffold: bool,
 ) -> Result<(), GitError> {
+    let created = space_dir.join(".git").symlink_metadata().is_err();
     let out = init_repository(cli, space_dir).await?;
     if out.exit_code != 0 {
         return Err(GitError::GitCommandFailed(format!(
@@ -192,6 +193,11 @@ pub async fn init_with_optional_scaffold_commit(
     cli.exec(space_dir, &["config", "core.quotePath", "false"])
         .await?;
 
+    // Only a repository Svode creates gets the rules, once: an existing one
+    // keeps its `.gitignore`.
+    if created {
+        add_system_file_rules(space_dir)?;
+    }
     ensure_svode_gitignore(space_dir)?;
 
     if commit_scaffold {
@@ -953,6 +959,41 @@ pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, GitError> {
     }
     std::fs::write(&gitignore, updated)?;
     Ok(true)
+}
+
+/// Append the rules of `system_files::RULES` that `.gitignore` lacks, as
+/// plain lines under a comment outside every Svode block. A rule the file
+/// already negates is left out, so the user's `!rule` keeps the file in Git.
+/// Svode writes them once, when it creates the repository, and never
+/// restores them.
+fn add_system_file_rules(space_dir: &Path) -> Result<(), GitError> {
+    let gitignore = space_dir.join(".gitignore");
+    let content = read_gitignore(&gitignore)?;
+    let (lines, eol) = gitignore_lines(&content);
+    let present = lines
+        .iter()
+        .map(|line| line_text(line).trim())
+        .collect::<std::collections::HashSet<_>>();
+    let missing = super::system_files::RULES
+        .iter()
+        .filter(|rule| !present.contains(*rule) && !present.contains(format!("!{rule}").as_str()))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut section = String::new();
+    if !content.is_empty() {
+        section.push_str(eol);
+    }
+    section.push_str(super::system_files::GITIGNORE_COMMENT);
+    section.push_str(eol);
+    for rule in missing {
+        section.push_str(rule);
+        section.push_str(eol);
+    }
+    section.push_str(eol);
+    std::fs::write(&gitignore, append_block(&content, &section, eol))?;
+    Ok(())
 }
 
 const LOCAL_BLOCK: (&str, &str) = ("# svode:local:start", "# svode:local:end");

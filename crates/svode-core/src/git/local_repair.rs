@@ -343,6 +343,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repair_neither_adds_nor_restores_system_file_rules() {
+        let cli = cli();
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        ops::init_with_optional_scaffold_commit(&cli, root, false)
+            .await
+            .unwrap();
+        git(&cli, root, &["config", "user.name", "Test"]).await;
+        git(&cli, root, &["config", "user.email", "test@example.test"]).await;
+        git(&cli, root, &["config", "commit.gpgsign", "false"]).await;
+        let gitignore = root.join(".gitignore");
+        let trimmed = std::fs::read_to_string(&gitignore)
+            .unwrap()
+            .replace("Thumbs.db\n", "");
+        write(root, ".gitignore", &trimmed);
+        git(&cli, root, &["add", "-A"]).await;
+        git(&cli, root, &["commit", "-qm", "Drop a rule"]).await;
+
+        assert_eq!(
+            repair(&cli, root, false).await.unwrap(),
+            RepairOutcome::Unchanged
+        );
+        assert_eq!(std::fs::read_to_string(&gitignore).unwrap(), trimmed);
+
+        // A cloned or existing repository without the rules keeps its file.
+        let existing = repo(&cli, true).await;
+        write(existing.path(), ".gitignore", "build/\n");
+        repair(&cli, existing.path(), false).await.unwrap();
+        let repaired = std::fs::read_to_string(existing.path().join(".gitignore")).unwrap();
+        assert!(
+            !crate::git::system_files::has_any_rule(&repaired),
+            "{repaired}"
+        );
+    }
+
+    #[tokio::test]
     async fn denied_unsafe_and_failed_repairs_preserve_bytes_and_retry() {
         let cli = cli();
         let root = repo(&cli, true).await;

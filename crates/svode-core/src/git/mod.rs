@@ -51,6 +51,7 @@ pub(crate) mod staging_tests;
 pub mod state;
 pub mod status;
 pub mod sync;
+pub mod system_files;
 pub mod upstream;
 pub mod version;
 pub mod versions;
