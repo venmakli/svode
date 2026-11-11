@@ -306,7 +306,7 @@ fn assign_unique_id_to_file(
         }
     };
     let changed = if force {
-        force_assign_unique_id_to_meta(space, &rel, &mut meta)?
+        force_assign_unique_id_to_meta_for_path(space, &rel, &mut meta)?
     } else {
         assign_unique_id_to_meta_for_path(space, &rel, &mut meta)?
     };
@@ -324,7 +324,9 @@ pub fn assign_unique_id_to_meta_for_path(
     assign_unique_id_to_meta_inner(space, file_path, meta, false)
 }
 
-fn force_assign_unique_id_to_meta(
+/// A new number for the item at `file_path` even when `meta` already holds a
+/// valid one, such as a value copied from a template.
+pub fn force_assign_unique_id_to_meta_for_path(
     space: &str,
     file_path: &str,
     meta: &mut PageMeta,

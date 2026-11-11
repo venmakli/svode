@@ -7,6 +7,7 @@ use crate::page::PageError;
 use crate::page::filename;
 use crate::page::frontmatter::{self, FrontmatterFields};
 use crate::page::store::{self, Page, PageMeta};
+use crate::page::write::SourceSnapshot;
 
 use crate::collections::engine::{
     README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
@@ -220,45 +221,52 @@ fn instantiate_inner(
 
     validate_contextual_defaults(space, &head_rel, &contextual_defaults)?;
 
-    if hierarchy {
-        instantiate_hierarchy(
-            space,
-            &source,
-            &dest_root_abs,
-            &head_abs,
-            &head_rel,
-            &root_title,
-            &contextual_defaults,
-        )?;
-        append_order(
-            Path::new(space),
-            &parent_rel,
-            &dest_root_abs
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy(),
-        );
-    } else {
-        fs::copy(&source.head_abs, &head_abs)?;
-        rewrite_markdown_identities(
-            &[head_abs.clone()],
-            Some(&head_abs),
-            Some(&root_title),
-            Some((space, head_rel.as_str())),
-            Some(&contextual_defaults),
-            None,
-        )?;
-        engine::rewrite_internal_relation_refs_for_copy(
-            space,
-            &rel_from_abs(Path::new(space), &source.root_abs),
-            &rel_from_abs(Path::new(space), &head_abs),
-        )?;
-        append_order(
-            Path::new(space),
-            &parent_rel,
-            &head_abs.file_name().unwrap_or_default().to_string_lossy(),
-        );
-    }
+    // The record's number advances `next`; a failed instantiation restores it.
+    let counter = engine::unique_id_schema_path_for_item(space, &head_rel)?;
+    let counter = SourceSnapshot::capture(counter.as_slice(), None)?;
+    let written = (|| -> Result<(), PageError> {
+        if hierarchy {
+            instantiate_hierarchy(
+                space,
+                &source,
+                &dest_root_abs,
+                &head_abs,
+                &head_rel,
+                &root_title,
+                &contextual_defaults,
+            )?;
+            append_order(
+                Path::new(space),
+                &parent_rel,
+                &dest_root_abs
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+            );
+        } else {
+            fs::copy(&source.head_abs, &head_abs)?;
+            rewrite_markdown_identities(
+                &[head_abs.clone()],
+                Some(&head_abs),
+                Some(&root_title),
+                Some((space, head_rel.as_str())),
+                Some(&contextual_defaults),
+                None,
+            )?;
+            engine::rewrite_internal_relation_refs_for_copy(
+                space,
+                &rel_from_abs(Path::new(space), &source.root_abs),
+                &rel_from_abs(Path::new(space), &head_abs),
+            )?;
+            append_order(
+                Path::new(space),
+                &parent_rel,
+                &head_abs.file_name().unwrap_or_default().to_string_lossy(),
+            );
+        }
+        Ok(())
+    })();
+    written.map_err(|error| counter.rollback(error))?;
 
     let mut page = store::read(space, &head_rel)?;
     page.warnings.extend(store::filename_allocation_warnings(
@@ -325,6 +333,154 @@ mod tests {
         .unwrap();
         assert_eq!(unicode.page.path, "collection/日本語 Template 🚀.md");
         assert!(unicode.page.warnings.is_empty());
+    }
+
+    #[test]
+    fn template_records_take_the_next_unique_id_and_replace_the_template_value() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy().to_string();
+        fs::create_dir(tmp.path().join("tasks")).unwrap();
+        fs::write(
+            tmp.path().join("tasks/schema.yaml"),
+            "columns:\n  - { name: Key, type: unique_id, prefix: TASK, next: 5 }\nviews: []\n",
+        )
+        .unwrap();
+        create(&space, "tasks", "Note", TemplateKind::Leaf).unwrap();
+        create(&space, "tasks", "Kickoff", TemplateKind::Folder).unwrap();
+        fs::write(
+            tmp.path().join("tasks/.templates/kickoff/agenda.md"),
+            "---\ntitle: Agenda\n---\nAgenda body",
+        )
+        .unwrap();
+        create(&space, "tasks", "Preset", TemplateKind::Leaf).unwrap();
+        let preset = tmp.path().join("tasks/.templates/preset.md");
+        let mut preset_doc = read_markdown_doc(&preset).unwrap();
+        preset_doc
+            .meta
+            .extra
+            .insert("Key".into(), serde_norway::Value::Number(42.into()));
+        fs::write(&preset, frontmatter::serialize(&preset_doc.meta, "")).unwrap();
+
+        let key = |page: &Page| page.meta.extra.get("Key").cloned();
+        let number = |value: u64| Some(serde_norway::Value::Number(value.into()));
+        let note = instantiate(
+            &space,
+            "tasks",
+            "note",
+            "tasks",
+            Some("Note".into()),
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(key(&note.page), number(5));
+        let kickoff = instantiate(
+            &space,
+            "tasks",
+            "kickoff",
+            "tasks",
+            Some("Kickoff".into()),
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(kickoff.page.path, "tasks/Kickoff/README.md");
+        assert_eq!(key(&kickoff.page), number(6));
+        let agenda = store::read(&space, "tasks/Kickoff/agenda.md").unwrap();
+        assert!(!agenda.meta.extra.contains_key("Key"));
+        let preset = instantiate(
+            &space,
+            "tasks",
+            "preset",
+            "tasks",
+            Some("Preset".into()),
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(key(&preset.page), number(7));
+        let forced = instantiate(
+            &space,
+            "tasks",
+            "note",
+            "tasks",
+            Some("Forced".into()),
+            true,
+            true,
+            None,
+        )
+        .unwrap();
+        assert_eq!(forced.page.path, "tasks/Forced/README.md");
+        assert_eq!(key(&forced.page), number(8));
+
+        let next = engine::read_collection_schema(&space, "tasks")
+            .unwrap()
+            .columns
+            .into_iter()
+            .find(|column| column.name == "Key")
+            .and_then(|column| column.next);
+        assert_eq!(next, Some(9));
+        let template = store::read(&space, "tasks/.templates/preset.md").unwrap();
+        assert_eq!(key(&template), number(42));
+
+        fs::create_dir(tmp.path().join("notes")).unwrap();
+        engine::write_default_collection_schema(&space, "notes").unwrap();
+        create(&space, "notes", "Plain", TemplateKind::Leaf).unwrap();
+        let schema_before = fs::read(tmp.path().join("notes/schema.yaml")).unwrap();
+        let plain = instantiate(
+            &space,
+            "notes",
+            "plain",
+            "notes",
+            Some("Plain".into()),
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(!plain.page.meta.extra.contains_key("Key"));
+        assert_eq!(
+            fs::read(tmp.path().join("notes/schema.yaml")).unwrap(),
+            schema_before
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_template_record_keeps_the_unique_id_counter() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy().to_string();
+        fs::create_dir(tmp.path().join("tasks")).unwrap();
+        let schema_path = tmp.path().join("tasks/schema.yaml");
+        fs::write(
+            &schema_path,
+            "columns:\n  - { name: Key, type: unique_id, next: 5 }\nviews: []\n",
+        )
+        .unwrap();
+        create(&space, "tasks", "Note", TemplateKind::Leaf).unwrap();
+        // The copied record keeps the template's mode, so writing it fails
+        // after its number was allocated.
+        let template = tmp.path().join("tasks/.templates/note.md");
+        fs::set_permissions(&template, fs::Permissions::from_mode(0o444)).unwrap();
+        let before = fs::read(&schema_path).unwrap();
+
+        let failed = instantiate(
+            &space,
+            "tasks",
+            "note",
+            "tasks",
+            Some("Note".into()),
+            true,
+            false,
+            None,
+        );
+        assert!(failed.is_err());
+        assert_eq!(fs::read(&schema_path).unwrap(), before);
     }
 
     #[test]
@@ -455,6 +611,8 @@ fn rewrite_markdown_identities(
                         defaults,
                     )?;
                 }
+                // A number copied from the template file is not the record's.
+                engine::force_assign_unique_id_to_meta_for_path(space, rel_path, &mut doc.meta)?;
             }
         }
 

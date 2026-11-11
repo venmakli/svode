@@ -65,8 +65,9 @@ mod defaults;
 pub use defaults::{
     apply_contextual_defaults_for_path, apply_contextual_defaults_for_path_strict,
     apply_schema_defaults_for_path, apply_schema_defaults_to_item_tree, assign_unique_id,
-    assign_unique_id_to_meta_for_path, assign_unique_ids_to_item_tree, normalize_unique_id_counter,
-    reassign_unique_ids, unique_id_mutation_paths_for_item, unique_id_mutation_paths_for_item_tree,
+    assign_unique_id_to_meta_for_path, assign_unique_ids_to_item_tree,
+    force_assign_unique_id_to_meta_for_path, normalize_unique_id_counter, reassign_unique_ids,
+    unique_id_mutation_paths_for_item, unique_id_mutation_paths_for_item_tree,
     unique_id_schema_path_for_item,
 };
 use defaults::{dedupe_paths, materialize_unique_id_column};
