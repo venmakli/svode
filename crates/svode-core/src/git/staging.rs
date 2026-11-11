@@ -10,6 +10,7 @@ use super::GitError;
 use super::cli::{GitCli, GitOutput, literal_pathspec_input, literal_pathspecs, nul_paths_input};
 use super::diagnostics::{GitFailure, GitStage, HookTrace, repository_name};
 use crate::git::path::{RootMode, normalize_repo_relative};
+use crate::storage::policy::StoragePolicyError;
 
 /// Presence of repository paths by their exact spelling. A case-insensitive
 /// file system also resolves the old spelling of a case-only relocation, so a
@@ -209,11 +210,33 @@ fn covered(set: &HashSet<&str>, path: &str) -> bool {
     }
 }
 
-/// Enumerate through Git, which owns ignore rules, tracked deletions and repository boundaries.
+/// Enumerate through Git, which owns ignore rules, tracked deletions and
+/// repository boundaries, the paths a commit of Svode stages for `requested`.
+/// Under the `local` strategy its large untracked files first get their exact
+/// rules (DF-305 R4б) and stay out; the rewritten `.gitignore` joins them.
 pub async fn resolve(
     cli: &GitCli,
     repo: &Path,
     requested: &[String],
+) -> Result<Vec<String>, GitError> {
+    expand(cli, repo, requested, true).await
+}
+
+/// [`resolve`] that writes no rule, for a scope check before a commit that
+/// resolves again.
+pub(crate) async fn resolve_unheld(
+    cli: &GitCli,
+    repo: &Path,
+    requested: &[String],
+) -> Result<Vec<String>, GitError> {
+    expand(cli, repo, requested, false).await
+}
+
+async fn expand(
+    cli: &GitCli,
+    repo: &Path,
+    requested: &[String],
+    hold: bool,
 ) -> Result<Vec<String>, GitError> {
     let scopes = requested
         .iter()
@@ -233,6 +256,12 @@ pub async fn resolve(
             ));
         }
     }
+    let local = crate::storage::local_rules::hold_large_untracked(cli, repo, &scopes, hold)
+        .await
+        .map_err(|error| match error {
+            StoragePolicyError::Git(error) => error,
+            _ => failure(repo, GitStage::Prepare, "inventory_failed", None, &scopes),
+        })?;
     let mut entries = read_paths(
         cli,
         repo,
@@ -295,7 +324,15 @@ pub async fn resolve(
                 .cloned()
                 .collect();
         }
-        if matches.is_empty() && scope != "." && !scope.is_empty() && !repo.join(&scope).is_dir() {
+        // An untracked file the `local` rules keep out of Git has nothing to
+        // commit, even when a status read before its rule names it.
+        if matches.is_empty()
+            && scope != "."
+            && !scope.is_empty()
+            && !repo.join(&scope).is_dir()
+            && !(repo.join(&scope).is_file()
+                && local.as_ref().is_some_and(|local| local.keeps(&scope)))
+        {
             return Err(failure(
                 repo,
                 GitStage::Prepare,
@@ -308,6 +345,13 @@ pub async fn resolve(
             if !super::policy::contains(&path) {
                 selected.insert(path);
             }
+        }
+    }
+    if let Some(local) = &local {
+        // A nested rule of the user may still show a held file to Git.
+        selected.retain(|path| !local.held().contains(path));
+        if local.written() {
+            selected.insert(".gitignore".to_string());
         }
     }
     let selected = selected.into_iter().collect::<Vec<_>>();

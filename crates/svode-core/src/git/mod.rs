@@ -14,6 +14,8 @@ pub mod host;
 mod init_tests;
 pub mod last_sync;
 #[cfg(test)]
+mod local_hold_tests;
+#[cfg(test)]
 mod local_policy_tests;
 pub mod local_repair;
 pub mod markers;

@@ -8,10 +8,13 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::git::GitError;
-use crate::git::cli::GitCli;
+use crate::git::cli::{GitCli, literal_pathspecs};
+use crate::git::staging::read_paths;
 
-use super::config::{AssetsStrategy, read_space_assets_config};
-use super::policy::{self, StoragePolicyError, case_insensitive_extension_pattern};
+use super::config::{AssetsSpaceConfig, AssetsStrategy, read_space_assets_config};
+use super::policy::{
+    self, ManagedBinaryRoute, StoragePolicyError, case_insensitive_extension_pattern,
+};
 use super::routes::{
     LOCAL_PATHS_END, LOCAL_PATHS_START, append_block, normalize_trailing_newline,
     parse_managed_paths, read_or_empty, rewrite_managed_path_block, strip_block, write_or_remove,
@@ -143,6 +146,128 @@ pub async fn local_gitignore(
         )
     };
     Ok(rewrite_local_extensions_block(&next, Some(extensions)))
+}
+
+/// The `local` strategy of one repository as a commit of Svode sees it, once
+/// [`hold_large_untracked`] gave its large untracked files their exact rules.
+pub struct LocalHold {
+    assets: AssetsSpaceConfig,
+    exact: BTreeSet<String>,
+    held: BTreeSet<String>,
+    written: bool,
+}
+
+impl LocalHold {
+    /// Untracked paths of the commit scopes that got an exact rule now and
+    /// stay out of the commit.
+    pub fn held(&self) -> &BTreeSet<String> {
+        &self.held
+    }
+
+    /// Whether `.gitignore` was rewritten for them.
+    pub fn written(&self) -> bool {
+        self.written
+    }
+
+    /// Whether the `local` rules keep the untracked file at `path` out of
+    /// Git: its exact rule or the extension block.
+    pub fn keeps(&self, path: &str) -> bool {
+        self.exact.contains(path)
+            || matches!(
+                policy::evaluate_managed_binary_route(&self.assets, path, 0),
+                Ok(ManagedBinaryRoute::LocalExtension)
+            )
+    }
+}
+
+/// Before a commit of Svode stages `scopes` (repository relative, `.` for
+/// all): when the repository's own config sets the `local` strategy and
+/// `hold` is set, each untracked file under them with an extension outside the
+/// effective list and a size of at least the threshold gets an exact rule,
+/// written with the cleanup of gone paths and the extension block. `None` for
+/// another or a newer strategy and for a repository without a Svode config;
+/// nothing is written when no file needs a rule.
+pub async fn hold_large_untracked(
+    cli: &GitCli,
+    repo_dir: &Path,
+    scopes: &[String],
+    hold: bool,
+) -> Result<Option<LocalHold>, StoragePolicyError> {
+    let Ok(config) = read_space_assets_config(repo_dir) else {
+        return Ok(None);
+    };
+    let assets = config.assets.unwrap_or_default();
+    if assets.strategy != AssetsStrategy::Local {
+        return Ok(None);
+    }
+    let Ok(routing) = policy::supported_binary_routing(&assets) else {
+        return Ok(None);
+    };
+    let path = repo_dir.join(".gitignore");
+    let current = read_or_empty(&path)?;
+    let mut held = BTreeSet::new();
+    if let Some(threshold) = routing.lfs_threshold_bytes
+        && hold
+        && !scopes.is_empty()
+    {
+        for candidate in untracked_under(cli, repo_dir, scopes).await? {
+            let Ok(metadata) = repo_dir.join(&candidate).symlink_metadata() else {
+                continue;
+            };
+            if metadata.is_file()
+                && metadata.len() >= threshold
+                && policy::evaluate_managed_binary_route(&assets, &candidate, metadata.len())?
+                    == ManagedBinaryRoute::LocalThreshold
+            {
+                held.insert(candidate);
+            }
+        }
+    }
+    let (exact, written) = if held.is_empty() {
+        // Only a commit that holds a file rewrites the rules; a malformed
+        // block of a commit that holds none is left for the user.
+        let exact =
+            parse_managed_paths(&current, LOCAL_PATHS_START, LOCAL_PATHS_END).unwrap_or_default();
+        (exact, false)
+    } else {
+        let extensions = policy::effective_local_extensions(&routing);
+        let added = held.iter().cloned().collect::<Vec<_>>();
+        let next = local_gitignore(cli, repo_dir, &current, &extensions, &added).await?;
+        let written = next != current;
+        if written {
+            write_or_remove(&path, &next)?;
+        }
+        (
+            parse_managed_paths(&next, LOCAL_PATHS_START, LOCAL_PATHS_END)?,
+            written,
+        )
+    };
+    Ok(Some(LocalHold {
+        assets,
+        exact,
+        held,
+        written,
+    }))
+}
+
+/// Untracked, not ignored files at or under `scopes`.
+async fn untracked_under(
+    cli: &GitCli,
+    repo_dir: &Path,
+    scopes: &[String],
+) -> Result<BTreeSet<String>, StoragePolicyError> {
+    let base = ["ls-files", "--others", "--exclude-standard", "-z"];
+    if scopes.iter().any(|scope| scope.is_empty() || scope == ".") {
+        return Ok(read_paths(cli, repo_dir, &base).await?);
+    }
+    let mut args = base.to_vec();
+    args.push("--");
+    let literals = literal_pathspecs(scopes);
+    let mut paths = BTreeSet::new();
+    for batch in cli.path_batches(&args, &literals) {
+        paths.extend(read_paths(cli, repo_dir, &batch).await?);
+    }
+    Ok(paths)
 }
 
 /// Bring the `local` rules of the repository at `repo_dir` up to date when

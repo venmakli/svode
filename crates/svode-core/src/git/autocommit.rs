@@ -607,7 +607,7 @@ async fn after_pending_creations(
     if creations.is_empty() {
         return Ok((scopes, None));
     }
-    let files = super::staging::resolve(cli, repo, &scopes).await?;
+    let files = super::staging::resolve_unheld(cli, repo, &scopes).await?;
     if !files.iter().any(|path| held(&creations, path)) {
         return Ok((scopes, None));
     }
