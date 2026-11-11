@@ -1338,6 +1338,7 @@
   "view_query_group_by_field": "По полю",
   "view_query_shared_changed_notice": "Shared view изменился, локальный query всё ещё применён.",
   "view_query_local_notice": "Локальные query-правки видны только вам, пока не сохранены.",
+  "view_query_local_changes_indicator": "Изменено только у вас",
   "collection_add_view": "Добавить вид",
   "collection_manage_views": "Управлять видами",
   "collection_more_views": "Ещё виды",

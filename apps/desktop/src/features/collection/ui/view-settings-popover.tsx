@@ -140,6 +140,8 @@ export function ViewSettingsPopover({
     onUpdateView,
     onSchemaChange,
   });
+  // A view this version cannot show offers no query to save.
+  const localChanges = query.hasLocalChanges && !newer;
   const selectedColumn = schema.columns.find(
     (column) => column.name === selectedProperty,
   );
@@ -151,6 +153,8 @@ export function ViewSettingsPopover({
     query,
     addFilterRule,
     openExistingFilter,
+    onSchemaChange,
+    readOnly,
   });
   const filterEditorPane = ViewSettingsFilterEditorPane({
     schema,
@@ -169,6 +173,8 @@ export function ViewSettingsPopover({
     query,
     addSortRule,
     openExistingSort,
+    onSchemaChange,
+    readOnly,
   });
   const sortEditorPane = ViewSettingsSortEditorPane({
     query,
@@ -287,6 +293,7 @@ export function ViewSettingsPopover({
       content: filterPane.content,
       footer: filterPane.footer,
       footerSeparator: false,
+      notice: filterPane.notice,
     },
     {
       id: "filterField" as const,
@@ -312,6 +319,7 @@ export function ViewSettingsPopover({
       content: sortPane.content,
       footer: sortPane.footer,
       footerSeparator: false,
+      notice: sortPane.notice,
     },
     {
       id: "sortField" as const,
@@ -355,7 +363,7 @@ export function ViewSettingsPopover({
             size="icon-sm"
             disabled={readOnly}
             className={cn(
-              "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground",
+              "relative rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground",
               open &&
                 pane === "main" &&
                 "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
@@ -363,6 +371,18 @@ export function ViewSettingsPopover({
           >
             <Settings />
             <span className="sr-only">{m.view_query_settings_title()}</span>
+            {localChanges ? (
+              <>
+                <span
+                  aria-hidden
+                  data-local-query-changes
+                  className="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
+                />
+                <span className="sr-only">
+                  {m.view_query_local_changes_indicator()}
+                </span>
+              </>
+            ) : null}
           </Button>
         }
         panes={newer ? [mainPane] : panes}

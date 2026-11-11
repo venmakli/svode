@@ -25,11 +25,15 @@ export function ViewSettingsFilterPane({
   query,
   addFilterRule,
   openExistingFilter,
+  onSchemaChange,
+  readOnly,
 }: {
   schema: CollectionSchema;
   query: UseViewQueryResult;
   addFilterRule: () => void;
   openExistingFilter: (filter: QueryFilter, index: number) => void;
+  onSchemaChange: (schema: CollectionSchema) => void;
+  readOnly: boolean;
 }) {
   return {
     content: (
@@ -50,11 +54,22 @@ export function ViewSettingsFilterPane({
       />
     ),
     footer: (
-      <QueryAddButton
-        label={m.collection_add_filter()}
-        onClick={addFilterRule}
-      />
+      <div className="flex flex-col gap-1">
+        <QueryAddButton
+          label={m.collection_add_filter()}
+          onClick={addFilterRule}
+        />
+        {!readOnly ? (
+          <SaveButton
+            query={query}
+            onSaved={(nextSchema) =>
+              onSchemaChange(normalizeSchema(nextSchema))
+            }
+          />
+        ) : null}
+      </div>
     ),
+    notice: localQueryNotice(query),
   };
 }
 
@@ -145,11 +160,15 @@ export function ViewSettingsSortPane({
   query,
   addSortRule,
   openExistingSort,
+  onSchemaChange,
+  readOnly,
 }: {
   schema: CollectionSchema;
   query: UseViewQueryResult;
   addSortRule: () => void;
   openExistingSort: (sort: QuerySort, index: number) => void;
+  onSchemaChange: (schema: CollectionSchema) => void;
+  readOnly: boolean;
 }) {
   return {
     content: (
@@ -172,8 +191,19 @@ export function ViewSettingsSortPane({
       />
     ),
     footer: (
-      <QueryAddButton label={m.collection_add_sort()} onClick={addSortRule} />
+      <div className="flex flex-col gap-1">
+        <QueryAddButton label={m.collection_add_sort()} onClick={addSortRule} />
+        {!readOnly ? (
+          <SaveButton
+            query={query}
+            onSaved={(nextSchema) =>
+              onSchemaChange(normalizeSchema(nextSchema))
+            }
+          />
+        ) : null}
+      </div>
     ),
+    notice: localQueryNotice(query),
   };
 }
 
@@ -271,4 +301,9 @@ export function ViewSettingsGroupPane({
       />
     ) : null,
   };
+}
+
+/** The filter and sort lists tell that a local query is not shared yet. */
+function localQueryNotice(query: UseViewQueryResult) {
+  return query.hasLocalChanges ? m.view_query_local_notice() : null;
 }
