@@ -765,7 +765,8 @@ impl Serialize for AppError {
                 }
                 value.serialize(serializer)
             }
-            AppError::SourceBusy { path }
+            AppError::FileAlreadyExists(path)
+            | AppError::SourceBusy { path }
             | AppError::SourceStale { path }
             | AppError::TreeOrderUnreadable { path }
             | AppError::TitleRenameRequired { path, .. }
@@ -926,6 +927,22 @@ mod tests {
         assert_eq!(
             value["message"],
             "Git 2.30.1 is older than 2.31.0, the oldest Git Svode supports. Update Git, then retry."
+        );
+    }
+
+    #[test]
+    fn taken_name_serializes_its_kind_message_and_path() {
+        let value = serde_json::to_value(AppError::from(
+            svode_core::page::PageError::FileAlreadyExists("docs/New folder".into()),
+        ))
+        .unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "file_already_exists",
+                "message": "File already exists: docs/New folder",
+                "path": "docs/New folder",
+            })
         );
     }
 

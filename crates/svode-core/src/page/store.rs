@@ -1436,9 +1436,7 @@ pub fn nest_page(
     let folder = parent.join(stem);
 
     if name_taken_portably(&folder, None)? {
-        return Err(PageError::FileAlreadyExists(
-            folder.to_string_lossy().to_string(),
-        ));
+        return Err(PageError::FileAlreadyExists(rel_from_abs(space, &folder)));
     }
 
     // Create the folder and move the file into it as README.md

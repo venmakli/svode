@@ -539,6 +539,33 @@ async fn bare_folder_rename_changes_case_and_refuses_portable_collisions() {
     assert!(tmp.path().join("Site/app.yaml").is_file());
 }
 
+#[tokio::test]
+async fn nesting_a_page_refuses_a_taken_folder_name_with_its_space_relative_path() {
+    use crate::page::PageError;
+
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().to_str().unwrap();
+    write_tree(
+        tmp.path(),
+        &[
+            ("Docs/Plan.md", "---\ntitle: Plan\n---\n"),
+            ("Docs/Plan/Ship.md", "---\ntitle: Ship\n---\n"),
+        ],
+    );
+    let state = IndexRuntimeState::default();
+    let before = tree_snapshot(tmp.path());
+
+    let error = super::nest(space, "Docs/Plan.md", None, runtime(&state))
+        .await
+        .expect_err("taken folder name");
+
+    assert!(
+        matches!(&error, PageError::FileAlreadyExists(path) if path == "Docs/Plan"),
+        "{error:?}"
+    );
+    assert_eq!(tree_snapshot(tmp.path()), before);
+}
+
 /// Project whose child Space `alpha` holds `Area` with Collections at depth 1
 /// (`Area/Tasks`) and 2 (`Area/Sub/Deep`), referenced by a two-way relation
 /// of the same Space, by the root Space and by the sibling Space `beta`.
