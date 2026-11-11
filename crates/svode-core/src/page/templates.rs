@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 
 use crate::collections::engine;
 use crate::content_tree;
-use crate::page::PageError;
 use crate::page::filename;
 use crate::page::frontmatter::{self, FrontmatterFields};
 use crate::page::store::{self, Page, PageMeta};
 use crate::page::write::SourceSnapshot;
+use crate::page::{PageError, ensure_path_in_space};
 
 use crate::collections::engine::{
     README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
@@ -48,6 +48,7 @@ pub fn create(
     title: &str,
     kind: TemplateKind,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, collection_path)?;
     engine::read_collection_schema(space, collection_path)?;
     let templates_abs = templates_dir(space, collection_path);
     fs::create_dir_all(&templates_abs)?;
@@ -84,6 +85,7 @@ pub fn delete(
     collection_path: &str,
     template_slug: &str,
 ) -> Result<DeletedTemplate, PageError> {
+    ensure_path_in_space(space, collection_path)?;
     let source = resolve_template_source(space, collection_path, template_slug)?;
     if source.is_dir {
         fs::remove_dir_all(&source.root_abs)?;
@@ -101,6 +103,7 @@ pub fn duplicate(
     collection_path: &str,
     template_slug: &str,
 ) -> Result<DuplicatedTemplate, PageError> {
+    ensure_path_in_space(space, collection_path)?;
     let source = resolve_template_source(space, collection_path, template_slug)?;
     let templates_abs = templates_dir(space, collection_path);
     let new_title = format!("{} (copy)", source.title);
@@ -152,6 +155,8 @@ pub fn instantiate(
     force_folder: bool,
     contextual_defaults: Option<FrontmatterFields>,
 ) -> Result<InstantiatedTemplate, PageError> {
+    ensure_path_in_space(space, collection_path)?;
+    ensure_path_in_space(space, parent_dir)?;
     crate::page::naming::with_document_name_lock(space, || {
         instantiate_inner(
             space,

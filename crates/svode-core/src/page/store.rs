@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::content_tree::{self, SpaceOrder};
 use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
-use crate::page::PageError;
 use crate::page::filename::{self, FilenameProjection};
 use crate::page::frontmatter;
+use crate::page::{PageError, ensure_path_in_space};
 
 use page_dir::{PageDirContents, RemovedPageDir};
 use persistence::{
@@ -371,6 +371,7 @@ pub fn create_source_with_options(
     as_readme: bool,
     names: SourceNames,
 ) -> Result<Page, PageError> {
+    ensure_path_in_space(space, parent_path.unwrap_or_default())?;
     crate::page::naming::with_document_name_lock(space, || {
         create_source_with_options_inner(
             space,
@@ -426,6 +427,7 @@ pub fn planned_collection_source(
     title: &str,
     allocate_unique_title: bool,
 ) -> Result<PlannedSourceCreate, PageError> {
+    ensure_path_in_space(space, parent_path.unwrap_or_default())?;
     let parent_path = parent_path
         .map(str::trim)
         .filter(|parent| !parent.is_empty());
@@ -549,6 +551,7 @@ pub fn create_folder(
         Some(parent) => format!("{parent}/{name}"),
         None => name.to_string(),
     };
+    ensure_path_in_space(space, &rel_path)?;
 
     let abs_path = resolve(space, &rel_path);
 
@@ -678,6 +681,7 @@ pub fn planned_write_rename(
     title: Option<&str>,
     skip_rename: bool,
 ) -> Result<Option<PlannedWriteRename>, PageError> {
+    ensure_path_in_space(space, path)?;
     let Some(title) = title.filter(|_| !skip_rename) else {
         return Ok(None);
     };
@@ -806,6 +810,7 @@ pub fn write_under_name_lock(
     project_path: Option<&str>,
     relation_paths: Option<&[PathBuf]>,
 ) -> Result<WriteResult, PageError> {
+    ensure_path_in_space(space, path)?;
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
@@ -1144,6 +1149,7 @@ pub fn update_field(
 }
 
 pub fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Page, PageError> {
+    ensure_path_in_space(space, path)?;
     let abs_path = resolve(space, path);
     let (_, parsed) = persistence::read_existing(&abs_path)?;
     let mut meta = match parsed {
@@ -1283,6 +1289,8 @@ pub fn move_page_with_project(
     backlink_index: Option<&BacklinkIndex>,
     project_path: Option<&str>,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, from)?;
+    ensure_path_in_space(space, to_parent)?;
     let abs_from = space.join(from);
 
     if !abs_from.exists() {
@@ -1396,6 +1404,7 @@ pub fn nest_page(
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, path)?;
     let abs_path = space.join(path);
 
     if !abs_path.exists() {
@@ -1462,6 +1471,7 @@ pub fn convert_page_to_folder(
     page_path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<Page, PageError> {
+    ensure_path_in_space(space, page_path)?;
     let path = normalize_page_path_arg(space, page_path)?;
     let abs_path = space.join(&path);
     if abs_path.is_dir()
@@ -1691,6 +1701,7 @@ pub fn convert_page_to_leaf(
     page_path: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<(Page, Vec<String>), PageError> {
+    ensure_path_in_space(space, page_path)?;
     let LeafConversion {
         path,
         readme_abs,
@@ -1744,6 +1755,7 @@ pub fn convert_page_to_nested_collection(
     space: &Path,
     page_path: &str,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, page_path)?;
     let path = normalize_page_path_arg(space, page_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
@@ -1777,6 +1789,7 @@ pub fn convert_bare_folder_to_collection(
     space: &Path,
     folder_path: &str,
 ) -> Result<Page, PageError> {
+    ensure_path_in_space(space, folder_path)?;
     crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
         convert_bare_folder_to_collection_inner(space, folder_path)
     })
@@ -1838,6 +1851,7 @@ pub fn write_incoming_copy(
     content: &[u8],
     suffix: &str,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, original)?;
     let rel = original.trim_matches('/').replace('\\', "/");
     let source = space.join(&rel);
     let parent = source.parent().unwrap_or(space).to_path_buf();
@@ -1878,6 +1892,7 @@ pub fn write_incoming_copy(
 }
 
 pub fn duplicate_page(space: &Path, file_path: &str) -> Result<Page, PageError> {
+    ensure_path_in_space(space, file_path)?;
     crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
         duplicate_page_inner(space, file_path)
     })
@@ -2027,6 +2042,7 @@ pub fn delete_with_project(
     backlink_index: Option<&BacklinkIndex>,
     project_path: Option<&str>,
 ) -> Result<DeleteResult, PageError> {
+    ensure_path_in_space(space, path)?;
     let requested_abs_path = resolve(space, path);
     let space_path = Path::new(space);
     let abs_path = delete_root_for_path(space_path, &requested_abs_path);
@@ -2108,6 +2124,7 @@ fn collect_deleted_page_paths(space: &Path, abs_path: &Path) -> Result<Vec<Strin
 }
 
 pub fn planned_deleted_page_paths(space: &str, path: &str) -> Result<Vec<String>, PageError> {
+    ensure_path_in_space(space, path)?;
     let space_path = Path::new(space);
     let requested = resolve(space, path);
     let root = delete_root_for_path(space_path, &requested);
@@ -2154,6 +2171,8 @@ pub fn rename_with_project(
     to: &str,
     project_path: Option<&str>,
 ) -> Result<(), PageError> {
+    ensure_path_in_space(space, from)?;
+    ensure_path_in_space(space, to)?;
     let abs_from = resolve(space, from);
     let abs_to = resolve(space, to);
 

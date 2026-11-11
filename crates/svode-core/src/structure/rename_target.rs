@@ -5,17 +5,17 @@
 use std::path::Path;
 
 use super::naming::same_parent;
-use crate::collections::traversal::is_registered_child_space_rel;
 use crate::content_tree::children::DirectoryKind;
 use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
-use crate::content_tree::{child_folder_names, source_directory_kind};
+use crate::content_tree::source_directory_kind;
 use crate::page::identity::{
     ContentOwnerKind, is_agent_context_source, resolve_markdown_identity_for_path,
 };
-use crate::page::{PageError, TitledContent};
+use crate::page::{ChildSpaceRoots, PageError, TitledContent, ensure_path_in_space};
 
 /// Refuse a rename by path of anything but an existing folder without a
-/// title, before any planning or write.
+/// title, and a new name that a registered child Space owns, before any
+/// planning or write.
 pub(crate) fn ensure_renamable_folder(space: &str, from: &str, to: &str) -> Result<(), PageError> {
     if !same_parent(from, to) {
         return Err(PageError::General(
@@ -41,7 +41,7 @@ pub(crate) fn ensure_renamable_folder(space: &str, from: &str, to: &str) -> Resu
         TreePathKind::File
     };
     if TreeIgnorePolicy::system_only(space_path).is_system_ignored_rel(Path::new(rel), path_kind)
-        || is_registered_child_space_rel(rel, &child_folder_names(space_path))
+        || ChildSpaceRoots::read(space_path)?.owner_of(rel).is_some()
     {
         return Err(unsupported());
     }
@@ -51,7 +51,10 @@ pub(crate) fn ensure_renamable_folder(space: &str, from: &str, to: &str) -> Resu
             DirectoryKind::Page => {
                 markdown_kind(space_path, &format!("{rel}/README.md"))?.ok_or_else(unsupported)?
             }
-            DirectoryKind::App | DirectoryKind::Directory => return Ok(()),
+            // The new name stays in this Space, like every other write.
+            DirectoryKind::App | DirectoryKind::Directory => {
+                return ensure_path_in_space(space_path, to);
+            }
         }
     } else if rel.to_ascii_lowercase().ends_with(".md") {
         markdown_kind(space_path, rel)?.ok_or_else(unsupported)?

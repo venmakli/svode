@@ -177,7 +177,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_page",
-            "Replace a standalone Page body; Svode preserves its metadata and validates the path. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. A title string also renames the Page like update_page_metadata and returns newPath; a missing or null title is body-only. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "Replace a standalone Page body; Svode preserves its metadata and validates the path. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). A path inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and writes nothing: run it in that Space. Returns the canonical path, changedPaths and the new sourceVersion. A title string also renames the Page like update_page_metadata and returns newPath; a missing or null title is body-only. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -299,7 +299,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_collection_readme",
-            "Replace one Collection owner's README body. A title string also renames the Collection like update_collection_metadata and returns newPath and collectionPath; a missing or null title is body-only. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
+            "Replace one Collection owner's README body. A title string also renames the Collection like update_collection_metadata and returns newPath and collectionPath; a missing or null title is body-only. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). A path inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and writes nothing: run it in that Space. Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -655,7 +655,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/item/path"))] }),
         def(
             "update_collection_item_body",
-            "Replace one Collection item's body; its fields stay unchanged. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "Replace one Collection item's body; its fields stay unchanged. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). A path inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and writes nothing: run it in that Space. Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -714,7 +714,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Deleted, file_of("/collectionPath", COLLECTION_README), None)] }),
         def(
             "rename_content",
-            "Rename a folder without a title in its current parent through Svode's managed structural backend. A Page, Collection item, or Collection is named by its title: rename_content refuses it with TITLE_RENAME_REQUIRED and changes nothing; to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. A file, a child Space directory, or a system or hidden path (such as .assets) is refused with UNSUPPORTED_RENAME_TARGET. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the rename restores every touched file and returns the error, so a failed rename changes nothing.",
+            "Rename a folder without a title in its current parent through Svode's managed structural backend. A Page, Collection item, or Collection is named by its title: rename_content refuses it with TITLE_RENAME_REQUIRED and changes nothing; to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. A file, a child Space directory, or a system or hidden path (such as .assets) is refused with UNSUPPORTED_RENAME_TARGET, and a new name that a registered child Space owns with PATH_IN_OTHER_SPACE. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the rename restores every touched file and returns the error, so a failed rename changes nothing.",
             schema(
                 &[
                     space_id(),
@@ -732,7 +732,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Moved, at("/to"), at("/newPath"))] }),
         def(
             "move_content",
-            "Move a Page, folder, or Collection under a new parent through Svode's managed structural backend. toParent is a folder, Collection, or folder Page (its directory or its README.md), a leaf Page, or an empty string for the space root. A leaf Page parent first becomes a folder Page `<name>/README.md`, with its links and relations rewritten and its place in the order kept; a folder Page the move leaves holding nothing but its README.md becomes a leaf again. convertedParents lists these conversions as oldPath/newPath (empty without one), and their paths are part of changedPaths. A missing parent fails with FILE_NOT_FOUND and no folder is created; a file that is not a Markdown Page, the moved content itself, or a path inside it fails with UNSUPPORTED_MOVE_PARENT; a taken name fails with FILE_ALREADY_EXISTS. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the move restores every touched file and returns the error, so a failed move changes nothing; PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored.",
+            "Move a Page, folder, or Collection under a new parent through Svode's managed structural backend. toParent is a folder, Collection, or folder Page (its directory or its README.md), a leaf Page, or an empty string for the space root. A leaf Page parent first becomes a folder Page `<name>/README.md`, with its links and relations rewritten and its place in the order kept; a folder Page the move leaves holding nothing but its README.md becomes a leaf again. convertedParents lists these conversions as oldPath/newPath (empty without one), and their paths are part of changedPaths. A missing parent fails with FILE_NOT_FOUND and no folder is created; a file that is not a Markdown Page, the moved content itself, or a path inside it fails with UNSUPPORTED_MOVE_PARENT; a taken name fails with FILE_ALREADY_EXISTS; a source or parent inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE (run the move in that Space). This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the move restores every touched file and returns the error, so a failed move changes nothing; PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored.",
             schema(
                 &[
                     space_id(),
@@ -1133,6 +1133,7 @@ Body saves:
 Structural work and integrity:
 - Files-first work covers the body text described under Body saves and new plain Markdown Pages in an existing folder without a schema; create them directly and Svode picks them up. Everything that changes frontmatter, names, structure, schema, attachments or system folders goes through Svode tools.
 - Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, renames, moves, or Collections manually. Rename a Page, Collection item, or Collection by changing its title as described under Renaming; use rename_content only for a folder without a title (it refuses every other target) and move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection for the other structural changes so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
+- Every write addressed through a Space stays inside it: a registered child Space owns its directory and everything in it, so a write from the Space that registers it with a source, parent or destination there (delete, move, create, conversion, duplicate, title, metadata, body, import) fails with PATH_IN_OTHER_SPACE and changes nothing. Run it in that child Space with its spaceId and a path relative to it; removing a Space from the project is not a Page or Collection delete.
 - move_content moves under a folder, Collection, folder Page (or its README.md) or leaf Page, or to the space root with an empty toParent. A leaf Page parent becomes `<name>/README.md` first, and a folder Page the move leaves holding nothing but its README.md becomes a leaf again, in the same operation; convertedParents reports both, so continue with the returned paths. A missing parent is FILE_NOT_FOUND and creates no folder; a file that is not a Markdown Page, the moved content itself or a path inside it is UNSUPPORTED_MOVE_PARENT.
 - Structural tools do not autocommit and return changed/touched paths. rename_content and move_content apply all their effects or none: when any step fails they restore every touched file, return the error and leave no pending change. PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored; inspect them before retrying. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
 - When structural files changed outside Svode (by hand, Git or another program), run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
@@ -2498,6 +2499,16 @@ mod tests {
         assert!(guide.contains("move_content moves under a folder, Collection, folder Page"));
         assert!(guide.contains("becomes a leaf again, in the same operation"));
         assert!(guide.contains("UNSUPPORTED_MOVE_PARENT"));
+        assert!(guide.contains("PATH_IN_OTHER_SPACE"));
+        for name in [
+            "write_page",
+            "write_collection_readme",
+            "update_collection_item_body",
+            "rename_content",
+            "move_content",
+        ] {
+            assert!(description(name).contains("PATH_IN_OTHER_SPACE"), "{name}");
+        }
         assert!(!guide.contains("keeps the old title"));
         assert!(!guide.contains("structural Page moves/renames"));
     }

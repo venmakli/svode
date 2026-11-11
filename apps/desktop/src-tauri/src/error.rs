@@ -410,6 +410,9 @@ impl From<svode_core::page::PageError> for AppError {
             }
             PageError::UnsupportedRenameTarget { path } => Self::UnsupportedRenameTarget { path },
             PageError::UnsupportedMoveParent { path } => Self::UnsupportedMoveParent { path },
+            PageError::PathInOtherSpace { path, space_id } => {
+                Self::PathInOtherSpace { path, space_id }
+            }
             PageError::General(message) => Self::General(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),
@@ -653,6 +656,9 @@ pub enum AppError {
     )]
     UnsupportedMoveParent { path: String },
 
+    #[error("{path} belongs to Space {space_id}; run the operation in that Space")]
+    PathInOtherSpace { path: String, space_id: String },
+
     #[error("{0}")]
     AgentRuntime(svode_agents::AgentRuntimeError),
 
@@ -715,6 +721,7 @@ impl AppError {
             AppError::TitleRenameRequired { .. } => "title_rename_required",
             AppError::UnsupportedRenameTarget { .. } => "unsupported_rename_target",
             AppError::UnsupportedMoveParent { .. } => "unsupported_move_parent",
+            AppError::PathInOtherSpace { .. } => "path_in_other_space",
             AppError::AgentRuntime(_) => "agent_runtime",
             AppError::AgentAdapter(_) => "agent_adapter",
             AppError::CustomAgent(_) => "custom_agent",
@@ -765,6 +772,9 @@ impl Serialize for AppError {
             | AppError::UnsupportedRenameTarget { path }
             | AppError::UnsupportedMoveParent { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
+            }
+            AppError::PathInOtherSpace { path, space_id } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path, "spaceId": space_id }).serialize(serializer)
             }
             AppError::ProjectNested { path, project } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path, "project": project }).serialize(serializer)
@@ -943,6 +953,21 @@ mod tests {
         .unwrap();
         assert_eq!(unsupported["kind"], "unsupported_rename_target");
         assert_eq!(unsupported["path"], "photo.png");
+
+        let other_space = serde_json::to_value(AppError::from(
+            svode_core::page::PageError::PathInOtherSpace {
+                path: "eng/README.md".into(),
+                space_id: "eng".into(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(other_space["kind"], "path_in_other_space");
+        assert_eq!(other_space["path"], "eng/README.md");
+        assert_eq!(other_space["spaceId"], "eng");
+        assert_eq!(
+            other_space["message"],
+            "eng/README.md belongs to Space eng; run the operation in that Space"
+        );
 
         let parent = serde_json::to_value(AppError::from(
             svode_core::page::PageError::UnsupportedMoveParent {

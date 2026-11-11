@@ -2633,6 +2633,118 @@ async fn rename_content_refuses_titled_and_unsupported_targets_with_stable_codes
     assert!(denied.deliveries.lock().unwrap().is_empty());
 }
 
+/// A write addressed through the root Space at a path of the registered
+/// child Space is refused with PATH_IN_OTHER_SPACE before any write;
+/// read_page and rename_content keep their own codes.
+#[tokio::test]
+async fn writes_through_the_root_space_refuse_paths_of_a_child_space() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    write(
+        &project.join("child/spec.md"),
+        "---\ntitle: Spec\n---\nSpec body\n",
+    );
+    write(
+        &project.join("child/board/schema.yaml"),
+        "columns: []\nviews: []\n",
+    );
+    write(
+        &project.join("child/board/README.md"),
+        "---\ntitle: Board\n---\n",
+    );
+    let photo = fixture._temp.path().join("photo.png");
+    write(&photo, "image");
+    // Repository access is granted: the refusal comes from the rule itself.
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let before = source_snapshot(project);
+    let spec_version = version(project, "child/spec.md");
+
+    for (name, args) in [
+        ("delete_page", json!({ "path": "child/README.md" })),
+        ("delete_page", json!({ "path": "child/spec.md" })),
+        (
+            "delete_collection",
+            json!({ "collectionPath": "child/board" }),
+        ),
+        (
+            "move_content",
+            json!({ "from": "child/spec.md", "toParent": "" }),
+        ),
+        (
+            "move_content",
+            json!({ "from": "leaf.md", "toParent": "child" }),
+        ),
+        (
+            "create_page",
+            json!({ "parentPath": "child", "title": "From root" }),
+        ),
+        (
+            "update_page_metadata",
+            json!({ "path": "child/spec.md", "title": "Renamed" }),
+        ),
+        (
+            "update_page_metadata",
+            json!({ "path": "child/README.md", "icon": "X" }),
+        ),
+        (
+            "write_page",
+            json!({ "path": "child/spec.md", "content": "Replaced\n", "sourceVersion": spec_version }),
+        ),
+        ("convert_to_collection", json!({ "path": "child" })),
+        ("convert_to_collection", json!({ "path": "child/spec.md" })),
+        (
+            "import_asset",
+            json!({ "contentPath": "child/spec.md", "sourcePath": photo.to_string_lossy() }),
+        ),
+    ] {
+        let result = call_tool(&host, Some(&target), name, args.clone()).await;
+        assert_eq!(error_code(&result), "PATH_IN_OTHER_SPACE", "{name} {args}");
+        let message = format!("{result:?}");
+        assert!(message.contains("Space child"), "{name}: {message}");
+    }
+    let read = call_tool(
+        &host,
+        Some(&target),
+        "read_page",
+        json!({ "path": "child/spec.md" }),
+    )
+    .await;
+    assert_eq!(error_code(&read), "NOT_A_STANDALONE_PAGE");
+    let rename = call_tool(
+        &host,
+        Some(&target),
+        "rename_content",
+        json!({ "from": "child", "to": "kid" }),
+    )
+    .await;
+    assert_eq!(error_code(&rename), "UNSUPPORTED_RENAME_TARGET");
+
+    let after = source_snapshot(project);
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|entry| !before.contains(entry))
+        .chain(before.iter().filter(|entry| !after.contains(entry)))
+        .map(|(path, _)| path.clone())
+        // The repository write lock is a local runtime file, not content.
+        .filter(|path| !path.ends_with(".svode/write.lock"))
+        .collect();
+    assert!(changed.is_empty(), "{changed:?}");
+    assert!(host.deliveries.lock().unwrap().is_empty());
+
+    // The same write through the child Space is not refused by the rule.
+    let deleted = call_tool(
+        &host,
+        Some(&target),
+        "delete_page",
+        json!({ "spaceId": "child", "path": "spec.md" }),
+    )
+    .await;
+    assert!(!deleted.is_error, "{:?}", deleted.structured_content);
+    assert!(!project.join("child/spec.md").exists());
+    assert!(project.join("child/.svode/config.json").is_file());
+}
+
 #[tokio::test]
 async fn structural_actions_in_a_submodule_space_need_the_parent_gitlink_repository() {
     let fixture = structure_fixture();

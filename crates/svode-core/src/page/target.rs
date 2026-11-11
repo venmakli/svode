@@ -7,6 +7,7 @@ use super::dates::enrich_source_git_dates;
 use super::identity::{
     ContentOwnerKind, PageRole, is_agent_context_source, resolve_markdown_identity_for_path,
 };
+use super::membership::ChildSpaceRoots;
 use super::source::{
     PageSource, PageSourceError, ResolvedPageTarget, normalize_page_path, read_page_source,
     resolve_page_target,
@@ -199,7 +200,7 @@ fn gitmodules_contains_path(project: &Path, child_path: &str) -> bool {
 
 /// Markdown source `path` that the Space itself owns: `.git`/`.svode` are
 /// forbidden, and a file under a hidden directory or inside a registered
-/// child Space reached from the Project root Space is not a Page of it.
+/// child Space ([`ChildSpaceRoots`]) is not a Page of it.
 /// Canonical resolution applies, so a symlink cannot reach around it.
 pub fn resolve_owned_page_target(
     space: &ResolvedSpaceTarget,
@@ -212,18 +213,9 @@ pub fn resolve_owned_page_target(
         return Err(PageSourceError::Forbidden(path.to_string()));
     }
     let target = resolve_page_target(&space.space_path, path)?;
-    let config = read_project_config(&space.project_path)?;
-    if space.space_id.is_none()
-        && config
-            .spaces
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .any(|reference| {
-                let child = space.project_path.join(&reference.path);
-                let child = fs::canonicalize(&child).unwrap_or(child);
-                target.absolute.starts_with(&child)
-            })
+    if ChildSpaceRoots::read(&space.space_path)?
+        .owner_of(&target.path)
+        .is_some()
     {
         return Err(PageSourceError::InvalidOwner(path.to_string()));
     }

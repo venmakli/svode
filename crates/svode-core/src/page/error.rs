@@ -50,6 +50,8 @@ pub enum PageError {
         "{path} cannot be a move parent: use a folder, a folder Page or its README.md, a leaf Page, or an empty path for the Space root"
     )]
     UnsupportedMoveParent { path: String },
+    #[error("{path} belongs to Space {space_id}; run the operation in that Space")]
+    PathInOtherSpace { path: String, space_id: String },
     #[error("{0}")]
     General(String),
     #[error(transparent)]

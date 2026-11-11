@@ -4,6 +4,7 @@ use crate::index::backlinks::BacklinkIndex;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
 use crate::page::dates::GitDateExecutor;
+use crate::page::ensure_path_in_space;
 use crate::page::nonce::WriteNonceRegistry;
 
 /// Shared runtime state a Page mutation publishes into: the Project index,
@@ -51,6 +52,7 @@ where
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError> + RepositoryAccessRefusal,
 {
+    ensure_path_in_space(request.space, request.path).map_err(Err::from)?;
     let state = runtime.index;
     let nonces = runtime.nonces;
     let backlink_index = state

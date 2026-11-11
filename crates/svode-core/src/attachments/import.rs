@@ -25,13 +25,13 @@ use crate::git::state::GitRepositoryState;
 use crate::index::backlinks;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::IndexUpdateState;
-use crate::page::PageError;
 use crate::page::filename;
 use crate::page::identity::{
     ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
 };
 use crate::page::store;
 use crate::page::write::SourceSnapshot;
+use crate::page::{PageError, ensure_path_in_space};
 use crate::storage::config::{AssetsSpaceConfig, AssetsStrategy};
 use crate::storage::managed_route::apply_managed_import_route;
 use crate::storage::policy::{self, ManagedBinaryRoute};
@@ -189,6 +189,7 @@ pub async fn plan_managed_import(
     }
 
     let content_path = normalize_repo_relative(content_path, RootMode::Reject)?;
+    ensure_path_in_space(&space_path, &content_path)?;
     ensure_no_symlink_components(&space_path, Path::new(&content_path))?;
     let content_abs = space_path.join(&content_path);
     let content_metadata = fs::symlink_metadata(&content_abs).map_err(|error| {

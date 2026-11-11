@@ -36,6 +36,7 @@ impl From<AppError> for ToolError {
             AppError::TitleRenameRequired { .. } => "TITLE_RENAME_REQUIRED",
             AppError::UnsupportedRenameTarget { .. } => "UNSUPPORTED_RENAME_TARGET",
             AppError::UnsupportedMoveParent { .. } => "UNSUPPORTED_MOVE_PARENT",
+            AppError::PathInOtherSpace { .. } => "PATH_IN_OTHER_SPACE",
             AppError::Index(_) => "INDEX_ERROR",
             AppError::Db(_) => "DATABASE_ERROR",
             _ => "SVODE_ERROR",
@@ -47,6 +48,17 @@ impl From<AppError> for ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_of_another_space_has_stable_business_code() {
+        let error = ToolError::from(AppError::PathInOtherSpace {
+            path: "eng/Spec.md".to_string(),
+            space_id: "eng".to_string(),
+        });
+
+        assert_eq!(error.code, "PATH_IN_OTHER_SPACE");
+        assert!(error.message.contains("Space eng"));
+    }
 
     #[test]
     fn repository_access_denial_has_stable_business_code() {

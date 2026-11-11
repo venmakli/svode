@@ -5,10 +5,10 @@ use indexmap::IndexMap;
 use crate::collections::engine as collections;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::IndexUpdateState;
-use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, PageWarning};
 use crate::page::write::SourceSnapshot;
+use crate::page::{PageError, ensure_path_in_space};
 
 pub struct PageCreate {
     pub space: String,
@@ -73,6 +73,11 @@ where
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError>,
 {
+    ensure_path_in_space(
+        &request.space,
+        request.parent_path.as_deref().unwrap_or_default(),
+    )
+    .map_err(Err::from)?;
     // Authorization runs before any source change; its failure is returned
     // to the caller exactly as the caller produced it.
     let mut denied = None;

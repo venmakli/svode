@@ -21,11 +21,11 @@ use crate::git::pending::{OperationId, StructuralChange, StructuralOp};
 use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource, dedupe_modified_sources};
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
-use crate::page::PageError;
 use crate::page::create::{PageParent, not_a_markdown_parent, resolve_page_parent};
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, Page};
 use crate::page::write::{SourceSnapshot, mapped_path};
+use crate::page::{PageError, ensure_path_in_space};
 
 use super::commit::{StructuralCommitSink, schedule_structural_paths};
 use super::move_parent::MovePlan;
@@ -379,6 +379,7 @@ pub async fn delete<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<DeleteOutcome, PageError> {
+    ensure_path_in_space(space, path)?;
     let planned = delete_mutation_paths(space, project_path, path)?;
     ensure_mutation_paths_were_authorized(&planned)?;
     let state = runtime.index;
@@ -477,6 +478,7 @@ pub fn create_folder(
     project_path: Option<&str>,
     commits: Option<&dyn StructuralCommitSink>,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, parent_path.unwrap_or_default())?;
     let folder_path = store::create_folder(space, parent_path, name)?;
     schedule_structural_paths(
         commits,
@@ -581,6 +583,11 @@ where
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError>,
 {
+    ensure_path_in_space(
+        &request.space,
+        request.parent_path.as_deref().unwrap_or_default(),
+    )
+    .map_err(Err::from)?;
     let (parent, converts_parent) =
         resolved_create_parent(&request.space, request.parent_path.as_deref())
             .map_err(Err::from)?;
@@ -803,6 +810,7 @@ pub async fn convert_to_folder<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Page, PageError> {
+    ensure_path_in_space(space, file_path)?;
     convert_to_folder_with_publication(
         space,
         file_path,
@@ -923,6 +931,7 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<ConvertToLeafOutcome, PageError> {
+    ensure_path_in_space(space, file_path)?;
     convert_to_leaf_of(space, file_path, project_path, runtime, OperationId::next()).await
 }
 
@@ -1049,6 +1058,7 @@ pub async fn convert_to_collection<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<ConvertToCollectionOutcome, PageError> {
+    ensure_path_in_space(space, path)?;
     let old_path = normalize_repo_relative(path, RootMode::Reject)?;
     let source = Path::new(space).join(&old_path);
     let leaf_folder = old_path.strip_suffix(".md").filter(|_| {
@@ -1292,6 +1302,8 @@ pub async fn move_page<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<MovePageOutcome, PageError> {
+    ensure_path_in_space(space, from)?;
+    ensure_path_in_space(space, to_parent)?;
     let plan = super::move_parent::plan_move(space, from, to_parent)?;
     apply_move(space, from, MoveTo::Parent(&plan), project_path, runtime)
         .await
@@ -1802,6 +1814,7 @@ pub async fn nest<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<String, PageError> {
+    ensure_path_in_space(space, path)?;
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
@@ -1874,6 +1887,7 @@ pub async fn duplicate<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Page, PageError> {
+    ensure_path_in_space(space, file_path)?;
     let old_name = page_history_commit_name(space, file_path);
     let duplicated = store::duplicate_page(Path::new(space), file_path)?;
     let root_path = duplicated

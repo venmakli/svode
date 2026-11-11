@@ -132,6 +132,19 @@ fn unsupported_move_parent(path: String) -> ToolError {
     )
 }
 
+/// A write addressed through one Space at a path that a registered child
+/// Space owns; the message names that Space for the retry.
+fn path_in_other_space(path: String, space_id: String) -> ToolError {
+    ToolError::new(
+        "PATH_IN_OTHER_SPACE",
+        format!(
+            "{path} belongs to Space {space_id}, not to the Space this operation addressed, and nothing changed; run the operation in Space {space_id} (spaceId \"{space_id}\", CLI --space {space_id}) with the path relative to it."
+        ),
+    )
+    .with_evidence("path", serde_json::Value::String(path))
+    .with_evidence("spaceId", serde_json::Value::String(space_id))
+}
+
 fn name_conflict() -> ToolError {
     ToolError::new(
         "PAGE_NAME_CONFLICT",
@@ -345,6 +358,7 @@ impl From<PageError> for ToolError {
             PageError::TitleRenameRequired { path, kind } => title_rename_required(path, kind),
             PageError::UnsupportedRenameTarget { path } => unsupported_rename_target(path),
             PageError::UnsupportedMoveParent { path } => unsupported_move_parent(path),
+            PageError::PathInOtherSpace { path, space_id } => path_in_other_space(path, space_id),
             PageError::General(message) => general(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),

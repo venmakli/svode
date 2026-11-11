@@ -10,6 +10,9 @@ pub mod frontmatter;
 pub mod identity;
 pub mod indexed_dates;
 pub mod links;
+mod membership;
+#[cfg(test)]
+mod membership_tests;
 pub mod metadata;
 pub mod naming;
 pub mod nonce;
@@ -24,6 +27,8 @@ pub(crate) mod test_support;
 pub mod write;
 
 pub use error::{PageError, TitledContent};
+
+pub use membership::{ChildSpaceRoots, ensure_path_in_space};
 
 pub use target::{
     ProjectConfig, ResolvedSpaceTarget, SpaceReadiness, SpaceReference, project_for_directory,

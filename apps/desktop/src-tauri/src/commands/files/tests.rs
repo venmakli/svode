@@ -1650,3 +1650,56 @@ async fn collection_item_reads_carry_the_item_with_the_same_unique_id_number() {
     assert_eq!(marks["tasks/c.md"], None);
     assert_eq!(items[0]["meta"]["title"], "From A");
 }
+
+/// `delete_content` plans and deletes through the shared core path: a
+/// child Space path addressed through the root Space is refused before
+/// access is requested or anything is removed, and the child Space with
+/// its repository stays whole.
+#[tokio::test]
+async fn delete_content_through_the_root_space_refuses_a_child_space_path() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    for (path, content) in [
+        (
+            ".svode/config.json",
+            r#"{"name":"Root","spaces":[{"id":"eng","path":"eng"}]}"#,
+        ),
+        ("README.md", "---\ntitle: Root\n---\n"),
+        ("eng/.svode/config.json", r#"{"name":"Eng"}"#),
+        ("eng/.git/HEAD", "ref: refs/heads/main\n"),
+        ("eng/README.md", "---\ntitle: Eng\n---\n"),
+        ("eng/Spec.md", "---\ntitle: Spec\n---\n"),
+    ] {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    let space = root.to_str().unwrap();
+    let state = IndexState::new();
+
+    for path in ["eng/README.md", "eng/Spec.md", "eng"] {
+        let planned = crate::structure::delete_mutation_paths(space, Some(space), path)
+            .map_err(AppError::from)
+            .expect_err(path);
+        assert!(
+            matches!(&planned, AppError::PathInOtherSpace { space_id, .. } if space_id == "eng"),
+            "{path}: {planned:?}"
+        );
+        let deleted = crate::structure::delete(space, path, Some(space), &state, updates(), None)
+            .await
+            .expect_err(path);
+        assert!(
+            matches!(&deleted, AppError::PathInOtherSpace { space_id, .. } if space_id == "eng"),
+            "{path}: {deleted:?}"
+        );
+    }
+
+    for path in [
+        "eng/.svode/config.json",
+        "eng/.git/HEAD",
+        "eng/README.md",
+        "eng/Spec.md",
+    ] {
+        assert!(root.join(path).is_file(), "{path}");
+    }
+}

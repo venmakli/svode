@@ -5,9 +5,9 @@ use serde_json::Value;
 
 use crate::collections::CollectionError;
 use crate::collections::engine::{ItemFieldBatchIntent, prepare_item_field_batch};
-use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
 use crate::page::store;
+use crate::page::{PageError, ensure_path_in_space};
 
 use super::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
@@ -41,6 +41,7 @@ where
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError> + crate::git::access::RepositoryAccessRefusal,
 {
+    ensure_path_in_space(request.space, request.path).map_err(Err::from)?;
     let PageFieldUpdate {
         space,
         path,
