@@ -132,6 +132,11 @@ pub async fn instantiate_template(
         "instantiate_template",
     )
     .await;
+    let mut paths = page_paths_with_order(&space, [abs_page_path(&space, root)]);
+    paths.extend(engine::unique_id_schema_path_for_item(
+        &space,
+        &instantiated.page.path,
+    )?);
     maybe_autocommit_structural_paths(
         &autocommit,
         project_path.as_deref(),
@@ -145,7 +150,7 @@ pub async fn instantiate_template(
             },
         })
         .creating(page_entity(&space, root)),
-        page_paths_with_order(&space, [abs_page_path(&space, root)]),
+        paths,
     );
     Ok(instantiated.page)
 }
