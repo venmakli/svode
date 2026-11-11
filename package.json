@@ -19,6 +19,7 @@
     "smoke:standalone": "node scripts/smoke-standalone.mjs",
     "test:core": "cargo test -p svode-core",
     "test:rust": "cargo test --workspace",
+    "test:frontend": "bun run --cwd apps/desktop paraglide && cd apps/desktop && bun test src && bun test tests",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

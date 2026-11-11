@@ -20,12 +20,30 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --cwd apps/desktop typecheck
-      # The fixtures of the Collection query semantics (Stage 11 `04`, 4.C)
-      # against the standard semantics of the frontend Properties; the rust
-      # job runs them against the Page Collection engine with svode-core.
-      - name: Collection query conformance of the frontend Properties
+
+  frontend-tests:
+    # The frontend tests of apps/desktop in two processes, as
+    # `bun run test:frontend` runs them locally: the module mocks of `tests`
+    # leak into `src` when both share a process. `src` includes the fixtures
+    # of the Collection query semantics (Stage 11 `04`, 4.C) against the
+    # standard semantics of the frontend Properties; the rust job runs them
+    # against the Page Collection engine with svode-core.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      # The Paraglide messages the tests import are generated, not committed.
+      - run: bun run --cwd apps/desktop paraglide
+      - name: Tests of src
+        id: src
         working-directory: apps/desktop
-        run: bun test src/features/properties/model/standard-query.conformance.test.ts
+        run: bun test src
+      # Reported even when the tests of src fail.
+      - name: Tests of tests
+        if: success() || steps.src.outcome == 'failure'
+        working-directory: apps/desktop
+        run: bun test tests
 
   rust:
     runs-on: ubuntu-22.04
