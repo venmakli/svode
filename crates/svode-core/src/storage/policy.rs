@@ -326,6 +326,17 @@ pub fn is_repository_lfs_candidate(path: &str, routing: &BinaryRoutingConfig) ->
         .any(|candidate| extension.eq_ignore_ascii_case(candidate))
 }
 
+/// Whether a file of `size_bytes` at `path` needs an exact LFS rule under
+/// `routing`: the repository rules leave it out (not `.assets/`, not a listed
+/// format), it is not protected and it is at least the threshold.
+pub fn needs_exact_lfs_rule(path: &str, size_bytes: u64, routing: &BinaryRoutingConfig) -> bool {
+    routing
+        .lfs_threshold_bytes
+        .is_some_and(|threshold| size_bytes >= threshold)
+        && !is_repository_lfs_candidate(path, routing)
+        && !is_protected_source(path)
+}
+
 pub fn managed_policy_current(
     contents: &str,
     strategy: AssetsStrategy,

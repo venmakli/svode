@@ -541,6 +541,13 @@ export function StorageStrategyConfirmDialog({
 }: {
   settings: StorageSettings;
 }) {
+  const toLfs =
+    settings.pendingStrategy === "lfs-remote" ||
+    settings.pendingStrategy === "lfs-s3";
+  const localFiles = localFilesReleaseText(
+    settings.pendingLocalFileCount,
+    toLfs,
+  );
   return (
     <AlertDialog
       open={settings.pendingStrategy !== null}
@@ -556,17 +563,17 @@ export function StorageStrategyConfirmDialog({
               strategy: storageStrategyTitle(settings.pendingStrategy),
             })}
             <span className="block">{m.storage_confirm_files()}</span>
-            {(settings.pendingStrategy === "lfs-remote" ||
-              settings.pendingStrategy === "lfs-s3") && (
+            {toLfs && (
               <span className="block">
                 {m.storage_confirm_repository_lfs_policy()}
               </span>
             )}
-            {settings.pendingAssetCount > 0 && (
-              <span className="mt-2 block text-destructive">
-                {m.storage_confirm_existing_assets({
-                  count: String(settings.pendingAssetCount),
-                })}
+            {localFiles && (
+              <span
+                data-storage-local-files
+                className="mt-2 block text-destructive"
+              >
+                {localFiles}
               </span>
             )}
             <span className="block">{m.storage_confirm_locked()}</span>
@@ -579,7 +586,7 @@ export function StorageStrategyConfirmDialog({
           <AlertDialogAction
             onClick={() => void settings.confirmPendingStrategy()}
           >
-            {settings.pendingAssetCount > 0
+            {(settings.pendingLocalFileCount ?? 0) > 0
               ? m.storage_confirm_existing_assets_action()
               : m.storage_confirm_action()}
           </AlertDialogAction>
@@ -587,4 +594,19 @@ export function StorageStrategyConfirmDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
+}
+
+// What leaving `local` does to the files its rules keep out of Git: they
+// appear in Changes and go to Git, under Git LFS by its rules. Nothing to
+// say without such files; an unknown number is said as such.
+function localFilesReleaseText(
+  count: number | null,
+  toLfs: boolean,
+): string | null {
+  if (count === null) return m.storage_confirm_local_files_unknown();
+  if (count === 0) return null;
+  const input = { count: String(count) };
+  return toLfs
+    ? m.storage_confirm_local_files_lfs(input)
+    : m.storage_confirm_local_files_git(input);
 }

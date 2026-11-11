@@ -488,7 +488,7 @@ pub fn run() {
             storage::commands::upload_asset,
             storage::commands::read_file_for_upload,
             storage::commands::list_assets,
-            storage::commands::count_assets,
+            storage::commands::count_local_files,
             storage::commands::get_assets_config,
             storage::commands::set_assets_strategy,
             storage::commands::has_s3_credentials,

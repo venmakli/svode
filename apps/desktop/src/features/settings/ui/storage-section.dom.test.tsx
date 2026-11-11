@@ -37,6 +37,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
   const {
     StorageInheritedGroup,
     StorageSettingsSection,
+    StorageStrategyConfirmDialog,
     StorageUnknownStrategyGroup,
     storageSummary,
   } = await import("./storage-section");
@@ -150,7 +151,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       currentSpaceId: null,
       isRoot: true,
       pendingStrategy: null,
-      pendingAssetCount: 0,
+      pendingLocalFileCount: 0,
       lfsAvailable: true,
       lfsAvailabilityLoaded: true,
       lfsVersion: "3.7.1",
@@ -811,6 +812,75 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     expect(owner.textContent?.includes("Global: ")).toBe(true);
     await press(buttons("Finish saving", owner)[0]!);
     expect(recovered).toEqual([{ scope: "global" }]);
+  });
+
+  test("leaving local names the files its rules keep out of Git, or says the number is unknown", async () => {
+    async function confirm(overrides: Partial<UseSpaceStorageSettingsResult>) {
+      calls = [];
+      await act(async () => {
+        root.render(
+          <StorageStrategyConfirmDialog
+            settings={storageFixture({
+              confirmPendingStrategy: call("confirmPendingStrategy"),
+              ...overrides,
+            })}
+          />,
+        );
+        await tick();
+      });
+      const dialog = document.querySelector<HTMLElement>(
+        '[role="alertdialog"]',
+      )!;
+      return {
+        row: dialog.querySelector("[data-storage-local-files]")?.textContent,
+        action: Array.from(dialog.querySelectorAll("button")).at(-1)!,
+      };
+    }
+
+    const git = await confirm({
+      pendingStrategy: "in-git",
+      pendingLocalFileCount: 128,
+    });
+    expect(git.row).toBe(
+      "Files that stay on this device now (128) will appear in Changes and go to Git with the next commit.",
+    );
+    expect(git.action.textContent).toBe("Apply and include existing uploads");
+
+    const lfs = await confirm({
+      pendingStrategy: "lfs-remote",
+      pendingLocalFileCount: 3,
+    });
+    expect(lfs.row).toBe(
+      "Files that stay on this device now (3) will appear in Changes and go to Git by the Git LFS rules with the next commit.",
+    );
+
+    const none = await confirm({
+      pendingStrategy: "in-git",
+      pendingLocalFileCount: 0,
+    });
+    expect(none.row).toBeUndefined();
+    expect(none.action.textContent).toBe("Apply storage strategy");
+
+    const unknown = await confirm({
+      pendingStrategy: "in-git",
+      pendingLocalFileCount: null,
+    });
+    expect(unknown.row).toBe(
+      "Couldn't count the files that stay on this device now. After the change they will appear in Changes.",
+    );
+    expect(unknown.action.textContent).toBe("Apply storage strategy");
+    expect(unknown.action.disabled).toBe(false);
+    await press(unknown.action);
+    expect(calls).toEqual(["confirmPendingStrategy"]);
+
+    await act(async () => {
+      root.render(
+        <StorageStrategyConfirmDialog
+          settings={storageFixture({ pendingStrategy: null })}
+        />,
+      );
+      await tick();
+    });
   });
 
   test("a collapsed repository block summarizes its strategy and the project setting", () => {

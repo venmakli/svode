@@ -97,6 +97,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       lfsDeclaration: "published" as string,
       projectStrategy: null as "local" | "in-git" | null,
       projectReads: 0,
+      localFiles: 0 as number | "fail",
     };
     mockNativeIpc(
       async (command, rawArgs = {}) => {
@@ -120,7 +121,11 @@ if (process.env.SVODE_S3_TEST !== "1") {
               lfsThresholdBytes: null,
             },
           };
-        if (command === "count_assets") return 0;
+        if (command === "count_local_files") {
+          fixture.calls.push({ command, args });
+          if (fixture.localFiles === "fail") throw new Error("status failed");
+          return fixture.localFiles;
+        }
         if (command === "git_check_availability")
           return { git: true, gitLfs: true };
         if (command === "get_lfs_state")
@@ -703,6 +708,51 @@ if (process.env.SVODE_S3_TEST !== "1") {
       expect(h.fixture.projectReads).toBe(reads + 1);
       expect(h.state.projectConfigStatus).toBe("loaded");
       expect(h.state.projectDefaultApplied).toBe(false);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("leaving local asks with the count of local files, or without it when counting fails", async () => {
+    const h = await setup(false, "local");
+    try {
+      await h.render("repo-space");
+      h.fixture.localFiles = 12;
+      await act(async () => {
+        await h.state.selectStrategy("in-git");
+      });
+      await act(async () => {
+        await h.state.applySelectedStrategy();
+      });
+      expect(h.state.pendingStrategy).toBe("in-git");
+      expect(h.state.pendingLocalFileCount).toBe(12);
+      expect(
+        h.fixture.calls.find((call) => call.command === "count_local_files")
+          ?.args,
+      ).toEqual({ projectPath: "/repo", spaceId: "repo-space" });
+      await act(async () => h.state.cancelPendingStrategy());
+      expect(h.state.pendingStrategy).toBe(null);
+      expect(
+        h.fixture.calls.some((call) => call.command === "set_assets_strategy"),
+      ).toBe(false);
+
+      h.fixture.localFiles = "fail";
+      await act(async () => {
+        await h.state.selectStrategy("in-git");
+      });
+      await act(async () => {
+        await h.state.applySelectedStrategy();
+      });
+      expect(h.state.pendingStrategy).toBe("in-git");
+      expect(h.state.pendingLocalFileCount).toBe(null);
+      await act(async () => {
+        await h.state.confirmPendingStrategy();
+      });
+      const save = h.fixture.calls.find(
+        (call) => call.command === "set_assets_strategy",
+      )!;
+      expect(save.args.strategy).toBe("in-git");
+      expect(save.args.spaceId).toBe("repo-space");
     } finally {
       await h.cleanup();
     }

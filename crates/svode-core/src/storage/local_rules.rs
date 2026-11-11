@@ -19,6 +19,10 @@ use super::routes::{
 
 pub const LOCAL_EXTENSIONS_START: &str = "# svode:assets-local-extensions:start";
 pub const LOCAL_EXTENSIONS_END: &str = "# svode:assets-local-extensions:end";
+/// The legacy block of the `local` strategy that keeps `.assets/` out of Git.
+pub const LEGACY_ASSETS_IGNORE_START: &str = "# svode:assets-ignore:start";
+pub const LEGACY_ASSETS_IGNORE_END: &str = "# svode:assets-ignore:end";
+pub const LEGACY_ASSETS_IGNORE_BODY: &str = ".assets/";
 
 /// Paths one `git ls-files` call names at most.
 const LS_FILES_CHUNK: usize = 500;

@@ -418,19 +418,23 @@ fn store_assets_config(
     write_space_config(config_dir, &config)
 }
 
-/// Count real files under this pool's `.assets/` directory. Used by the
-/// storage confirmation dialog before turning existing local bytes into
-/// syncable pending changes.
+/// Count the untracked files the `local` blocks of the storage scope's
+/// repository keep out of Git: the confirmation of leaving `local` names how
+/// many will appear in Changes.
 #[tauri::command]
-pub async fn count_assets(
+pub async fn count_local_files(
     project_path: String,
     space_id: Option<String>,
+    git_state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
-) -> Result<i64, AppError> {
+) -> Result<usize, AppError> {
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
-    assets::count_existing_asset_files(&scope.pool_dir)
+    let cli = require_cli(&git_state)?;
+    let held = svode_core::storage::local_release::files_held_by_local_rules(&cli, &scope.repo_dir)
+        .await?;
+    Ok(held.len())
 }
 
 /// Tell the frontend whether the keychain currently holds credentials for

@@ -3,7 +3,7 @@ import type { StorageStrategyWarning } from "../model/storage-strategy";
 import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Bindings as checkPlatformS3Bindings,
-  countAssets as countPlatformAssets,
+  countLocalFiles as countPlatformLocalFiles,
   diagnoseLfsPolicy as diagnosePlatformLfsPolicy,
   diagnoseLfsRemote as diagnosePlatformLfsRemote,
   getAssetsConfig as getPlatformAssetsConfig,
@@ -148,8 +148,8 @@ export function repairLfs(input: SpacePoolInput): Promise<LfsState> {
   return repairPlatformLfs(input);
 }
 
-export function countAssets(input: SpacePoolInput): Promise<number> {
-  return countPlatformAssets(input);
+export function countLocalFiles(input: SpacePoolInput): Promise<number> {
+  return countPlatformLocalFiles(input);
 }
 
 export function checkS3Bindings(input: CheckS3BindingsInput): Promise<boolean> {

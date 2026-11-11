@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { applyAssetsStrategy, countAssets, getAssetsConfig } from "../api";
+import { applyAssetsStrategy, countLocalFiles, getAssetsConfig } from "../api";
 import type { LfsPolicyDiagnostic, LfsRemoteDiagnostic } from "../api";
 import type { GitAuthChallenge } from "@/features/git";
 import type {
@@ -71,7 +71,9 @@ export interface UseSpaceStorageSettingsResult {
   currentSpaceId: string | null;
   isRoot: boolean;
   pendingStrategy: AssetsStrategy | null;
-  pendingAssetCount: number;
+  // Untracked files the `local` rules keep out of Git that leaving `local`
+  // releases; `null` when they could not be counted.
+  pendingLocalFileCount: number | null;
   lfsAvailable: boolean;
   lfsAvailabilityLoaded: boolean;
   lfsVersion: string | null;
@@ -233,7 +235,9 @@ export function useSpaceStorageSettings({
     null,
   );
   const [pendingTargetKey, setPendingTargetKey] = useState<string | null>(null);
-  const [pendingAssetCount, setPendingAssetCount] = useState<number>(0);
+  const [pendingLocalFileCount, setPendingLocalFileCount] = useState<
+    number | null
+  >(0);
   const [applyingStrategy, setApplyingStrategy] = useState(false);
   const [strategyInFlight, setStrategyInFlight] =
     useState<AssetsStrategy | null>(null);
@@ -271,16 +275,18 @@ export function useSpaceStorageSettings({
     };
   }, [open, projectPath, projectSettingKey]);
 
-  const countCurrentAssets = useCallback(async (): Promise<number | null> => {
+  const countCurrentLocalFiles = useCallback(async (): Promise<
+    number | null
+  > => {
     if (!spacePath) return 0;
     try {
-      return await countAssets({
+      return await countLocalFiles({
         projectPath,
         spaceId: currentSpaceId,
       });
     } catch (err) {
-      console.warn("count_assets failed, blocking strategy apply:", err);
-      toast.error(m.storage_count_failed());
+      // The confirmation says that the number is unknown.
+      console.warn("count_local_files failed:", err);
       return null;
     }
   }, [spacePath, projectPath, currentSpaceId]);
@@ -381,13 +387,13 @@ export function useSpaceStorageSettings({
   useEffect(() => {
     if (open || applyingStrategy) return;
     setAssetsStrategy(savedAssetsStrategy);
-    setPendingAssetCount(0);
+    setPendingLocalFileCount(0);
     setPendingStrategy(null);
     setPendingTargetKey(null);
   }, [applyingStrategy, open, savedAssetsStrategy, setAssetsStrategy]);
 
   useEffect(() => {
-    setPendingAssetCount(0);
+    setPendingLocalFileCount(0);
     setPendingStrategy(null);
     setPendingTargetKey(null);
     setApplyingStrategy(false);
@@ -397,31 +403,19 @@ export function useSpaceStorageSettings({
   const requestStrategyConfirmation = useCallback(
     async (next: AssetsStrategy) => {
       const requestTargetKey = currentTargetKey;
-      const assetCount = await countCurrentAssets();
+      const localFileCount = await countCurrentLocalFiles();
       if (currentTargetKeyRef.current !== requestTargetKey) return;
-      if (assetCount === null) {
-        setAssetsStrategy(savedAssetsStrategy);
-        setPendingAssetCount(0);
-        setPendingStrategy(null);
-        setPendingTargetKey(null);
-        return;
-      }
-      setPendingAssetCount(assetCount);
+      setPendingLocalFileCount(localFileCount);
       setPendingStrategy(next);
       setPendingTargetKey(requestTargetKey);
     },
-    [
-      countCurrentAssets,
-      currentTargetKey,
-      savedAssetsStrategy,
-      setAssetsStrategy,
-    ],
+    [countCurrentLocalFiles, currentTargetKey],
   );
 
   const rejectUnsupportedMigration = useCallback(() => {
     toast.error(m.storage_migration_unsupported());
     setAssetsStrategy(savedAssetsStrategy);
-    setPendingAssetCount(0);
+    setPendingLocalFileCount(0);
     setPendingStrategy(null);
     setPendingTargetKey(null);
   }, [savedAssetsStrategy, setAssetsStrategy]);
@@ -430,7 +424,7 @@ export function useSpaceStorageSettings({
     async (next: AssetsStrategy) => {
       if (next === savedAssetsStrategy) {
         setAssetsStrategy(savedAssetsStrategy);
-        setPendingAssetCount(0);
+        setPendingLocalFileCount(0);
         setPendingStrategy(null);
         setPendingTargetKey(null);
         return;
@@ -443,7 +437,7 @@ export function useSpaceStorageSettings({
         return;
       }
       setAssetsStrategy(next);
-      setPendingAssetCount(0);
+      setPendingLocalFileCount(0);
       setPendingStrategy(null);
       setPendingTargetKey(null);
     },
@@ -527,7 +521,7 @@ export function useSpaceStorageSettings({
     if (confirmingPendingStrategyRef.current) return;
     setAssetsStrategy(savedAssetsStrategy);
     setPendingStrategy(null);
-    setPendingAssetCount(0);
+    setPendingLocalFileCount(0);
     setPendingTargetKey(null);
   }, [savedAssetsStrategy, setAssetsStrategy]);
 
@@ -536,7 +530,7 @@ export function useSpaceStorageSettings({
     const targetKey = pendingTargetKey;
     confirmingPendingStrategyRef.current = true;
     setPendingStrategy(null);
-    setPendingAssetCount(0);
+    setPendingLocalFileCount(0);
     setPendingTargetKey(null);
     try {
       if (target && targetKey === currentTargetKeyRef.current) {
@@ -621,7 +615,7 @@ export function useSpaceStorageSettings({
     currentSpaceId,
     isRoot,
     pendingStrategy,
-    pendingAssetCount,
+    pendingLocalFileCount,
     lfsAvailable,
     lfsAvailabilityLoaded,
     lfsVersion,

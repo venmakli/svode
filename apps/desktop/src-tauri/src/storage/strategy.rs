@@ -10,7 +10,11 @@ use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
 use svode_core::git::cli::{GitCli, GitOutput};
 use svode_core::storage::lfs::{teardown_managed_registration, write_managed_registration};
 use svode_core::storage::lfs_declaration::{self, LfsDeclarationWrite};
-use svode_core::storage::local_rules::rewrite_local_extensions_block;
+use svode_core::storage::local_release::{files_held_by_local_rules, with_released_lfs_paths};
+use svode_core::storage::local_rules::{
+    LEGACY_ASSETS_IGNORE_BODY, LEGACY_ASSETS_IGNORE_END, LEGACY_ASSETS_IGNORE_START,
+    rewrite_local_extensions_block,
+};
 use svode_core::storage::policy;
 use svode_core::storage::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, append_block,
@@ -61,11 +65,6 @@ impl StrategyWarning {
         }
     }
 }
-
-const IGNORE_START: &str = "# svode:assets-ignore:start";
-const IGNORE_END: &str = "# svode:assets-ignore:end";
-
-const IGNORE_BODY: &str = ".assets/";
 
 fn rewrite_managed_lfs_attributes(
     contents: &str,
@@ -178,18 +177,35 @@ pub async fn apply_strategy(
     let gitignore_path = space_dir.join(".gitignore");
     let gitattributes_path = space_dir.join(".gitattributes");
 
+    // Files the `local` blocks keep out of Git, read before those blocks go:
+    // under Git LFS the large ones of another format need exact rules.
+    let released_to_lfs = if policy::strategy_uses_lfs_policy(&new) {
+        files_held_by_local_rules(&cli, space_dir).await?
+    } else {
+        Vec::new()
+    };
+
     // --- .gitignore: managed `.assets/` and extension blocks only when Local. ---
     {
         let local = matches!(new, AssetsStrategy::Local);
         let current = read_or_empty(&gitignore_path)?;
-        let stripped = strip_block(&current, IGNORE_START, IGNORE_END);
+        let stripped = strip_block(
+            &current,
+            LEGACY_ASSETS_IGNORE_START,
+            LEGACY_ASSETS_IGNORE_END,
+        );
         let stripped = if local {
             stripped
         } else {
             strip_block(&stripped, LOCAL_PATHS_START, LOCAL_PATHS_END)
         };
         let next = if local {
-            append_block(&stripped, IGNORE_START, IGNORE_BODY, IGNORE_END)
+            append_block(
+                &stripped,
+                LEGACY_ASSETS_IGNORE_START,
+                LEGACY_ASSETS_IGNORE_BODY,
+                LEGACY_ASSETS_IGNORE_END,
+            )
         } else {
             stripped
         };
@@ -209,6 +225,7 @@ pub async fn apply_strategy(
             policy::strategy_uses_lfs_policy(&new),
             binary_routing,
         );
+        let next = with_released_lfs_paths(&next, space_dir, &released_to_lfs, binary_routing)?;
         write_or_remove(&gitattributes_path, &next)?;
     }
 
@@ -311,13 +328,15 @@ mod tests {
         AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig,
     };
     use svode_core::git::cli::GitCli;
+    use svode_core::storage::local_release::files_held_by_local_rules;
     use svode_core::storage::local_rules::LOCAL_EXTENSIONS_START;
     use svode_core::storage::policy::{
         LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
         supported_binary_routing,
     };
     use svode_core::storage::routes::{
-        LFS_PATHS_END, LFS_PATHS_START, rebase_managed_import_routes, rewrite_managed_path_block,
+        LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, parse_managed_paths,
+        rebase_managed_import_routes, rewrite_managed_path_block,
     };
 
     fn legacy_routing() -> BinaryRoutingConfig {
@@ -586,6 +605,134 @@ mod tests {
         )
         .await?;
         assert_eq!(std::fs::read_to_string(repo.join(".gitignore"))?, "user/\n");
+        Ok(())
+    }
+
+    /// A `local` repository with files its blocks hold: `docs/big.bin` by an
+    /// exact rule, the jpg files by the extension block; `docs/clip.png` is a
+    /// format of the LFS list in the tests below.
+    async fn local_repo_with_held_files(
+        git_state: &GitState,
+        repo: &Path,
+    ) -> Result<BinaryRoutingConfig, AppError> {
+        let mut routing = BinaryRoutingConfig::new_project_default();
+        routing.lfs_extensions = vec!["png".into()];
+        routing.lfs_threshold_bytes = Some(10);
+        apply_strategy(git_state, repo, AssetsStrategy::Local, &routing, None, None).await?;
+        let gitignore = std::fs::read_to_string(repo.join(".gitignore"))?;
+        std::fs::write(
+            repo.join(".gitignore"),
+            rewrite_managed_path_block(
+                &gitignore,
+                LOCAL_PATHS_START,
+                LOCAL_PATHS_END,
+                &BTreeSet::from(["docs/big.bin".to_string()]),
+                false,
+            ),
+        )?;
+        std::fs::create_dir_all(repo.join("docs"))?;
+        for (path, size) in [
+            ("docs/big.bin", 20),
+            ("docs/photo.jpg", 5),
+            ("docs/huge.jpg", 20),
+            ("docs/clip.png", 20),
+        ] {
+            std::fs::write(repo.join(path), vec![b'x'; size])?;
+        }
+        Ok(routing)
+    }
+
+    async fn untracked_docs(cli: &GitCli, repo: &Path) -> Result<Vec<String>, AppError> {
+        let status =
+            git_stdout(cli, repo, &["status", "--porcelain", "-uall", "--", "docs"]).await?;
+        Ok(status.lines().map(str::to_string).collect())
+    }
+
+    #[tokio::test]
+    async fn leaving_local_for_lfs_gives_large_files_of_other_formats_exact_lfs_rules()
+    -> Result<(), AppError> {
+        let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.detected().expect("checked above");
+        if !cli.lfs_available() {
+            return Ok(());
+        }
+        let routing = local_repo_with_held_files(&git_state, &repo).await?;
+        assert_eq!(
+            files_held_by_local_rules(cli, &repo).await?,
+            [
+                "docs/big.bin",
+                "docs/clip.png",
+                "docs/huge.jpg",
+                "docs/photo.jpg"
+            ]
+        );
+
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::LfsRemote,
+            &routing,
+            None,
+            None,
+        )
+        .await?;
+
+        let attributes = std::fs::read_to_string(repo.join(".gitattributes"))?;
+        assert_eq!(
+            parse_managed_paths(&attributes, LFS_PATHS_START, LFS_PATHS_END)
+                .expect("exact LFS rules"),
+            BTreeSet::from(["docs/big.bin".to_string(), "docs/huge.jpg".to_string()])
+        );
+        assert_eq!(
+            git_stdout(cli, &repo, &["check-attr", "filter", "--", "docs/huge.jpg"]).await?,
+            "docs/huge.jpg: filter: lfs"
+        );
+        assert!(files_held_by_local_rules(cli, &repo).await?.is_empty());
+        assert_eq!(
+            git_stdout(cli, &repo, &["diff", "--cached", "--name-only"]).await?,
+            ""
+        );
+        assert_eq!(
+            untracked_docs(cli, &repo).await?,
+            [
+                "?? docs/big.bin",
+                "?? docs/clip.png",
+                "?? docs/huge.jpg",
+                "?? docs/photo.jpg"
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn leaving_local_for_git_removes_the_blocks_and_indexes_nothing() -> Result<(), AppError>
+    {
+        let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.detected().expect("checked above");
+        let routing = local_repo_with_held_files(&git_state, &repo).await?;
+        assert_eq!(files_held_by_local_rules(cli, &repo).await?.len(), 4);
+
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::InGit,
+            &routing,
+            None,
+            None,
+        )
+        .await?;
+
+        assert!(!repo.join(".gitignore").exists());
+        assert!(!repo.join(".gitattributes").exists());
+        assert_eq!(
+            git_stdout(cli, &repo, &["diff", "--cached", "--name-only"]).await?,
+            ""
+        );
+        assert_eq!(untracked_docs(cli, &repo).await?.len(), 4);
         Ok(())
     }
 

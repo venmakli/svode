@@ -237,8 +237,8 @@ export function ensureAssetsScope(spacePath: string): Promise<void> {
   return invokeCommand<void>("ensure_assets_scope", { spacePath });
 }
 
-export function countAssets(input: SpacePoolInputDto): Promise<number> {
-  return invokeCommand<number>("count_assets", input);
+export function countLocalFiles(input: SpacePoolInputDto): Promise<number> {
+  return invokeCommand<number>("count_local_files", input);
 }
 
 export function getS3Bindings(
