@@ -117,6 +117,35 @@ test("resolveViewQuery merges local overrides and reports stale shared state", (
   });
 });
 
+test("a local query equal to the saved one is not a local change", () => {
+  const view: CollectionView = {
+    name: "Main",
+    type: "table",
+    filter: [{ field: "Status", op: "eq", value: "Todo" }],
+  };
+  const base = {
+    baseViewHash: viewQueryHash(schema(), normalizeCollectionView(view)),
+    updatedAt: "2026-11-11T00:00:00.000Z",
+  };
+
+  const cleared = resolveViewQuery(schema(), view, { ...base, filter: [] });
+  expect(cleared.hasLocalChanges).toBe(true);
+
+  const restored = resolveViewQuery(schema(), view, {
+    ...base,
+    filter: [{ field: "Status", op: "eq", value: "Todo" }],
+    sort: [],
+  });
+  expect(restored.hasLocalChanges).toBe(false);
+
+  const unsorted = resolveViewQuery(
+    schema(),
+    { name: "Main", type: "table" },
+    { ...base, filter: [], sort: [] },
+  );
+  expect(unsorted.hasLocalChanges).toBe(false);
+});
+
 test("a saved multi-value contains reads as the any operator without rewriting the view", () => {
   const view: CollectionView = {
     name: "Main",

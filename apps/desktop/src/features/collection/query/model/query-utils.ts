@@ -430,7 +430,11 @@ export function resolveViewQuery(
     sharedChanged: Boolean(
       ephemeral && ephemeral.baseViewHash !== baseViewHash,
     ),
-    hasLocalChanges: Boolean(ephemeral && hasStoredQueryChanges(ephemeral)),
+    hasLocalChanges: Boolean(
+      ephemeral &&
+      hasStoredQueryChanges(ephemeral) &&
+      queryDiffers(localConfig, persistent),
+    ),
     invalidFilters: validation.invalidFilters,
     invalidSorts: validation.invalidSorts,
     invalidGroupBy: validation.invalidGroupBy,
@@ -483,6 +487,16 @@ export function viewUpdatePatch(query: ViewQueryConfig) {
     sort: query.sort,
     group_by: query.groupBy ?? null,
   };
+}
+
+function queryDiffers(local: ViewQueryConfig, saved: ViewQueryConfig) {
+  const comparable = (query: ViewQueryConfig) =>
+    stableStringify({
+      filter: query.filter ?? [],
+      sort: query.sort ?? [],
+      groupBy: query.groupBy ?? null,
+    });
+  return comparable(local) !== comparable(saved);
 }
 
 function hasStoredQueryChanges(value: StoredViewQueryState) {
