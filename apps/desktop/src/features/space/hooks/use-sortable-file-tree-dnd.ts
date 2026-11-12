@@ -17,6 +17,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import type { TreeNode } from "../model/types";
+import { useShallowStableArray } from "@/shared/hooks/use-shallow-stable-array";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 import {
@@ -24,34 +25,51 @@ import {
   getProjection,
   removeDescendantsOf,
   removeCollapsedChildren,
-  type FlattenedItem,
+  isDescendantOf,
   type ProjectionIntent,
   type Projection,
 } from "../lib/tree-dnd-utilities";
-import { findTreeNode } from "../lib/tree-node-queries";
 import { useSpaceStore } from "../model";
 import { useSortableFileTreeActions } from "./use-sortable-file-tree-actions";
 
-export interface SortableFileTreeDndContextValue {
-  activeFolderPath: string | null;
-  activeId: string | null;
-  flatItems: FlattenedItem[];
-  flatItemsMap: Map<string, FlattenedItem>;
-  overId: string | null;
-  projection: Projection | null;
+/** What the drag shows on one row of the tree. */
+export interface FileTreeRowDndState {
+  /** A child of the dragged folder is not a drop target. */
+  sortableDisabled: boolean;
+  /** Where the drop line is drawn on this row, if it is the over row. */
+  dropType: "before" | "after" | null;
+  /** Depth of the projected place relative to this row. */
+  dropRelativeDepth: number;
+  nestTarget: boolean;
 }
+
+export const IDLE_ROW_DND_STATE: FileTreeRowDndState = {
+  sortableDisabled: false,
+  dropType: null,
+  dropRelativeDepth: 0,
+  nestTarget: false,
+};
+
+// A new options object would give every render new activators, and every
+// sortable row would render again with them.
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 5 } };
 
 interface UseSortableFileTreeDndInput {
   spaceId: string;
   tree: TreeNode[];
+  expandedSet: Set<string>;
+  nodeByPath: ReadonlyMap<string, TreeNode>;
 }
 
 export function useSortableFileTreeDnd({
   spaceId,
   tree,
+  expandedSet,
+  nodeByPath,
 }: UseSortableFileTreeDndInput) {
   const renderStartedAt = nowMs();
-  const { loadTreeChildren, toggleExpanded, expandedPaths } = useSpaceStore();
+  const loadTreeChildren = useSpaceStore((state) => state.loadTreeChildren);
+  const toggleExpanded = useSpaceStore((state) => state.toggleExpanded);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -78,15 +96,7 @@ export function useSortableFileTreeDnd({
     };
   }, []);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 },
-    }),
-  );
-
-  const expandedSet = useMemo(() => {
-    return new Set(expandedPaths[spaceId] ?? []);
-  }, [expandedPaths, spaceId]);
+  const sensors = useSensors(useSensor(PointerSensor, POINTER_SENSOR_OPTIONS));
 
   const flatItems = useMemo(() => {
     const all = flattenTree(tree);
@@ -105,9 +115,10 @@ export function useSortableFileTreeDnd({
     [flatItems],
   );
 
-  const sortableIds = useMemo(
-    () => flatItems.map((item) => item.path),
-    [flatItems],
+  // Every sortable row reads the ids through the sortable context, so the
+  // list keeps its identity while the ids stay the same.
+  const sortableIds = useShallowStableArray(
+    useMemo(() => flatItems.map((item) => item.path), [flatItems]),
   );
 
   useEffect(() => {
@@ -274,7 +285,7 @@ export function useSortableFileTreeDnd({
       }
       if (!nextOverId) return;
 
-      const overNode = findTreeNode(tree, nextOverId);
+      const overNode = nodeByPath.get(nextOverId);
       if (
         !overNode ||
         !treeNodeHasChildren(overNode) ||
@@ -292,9 +303,9 @@ export function useSortableFileTreeDnd({
       computeProjection,
       expandedSet,
       loadTreeChildren,
+      nodeByPath,
       spaceId,
       toggleExpanded,
-      tree,
     ],
   );
 
@@ -331,23 +342,42 @@ export function useSortableFileTreeDnd({
     resetState();
   }, [resetState]);
 
-  const activeNode = activeId ? findTreeNode(tree, activeId) : null;
+  const activeNode = activeId ? (nodeByPath.get(activeId) ?? null) : null;
 
   const activeFolderPath = useMemo(() => {
     if (!activeId || !activeNode) return null;
     return treeParentKeyForNode(activeNode);
   }, [activeId, activeNode]);
 
-  const contextValue = useMemo<SortableFileTreeDndContextValue>(
-    () => ({
-      activeFolderPath,
-      activeId,
-      flatItems,
-      flatItemsMap,
-      overId,
-      projection,
-    }),
-    [activeFolderPath, activeId, flatItems, flatItemsMap, overId, projection],
+  const rowDndState = useCallback(
+    (path: string): FileTreeRowDndState => {
+      if (activeId === null) return IDLE_ROW_DND_STATE;
+      const sortableDisabled =
+        !!activeFolderPath &&
+        path !== activeId &&
+        isDescendantOf(path, activeFolderPath);
+      // projection.overPath is the source of truth for the nest highlight.
+      const nestTarget =
+        projection?.overPath === path && projection.type === "child";
+      const overProjection = overId === path ? projection : null;
+      const dropType =
+        overProjection && overProjection.type !== "child"
+          ? overProjection.type
+          : null;
+      if (!sortableDisabled && !nestTarget && !dropType) {
+        return IDLE_ROW_DND_STATE;
+      }
+      return {
+        sortableDisabled,
+        dropType,
+        dropRelativeDepth:
+          dropType && overProjection
+            ? overProjection.depth - (flatItemsMap.get(path)?.depth ?? 0)
+            : 0,
+        nestTarget,
+      };
+    },
+    [activeFolderPath, activeId, flatItemsMap, overId, projection],
   );
 
   useEffect(() => {
@@ -364,14 +394,15 @@ export function useSortableFileTreeDnd({
   }, [activeId, spaceId]);
 
   return {
+    activeId,
     activeNode,
-    contextValue,
     handleDragCancel,
     handleDragEnd,
     handleDragMove,
     handleDragOver,
     handleDragStart,
     collisionDetection,
+    rowDndState,
     sensors,
     sortableIds,
   };

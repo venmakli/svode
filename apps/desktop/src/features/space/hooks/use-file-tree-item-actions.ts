@@ -1,14 +1,11 @@
-import {
-  useActiveContentPath,
-  useActiveContentShown,
-  useActiveContentSpaceId,
-  useOpenScopeOwner,
-} from "@/features/artifact";
+import { useShallow } from "zustand/shallow";
+import { useOpenScopeOwner } from "@/features/artifact";
 import { pathNavigationKey, type NavigationItem } from "@/features/navigation";
 import { useOpenPage } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
-import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
+import { treeNodeHasChildren } from "../lib/tree-cache";
+import { isBareFolderNode } from "../lib/file-tree-rows";
 import { useSpaceStore } from "../model";
 import { useFileTreeItemCreate } from "./use-file-tree-item-create";
 import { useFileTreeItemDelete } from "./use-file-tree-item-delete";
@@ -23,13 +20,10 @@ type LoadTreeChildren = (
 interface UseFileTreeItemActionsInput {
   node: TreeNode;
   spaceId: string;
+  expanded: boolean;
   loadTreeChildren: LoadTreeChildren;
   onActivateContent?: () => void;
   onBeforeNavigation?: () => Promise<boolean>;
-}
-
-function isBareFolder(node: TreeNode): boolean {
-  return !node.path.endsWith(".md");
 }
 
 /** How a tree node is pinned; a bare folder is not a pinnable object. */
@@ -42,7 +36,7 @@ function treeNodeNavigationItem(
     ? "collection"
     : node.kind === "app" || node.has_app
       ? "app"
-      : isBareFolder(node)
+      : isBareFolderNode(node)
         ? null
         : "page";
   if (!kind) return null;
@@ -56,6 +50,7 @@ function treeNodeNavigationItem(
 export function useFileTreeItemActions({
   node,
   spaceId,
+  expanded,
   loadTreeChildren,
   onActivateContent,
   onBeforeNavigation,
@@ -74,12 +69,9 @@ export function useFileTreeItemActions({
     );
   const openTreePage = (path: string, targetSpaceId: string) =>
     openPage(path, targetSpaceId, { fromSidebar: true });
-  const activeContentPath = useActiveContentPath();
-  const activeContentSpaceId = useActiveContentSpaceId();
-  const contentShown = useActiveContentShown();
+  // A row reads only what it shows; the rest of the store is read when an
+  // action runs, so unrelated store updates do not render the row.
   const {
-    expandedPaths,
-    treeParentLoading,
     toggleExpanded,
     reloadTreeParent,
     reloadTreeParents,
@@ -87,33 +79,32 @@ export function useFileTreeItemActions({
     reloadTreePathParents,
     patchPageTreeMeta,
     removeTreePath,
-    spaces,
-    rootSpaces,
-    activeSpaceId,
     activeRootId,
     activeRootPath,
-    childrenByParentPath,
-  } = useSpaceStore();
+  } = useSpaceStore(
+    useShallow((state) => ({
+      toggleExpanded: state.toggleExpanded,
+      reloadTreeParent: state.reloadTreeParent,
+      reloadTreeParents: state.reloadTreeParents,
+      reloadTreePathParent: state.reloadTreePathParent,
+      reloadTreePathParents: state.reloadTreePathParents,
+      patchPageTreeMeta: state.patchPageTreeMeta,
+      removeTreePath: state.removeTreePath,
+      activeRootId: state.activeRootId,
+      activeRootPath: state.activeRootPath,
+    })),
+  );
+  const space = useSpaceStore(
+    (state) =>
+      state.spaces.find((item) => item.id === spaceId) ??
+      state.rootSpaces.find((item) => item.id === spaceId),
+  );
 
-  const space =
-    spaces.find((item) => item.id === spaceId) ??
-    rootSpaces.find((item) => item.id === spaceId);
   const spacePath =
     space?.path ?? (spaceId === activeRootId ? activeRootPath : null);
-  const bareFolder = isBareFolder(node);
+  const bareFolder = isBareFolderNode(node);
   const knownChildren = treeNodeHasChildren(node);
-  const expandable = node.has_app ? knownChildren : bareFolder || knownChildren;
-  const childParentKey = treeParentKeyForNode(node);
-  const childLoading = childParentKey
-    ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
-    : false;
   const isUnsaved = useEditorFilePendingWrite(spacePath, node.path);
-  const isActive =
-    contentShown &&
-    (!bareFolder || node.has_app) &&
-    activeContentPath === node.path &&
-    activeContentSpaceId === spaceId;
-  const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
 
   const rename = useFileTreeItemRename({
     node,
@@ -124,12 +115,6 @@ export function useFileTreeItemActions({
     reloadTreeParents,
     patchPageTreeMeta,
     removeTreePath,
-    siblingRows:
-      childrenByParentPath[spaceId]?.[
-        node.path.toLowerCase().endsWith("/readme.md")
-          ? node.path.split("/").slice(0, -2).join("/")
-          : node.path.split("/").slice(0, -1).join("/")
-      ] ?? [],
   });
 
   const creation = useFileTreeItemCreate({
@@ -138,7 +123,6 @@ export function useFileTreeItemActions({
     space,
     bareFolder,
     activeRootPath,
-    expandedPaths,
     openPage,
     openCollectionOwner,
     reloadTreeParent,
@@ -163,8 +147,6 @@ export function useFileTreeItemActions({
     spaceId,
     bareFolder,
     expanded,
-    activeRootId,
-    activeSpaceId,
     loadTreeChildren,
     onActivateContent,
     onBeforeNavigation,
@@ -178,12 +160,9 @@ export function useFileTreeItemActions({
     bareFolder,
     pinItem: treeNodeNavigationItem(node, spaceId, activeRootId),
     cancelDelete: deletion.cancelDelete,
-    childLoading,
     deleteConfirmation: deletion.deleteConfirmation,
     editRef: rename.editRef,
     editValue: rename.editValue,
-    expandable,
-    expanded,
     handleDeleteConfirm: deletion.handleDeleteConfirm,
     handleDeleteRequest: deletion.handleDeleteRequest,
     handleDuplicate: creation.handleDuplicate,
@@ -197,7 +176,6 @@ export function useFileTreeItemActions({
     handleRenameKeyDown: rename.handleRenameKeyDown,
     handleRenameSubmit: rename.handleRenameSubmit,
     handleStartRename: rename.handleStartRename,
-    isActive,
     isEditing: rename.isEditing,
     renameConflictPath: rename.renameConflictPath,
     isUnsaved,

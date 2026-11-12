@@ -18,11 +18,9 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
 } from "@/components/ui/sidebar";
 import type { TreeNode } from "../model/types";
 import { SpaceGitActivityIndicator } from "@/features/git/sidebar";
-import { FileTreeItem } from "./file-tree-item";
 import { SortableFileTree } from "./sortable-file-tree";
 import { TreeLoadingRows } from "./nav-space-indicators";
 
@@ -129,22 +127,15 @@ export function RootScopeRow({
           {loading && !treeLoaded ? (
             <TreeLoadingRows />
           ) : (
-            <SortableFileTree spaceId={spaceId} tree={tree}>
-              <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-                {tree.map((node) => (
-                  <FileTreeItem
-                    key={node.path}
-                    node={node}
-                    spaceId={spaceId}
-                    loadTreeChildren={loadTreeChildren}
-                    onActivateContent={onActivateContent}
-                    onBeforeNavigation={onBeforeNavigation}
-                    projectPath={rootPath}
-                    spacePath={rootPath}
-                  />
-                ))}
-              </SidebarMenuSub>
-            </SortableFileTree>
+            <SortableFileTree
+              spaceId={spaceId}
+              tree={tree}
+              loadTreeChildren={loadTreeChildren}
+              onActivateContent={onActivateContent}
+              onBeforeNavigation={onBeforeNavigation}
+              projectPath={rootPath}
+              spacePath={rootPath}
+            />
           )}
         </CollapsibleContent>
       </SidebarMenuItem>

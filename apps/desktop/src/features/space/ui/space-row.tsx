@@ -23,7 +23,6 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
 } from "@/components/ui/sidebar";
 import {
   Tooltip,
@@ -41,7 +40,6 @@ import {
   type SpaceScopeCollapseState,
 } from "../hooks/use-space-scope-collapse";
 import type { SpaceInfo } from "../model";
-import { FileTreeItem } from "./file-tree-item";
 import {
   SpaceConfigWarningIcon,
   TreeLoadingRows,
@@ -306,22 +304,15 @@ export function SpaceRow({
           {loading && !treeLoaded ? (
             <TreeLoadingRows />
           ) : (
-            <SortableFileTree spaceId={ws.id} tree={tree}>
-              <SidebarMenuSub className="ml-4 border-l-0 pl-2">
-                {tree.map((node) => (
-                  <FileTreeItem
-                    key={node.path}
-                    node={node}
-                    spaceId={ws.id}
-                    loadTreeChildren={loadTreeChildren}
-                    onActivateContent={onActivateContent}
-                    onBeforeNavigation={onBeforeNavigation}
-                    projectPath={rootPath}
-                    spacePath={ws.path}
-                  />
-                ))}
-              </SidebarMenuSub>
-            </SortableFileTree>
+            <SortableFileTree
+              spaceId={ws.id}
+              tree={tree}
+              loadTreeChildren={loadTreeChildren}
+              onActivateContent={onActivateContent}
+              onBeforeNavigation={onBeforeNavigation}
+              projectPath={rootPath}
+              spacePath={ws.path}
+            />
           )}
         </CollapsibleContent>
       </SidebarMenuItem>

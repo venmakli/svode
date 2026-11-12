@@ -11,8 +11,6 @@ interface UseFileTreeItemNavigationInput {
   spaceId: string;
   bareFolder: boolean;
   expanded: boolean;
-  activeRootId: string | null;
-  activeSpaceId: string | null;
   loadTreeChildren: LoadTreeChildren;
   onActivateContent?: () => void;
   onBeforeNavigation?: () => Promise<boolean>;
@@ -27,8 +25,6 @@ export function useFileTreeItemNavigation({
   spaceId,
   bareFolder,
   expanded,
-  activeRootId,
-  activeSpaceId,
   loadTreeChildren,
   onActivateContent,
   onBeforeNavigation,
@@ -42,6 +38,7 @@ export function useFileTreeItemNavigation({
       return;
     }
     onActivateContent?.();
+    const { activeRootId, activeSpaceId } = useSpaceStore.getState();
     const isRootWorkspace = spaceId === activeRootId;
     if (isRootWorkspace && activeSpaceId) {
       useSpaceStore.getState().clearActiveSpace();

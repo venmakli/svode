@@ -15,8 +15,14 @@ import {
   createBareFolderPage,
   resolveTreeChildTarget,
 } from "../api/content-tree-actions";
-import type { SpaceInfo } from "../model";
+import { useSpaceStore, type SpaceInfo } from "../model";
 import { signalCreatedArtifact } from "@/features/navigation";
+
+function isTreePathExpanded(spaceId: string, path: string): boolean {
+  return (
+    useSpaceStore.getState().expandedPaths[spaceId]?.includes(path) ?? false
+  );
+}
 
 interface UseFileTreeItemCreateInput {
   node: TreeNode;
@@ -24,7 +30,6 @@ interface UseFileTreeItemCreateInput {
   space: SpaceInfo | undefined;
   bareFolder: boolean;
   activeRootPath: string | null;
-  expandedPaths: Record<string, string[]>;
   openPage: (path: string, spaceId: string) => void;
   openCollectionOwner: (path: string, spaceId: string) => void;
   reloadTreeParent: (
@@ -44,7 +49,6 @@ export function useFileTreeItemCreate({
   space,
   bareFolder,
   activeRootPath,
-  expandedPaths,
   openPage,
   openCollectionOwner,
   reloadTreeParent,
@@ -75,7 +79,7 @@ export function useFileTreeItemCreate({
         await reloadTreePathParent(spaceId, node.path);
       }
       await reloadTreeParent(spaceId, parentPath);
-      if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
+      if (!isTreePathExpanded(spaceId, parentNodePath)) {
         toggleExpanded(spaceId, parentNodePath);
       }
       openPage(page.path, spaceId);
@@ -196,7 +200,7 @@ export function useFileTreeItemCreate({
         await reloadTreePathParent(spaceId, node.path);
       }
       await reloadTreeParent(spaceId, parentPath);
-      if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
+      if (!isTreePathExpanded(spaceId, parentNodePath)) {
         toggleExpanded(spaceId, parentNodePath);
       }
     } catch (err) {

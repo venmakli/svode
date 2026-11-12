@@ -86,6 +86,7 @@
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-router": "^1",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "3.14.23",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-shell": "^2.6.0",

@@ -89,7 +89,6 @@ async function renameFolder(
       patchPageTreeMeta: () => undefined,
       reloadTreeParents: async () => undefined,
       removeTreePath: () => undefined,
-      siblingRows: [],
       space,
       spaceId: "root",
     });

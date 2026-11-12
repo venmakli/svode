@@ -182,7 +182,6 @@ async function environment(page = PAGE) {
       patchPageTreeMeta: () => undefined,
       reloadTreeParents: async () => undefined,
       removeTreePath: () => undefined,
-      siblingRows: [],
       space,
       spaceId: "root",
     });

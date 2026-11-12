@@ -70,7 +70,6 @@ if (process.env.SVODE_TREE_ITEM_CREATE_PROCESS !== "1") {
       space: space as SpaceInfo,
       bareFolder: false,
       activeRootPath: "/project",
-      expandedPaths: {},
       openPage: () => undefined,
       openCollectionOwner: () => undefined,
       reloadTreeParent: async () => undefined,

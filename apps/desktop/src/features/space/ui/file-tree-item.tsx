@@ -1,16 +1,16 @@
 import {
+  memo,
   useCallback,
-  useContext,
   useEffect,
-  useRef,
-  type ReactElement,
+  useState,
+  type CSSProperties,
   type DragEvent,
+  type FocusEvent,
+  type ReactElement,
 } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import * as m from "@/paraglide/messages.js";
-import { useActiveContentOpenedFromSidebar } from "@/features/artifact";
 import {
-  SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
@@ -19,11 +19,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   Tooltip,
   TooltipContent,
@@ -49,28 +44,69 @@ import {
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
+import { treeNodeHasChildren } from "../lib/tree-cache";
+import { treeRowInset } from "../lib/file-tree-rows";
 import { FileTreeItemMenuItems } from "./file-tree-item-menu";
-import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
-import { isDescendantOf } from "../lib/tree-dnd-utilities";
 import { writeSvodeResourceDragData } from "../lib/resource-drag";
 import type { SvodeDraggedResourceKind } from "../model/resource-drag";
 
+type LoadTreeChildren = (
+  spaceId: string,
+  parentPath?: string | null,
+) => Promise<void>;
+
 interface FileTreeItemProps {
   node: TreeNode;
+  depth: number;
+  expandable: boolean;
+  expanded: boolean;
+  isActive: boolean;
+  /** Index of the row in the virtual list, read by its measurement. */
+  index: number;
+  /** Vertical place of the row inside the list. */
+  offset: number;
+  measureRef: (element: HTMLLIElement | null) => void;
+  /** Keeps the row mounted while it holds a rename, menu, dialog or focus. */
+  onKeepMountedChange: (path: string, keepMounted: boolean) => void;
+  sortableDisabled: boolean;
+  dropType: "before" | "after" | null;
+  dropRelativeDepth: number;
+  nestTarget: boolean;
   spaceId: string;
-  loadTreeChildren: (
-    spaceId: string,
-    parentPath?: string | null,
-  ) => Promise<void>;
+  loadTreeChildren: LoadTreeChildren;
   onActivateContent?: () => void;
   onBeforeNavigation?: () => Promise<boolean>;
   projectPath: string;
   spacePath: string;
 }
 
-export function FileTreeItem({
+/** A row's place in the root list of the flat tree. */
+function treeRowStyle(depth: number, offset: number): CSSProperties {
+  const { left, right } = treeRowInset(depth);
+  return {
+    position: "absolute",
+    top: 0,
+    left,
+    right,
+    transform: `translateY(${offset}px)`,
+  };
+}
+
+function FileTreeItemRow({
   node,
+  depth,
+  expandable,
+  expanded,
+  isActive,
+  index,
+  offset,
+  measureRef,
+  onKeepMountedChange,
+  sortableDisabled,
+  dropType,
+  dropRelativeDepth,
+  nestTarget,
   spaceId,
   loadTreeChildren,
   onActivateContent,
@@ -81,12 +117,9 @@ export function FileTreeItem({
   const {
     bareFolder,
     cancelDelete,
-    childLoading,
     deleteConfirmation,
     editRef,
     editValue,
-    expandable,
-    expanded,
     handleDeleteConfirm,
     handleDeleteRequest,
     handleDuplicate,
@@ -101,7 +134,6 @@ export function FileTreeItem({
     handleRenameKeyDown,
     handleRenameSubmit,
     handleStartRename,
-    isActive,
     isEditing,
     renameConflictPath,
     isUnsaved,
@@ -111,28 +143,16 @@ export function FileTreeItem({
   } = useFileTreeItemActions({
     node,
     spaceId,
+    expanded,
     loadTreeChildren,
     onActivateContent,
     onBeforeNavigation,
   });
 
-  const { activeId, activeFolderPath, overId, projection, flatItemsMap } =
-    useContext(TreeDndContext);
-
-  // Disable sortable for children of the currently dragged folder
-  const isChildOfDragged =
-    !!activeFolderPath &&
-    node.path !== activeId &&
-    isDescendantOf(node.path, activeFolderPath);
-
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: node.path,
-    disabled: isChildOfDragged,
+    disabled: sortableDisabled,
   });
-  const itemRef = useRef<HTMLLIElement | null>(null);
-  const setItemRef = useCallback((element: HTMLLIElement | null) => {
-    itemRef.current = element;
-  }, []);
   const setRowRef = useCallback(
     (element: HTMLDivElement | null) => {
       setNodeRef(element);
@@ -140,26 +160,24 @@ export function FileTreeItem({
     [setNodeRef],
   );
 
-  const openedFromSidebar = useActiveContentOpenedFromSidebar();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const keepMounted =
+    isEditing || menuOpen || deleteConfirmation !== null || focused;
   useEffect(() => {
-    if (!isActive || openedFromSidebar) return;
-    const frame = window.requestAnimationFrame(() => {
-      itemRef.current?.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-        behavior: "smooth",
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [isActive, node.path, openedFromSidebar, spaceId]);
+    if (!keepMounted) return;
+    onKeepMountedChange(node.path, true);
+    return () => onKeepMountedChange(node.path, false);
+  }, [keepMounted, node.path, onKeepMountedChange]);
+  const handleFocus = () => setFocused(true);
+  const handleBlur = (event: FocusEvent<HTMLLIElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setFocused(false);
+    }
+  };
 
-  const isOver = activeId !== null && overId === node.path;
-  // Use projection.overPath as source of truth for nest highlight target
-  const isProjectionTarget =
-    activeId !== null && projection?.overPath === node.path;
-  const myDepth = flatItemsMap.get(node.path)?.depth ?? 0;
-
-  const style = {
+  const style: CSSProperties = {
+    ...treeRowStyle(depth, offset),
     opacity: isDragging ? 0.4 : undefined,
   };
 
@@ -221,7 +239,11 @@ export function FileTreeItem({
         aria-describedby={renameConflictPath ? renameErrorId : undefined}
         onChange={(e) => setEditValue(e.target.value)}
         onBlur={handleRenameSubmit}
-        onKeyDown={handleRenameKeyDown}
+        onKeyDown={(event) => {
+          handleRenameKeyDown(event);
+          // Escape removes the focused field without a blur event.
+          if (event.key === "Escape") setFocused(false);
+        }}
         onClick={(e) => e.stopPropagation()}
       />
       <FieldError id={renameErrorId} className="truncate text-[10px] leading-3">
@@ -268,7 +290,7 @@ export function FileTreeItem({
   });
 
   const contextMenu = (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <button className="flex h-7 w-5 shrink-0 items-center justify-center opacity-0 group-hover/tree-item:opacity-50 hover:!opacity-100">
           <Ellipsis className="h-3 w-3" />
@@ -289,26 +311,13 @@ export function FileTreeItem({
     </DropdownMenu>
   );
 
-  // Relative depth: how much deeper/shallower the projected position is
-  // compared to this item's actual depth
-  const relativeDepth = projection ? projection.depth - myDepth : 0;
-  const isNestTarget = isProjectionTarget && projection?.type === "child";
-  const dropIndicator =
-    isOver && projection && projection.type !== "child" ? (
-      <TreeDropIndicator type={projection.type} relativeDepth={relativeDepth} />
-    ) : null;
+  const dropIndicator = dropType ? (
+    <TreeDropIndicator type={dropType} relativeDepth={dropRelativeDepth} />
+  ) : null;
 
-  const nestHighlight = isNestTarget
+  const nestHighlight = nestTarget
     ? "bg-sidebar-accent ring-1 ring-sidebar-primary/30 rounded-md"
     : "";
-
-  const deleteConfirmDialog = (
-    <ContentDeleteDialog
-      confirmation={deleteConfirmation}
-      onCancel={cancelDelete}
-      onConfirm={(path) => void handleDeleteConfirm(path)}
-    />
-  );
 
   function withDescriptionTooltip(element: ReactElement) {
     if (!hasMetadataTooltip) return element;
@@ -333,139 +342,138 @@ export function FileTreeItem({
     );
   }
 
-  // Leaf node (simple file without known children)
-  if (!expandable) {
-    return (
-      <>
-        <SidebarMenuSubItem ref={setItemRef} style={style} className="relative">
-          {dropIndicator}
-          <div ref={setRowRef} className="flex items-center group/tree-item">
-            {dragHandle}
-            {withDescriptionTooltip(
-              <SidebarMenuSubButton
-                data-svode-resource-drag-source={isEditing ? undefined : true}
-                draggable={!isEditing}
-                isActive={isActive}
-                aria-label={
-                  projectedConflictPath
-                    ? `${node.title}. ${m.editor_name_existing_conflict({ path: node.path })}`
-                    : undefined
-                }
-                className={cn(
-                  "flex-1",
-                  projectedConflictPath && "h-auto min-h-7 py-1",
-                  !isEditing && "cursor-pointer active:cursor-grabbing",
-                  nestHighlight,
-                )}
-                onDragStart={isEditing ? undefined : handleResourceDragStart}
-                onClick={handlePageClick}
-                onDoubleClick={handleStartRename}
-              >
-                {iconElement}
-                {titleElement}
-                {dot}
-              </SidebarMenuSubButton>,
-            )}
-            {contextMenu}
-          </div>
-        </SidebarMenuSubItem>
-        {deleteConfirmDialog}
-      </>
-    );
-  }
+  // A folder row (Page with children, or bare folder) toggles its children
+  // with the chevron that replaces its icon on hover.
+  const leading = expandable ? (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      data-state={expanded ? "open" : "closed"}
+      className="relative h-4 w-4 shrink-0 flex items-center justify-center"
+      onClick={(event) => {
+        event.stopPropagation();
+        handleNodeOpenChange(!expanded);
+      }}
+    >
+      <span className="group-hover/tree-item:opacity-0 transition-opacity">
+        {iconElement}
+      </span>
+      <ChevronRight
+        className={cn(
+          "absolute inset-0 m-auto h-3 w-3 opacity-0 transition-all group-hover/tree-item:opacity-100",
+          expanded && "rotate-90",
+        )}
+      />
+    </button>
+  ) : (
+    iconElement
+  );
 
-  // Folder node (Page with children, or bare folder)
   return (
     <>
-      <SidebarMenuSubItem ref={setItemRef} style={style} className="relative">
+      <SidebarMenuSubItem
+        ref={measureRef}
+        data-index={index}
+        style={style}
+        className="relative"
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+      >
         {dropIndicator}
-        <Collapsible
-          open={expanded}
-          onOpenChange={handleNodeOpenChange}
-          className="group/collapsible"
-        >
-          <div ref={setRowRef} className="flex items-center group/tree-item">
-            {dragHandle}
-            {withDescriptionTooltip(
-              <SidebarMenuSubButton
-                data-svode-resource-drag-source={isEditing ? undefined : true}
-                draggable={!isEditing}
-                isActive={isActive}
-                aria-label={
-                  projectedConflictPath
-                    ? `${node.title}. ${m.editor_name_existing_conflict({ path: node.path })}`
-                    : undefined
-                }
-                className={cn(
-                  "flex-1",
-                  projectedConflictPath && "h-auto min-h-7 py-1",
-                  !isEditing && "cursor-pointer active:cursor-grabbing",
-                  nestHighlight,
-                )}
-                onDragStart={isEditing ? undefined : handleResourceDragStart}
-                onClick={handlePageClick}
-                onDoubleClick={handleStartRename}
-              >
-                <CollapsibleTrigger
-                  asChild
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button className="relative h-4 w-4 shrink-0 flex items-center justify-center">
-                    <span className="group-hover/tree-item:opacity-0 transition-opacity">
-                      {iconElement}
-                    </span>
-                    <ChevronRight
-                      className={cn(
-                        "absolute inset-0 m-auto h-3 w-3 opacity-0 transition-all group-hover/tree-item:opacity-100",
-                        expanded && "rotate-90",
-                      )}
-                    />
-                  </button>
-                </CollapsibleTrigger>
-                {titleElement}
-                {dot}
-              </SidebarMenuSubButton>,
-            )}
-            {contextMenu}
-          </div>
-          <CollapsibleContent>
-            <SidebarMenuSub className="border-l-0">
-              {childLoading && node.children.length === 0 ? (
-                <TreeChildLoadingRows />
-              ) : (
-                node.children.map((child) => (
-                  <FileTreeItem
-                    key={child.path}
-                    node={child}
-                    spaceId={spaceId}
-                    loadTreeChildren={loadTreeChildren}
-                    onActivateContent={onActivateContent}
-                    onBeforeNavigation={onBeforeNavigation}
-                    projectPath={projectPath}
-                    spacePath={spacePath}
-                  />
-                ))
+        <div ref={setRowRef} className="flex items-center group/tree-item">
+          {dragHandle}
+          {withDescriptionTooltip(
+            <SidebarMenuSubButton
+              data-svode-resource-drag-source={isEditing ? undefined : true}
+              draggable={!isEditing}
+              isActive={isActive}
+              aria-label={
+                projectedConflictPath
+                  ? `${node.title}. ${m.editor_name_existing_conflict({ path: node.path })}`
+                  : undefined
+              }
+              className={cn(
+                "flex-1",
+                projectedConflictPath && "h-auto min-h-7 py-1",
+                !isEditing && "cursor-pointer active:cursor-grabbing",
+                nestHighlight,
               )}
-            </SidebarMenuSub>
-          </CollapsibleContent>
-        </Collapsible>
+              onDragStart={isEditing ? undefined : handleResourceDragStart}
+              onClick={handlePageClick}
+              onDoubleClick={handleStartRename}
+            >
+              {leading}
+              {titleElement}
+              {dot}
+            </SidebarMenuSubButton>,
+          )}
+          {contextMenu}
+        </div>
       </SidebarMenuSubItem>
-      {deleteConfirmDialog}
+      <ContentDeleteDialog
+        confirmation={deleteConfirmation}
+        onCancel={cancelDelete}
+        onConfirm={(path) => void handleDeleteConfirm(path)}
+      />
     </>
   );
 }
 
-function TreeChildLoadingRows() {
+/**
+ * A row shows its node, not the children attached to it, so a node that
+ * changed only below it keeps the row as it is.
+ */
+function sameRowNode(previous: TreeNode, next: TreeNode): boolean {
+  if (previous === next) return true;
+  const previousKeys = Object.keys(previous) as (keyof TreeNode)[];
+  if (previousKeys.length !== Object.keys(next).length) return false;
+  for (const key of previousKeys) {
+    if (key === "children") continue;
+    if (previous[key] !== next[key]) return false;
+  }
+  return treeNodeHasChildren(previous) === treeNodeHasChildren(next);
+}
+
+function sameRowProps(
+  previous: FileTreeItemProps,
+  next: FileTreeItemProps,
+): boolean {
+  for (const key of Object.keys(next) as (keyof FileTreeItemProps)[]) {
+    if (key === "node") continue;
+    if (previous[key] !== next[key]) return false;
+  }
+  return sameRowNode(previous.node, next.node);
+}
+
+export const FileTreeItem = memo(FileTreeItemRow, sameRowProps);
+
+interface TreeChildLoadingRowProps {
+  depth: number;
+  index: number;
+  /** Which of the two placeholders this is. */
+  position: number;
+  offset: number;
+  measureRef: (element: HTMLLIElement | null) => void;
+}
+
+/** A placeholder row of a folder whose children are loading. */
+export function TreeChildLoadingRow({
+  depth,
+  index,
+  position,
+  offset,
+  measureRef,
+}: TreeChildLoadingRowProps) {
   return (
-    <>
-      {[0, 1].map((index) => (
-        <SidebarMenuSubItem key={index}>
-          <div className="flex h-7 items-center gap-2 rounded-md px-2">
-            <Skeleton className="size-4" />
-            <Skeleton className={index === 0 ? "h-3 w-24" : "h-3 w-20"} />
-          </div>
-        </SidebarMenuSubItem>
-      ))}
-    </>
+    <SidebarMenuSubItem
+      ref={measureRef}
+      data-index={index}
+      style={treeRowStyle(depth, offset)}
+    >
+      <div className="flex h-7 items-center gap-2 rounded-md px-2">
+        <Skeleton className="size-4" />
+        <Skeleton className={position === 0 ? "h-3 w-24" : "h-3 w-20"} />
+      </div>
+    </SidebarMenuSubItem>
   );
 }

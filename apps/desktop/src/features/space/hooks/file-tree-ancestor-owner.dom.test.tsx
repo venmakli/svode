@@ -194,7 +194,6 @@ async function environment(opening: Opening, readme: boolean) {
       patchPageTreeMeta: () => undefined,
       reloadTreeParents: async () => undefined,
       removeTreePath: () => undefined,
-      siblingRows: [],
       space,
       spaceId: "root",
     });

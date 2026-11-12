@@ -34,6 +34,16 @@ import {
   findPageNameConflictPath,
 } from "@/features/page/page-api";
 
+/** The loaded rows that share the name scope of a row, read at submit. */
+function siblingTreeRows(spaceId: string, path: string): readonly TreeNode[] {
+  const parent = path.toLowerCase().endsWith("/readme.md")
+    ? path.split("/").slice(0, -2).join("/")
+    : path.split("/").slice(0, -1).join("/");
+  return (
+    useSpaceStore.getState().childrenByParentPath[spaceId]?.[parent] ?? []
+  );
+}
+
 interface UseFileTreeItemRenameInput {
   node: TreeNode;
   spaceId: string;
@@ -52,7 +62,6 @@ interface UseFileTreeItemRenameInput {
     description?: string | null,
   ) => void;
   removeTreePath: (spaceId: string, path: string) => void;
-  siblingRows: readonly TreeNode[];
 }
 
 export function useFileTreeItemRename({
@@ -64,7 +73,6 @@ export function useFileTreeItemRename({
   reloadTreeParents,
   patchPageTreeMeta,
   removeTreePath,
-  siblingRows,
 }: UseFileTreeItemRenameInput) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -117,7 +125,7 @@ export function useFileTreeItemRename({
     if (!bareFolder) {
       const conflictPath = findPageNameConflictPath(
         newName,
-        siblingRows,
+        siblingTreeRows(spaceId, node.path),
         node.path,
       );
       if (conflictPath) {
