@@ -8,14 +8,12 @@ import {
   watchSpaceFiles,
 } from "../api/space-watch-actions";
 import {
-  applySpaceFileEvent,
+  applySpaceFileEventBatch,
   isSameSpaceFileEvent,
-  repairParentPathForSpaceFileEvent,
-  repairPathsForSpaceFileEvent,
-  shouldApplySpaceFileEvent,
   SPACE_FILE_EVENT_BATCH_MS,
   SPACE_FILE_EVENT_NAMES,
   type QueuedSpaceFileEvent,
+  type ResolvedSpaceFileEvent,
 } from "../lib/space-file-watch-events";
 import { useSpaceStore, type SpaceState } from "../model";
 
@@ -52,11 +50,6 @@ function selectWatchTargetKeys(state: SpaceState): string[] {
   return targets;
 }
 
-type ResolvedSpaceFileEvent = QueuedSpaceFileEvent & {
-  spaceId: string;
-  spacePath: string;
-};
-
 export function useSpaceFileWatch() {
   const watchTargetKeys = useSpaceStore(useShallow(selectWatchTargetKeys));
 
@@ -72,29 +65,12 @@ export function useSpaceFileWatch() {
     const targetByPath = new Map(
       watchTargets.map((target) => [target.spacePath, target]),
     );
-    const targetById = new Map(
-      watchTargets.map((target) => [target.spaceId, target]),
-    );
 
     const resolveEventTarget = (payload: { space?: string }) => {
       if (payload.space) {
         return targetByPath.get(payload.space) ?? null;
       }
       return watchTargets.length === 1 ? watchTargets[0] : null;
-    };
-
-    const flushRepairs = async (
-      repairsBySpace: Map<string, Set<string | null>>,
-    ) => {
-      for (const [spaceId, parents] of repairsBySpace) {
-        if (!targetById.has(spaceId)) continue;
-        const store = useSpaceStore.getState();
-        for (const parentPath of parents) {
-          store.markTreeParentDirty(spaceId, parentPath);
-          await store.loadTreeChildren(spaceId, parentPath, { force: true });
-        }
-        await store.ensureTreeLoaded(spaceId);
-      }
     };
 
     const flushQueue = () => {
@@ -104,48 +80,11 @@ export function useSpaceFileWatch() {
       if (batch.length === 0 || disposed) return;
       flushing = true;
 
-      void (async () => {
-        const repairsBySpace = new Map<string, Set<string | null>>();
-        const queueRepair = (spaceId: string, parentPath?: string | null) => {
-          const parent = parentPath ?? null;
-          const parents =
-            repairsBySpace.get(spaceId) ?? new Set<string | null>();
-          parents.add(parent);
-          repairsBySpace.set(spaceId, parents);
-        };
-
-        for (const { eventName, payload, spaceId, spacePath } of batch) {
-          if (!shouldApplySpaceFileEvent(payload, spacePath)) {
-            continue;
-          }
-          if (payload.affectsTree) {
-            const loaded =
-              useSpaceStore.getState().childrenByParentPath[spaceId] ?? {};
-            for (const path of repairPathsForSpaceFileEvent(payload)) {
-              if (path === "" || Object.hasOwn(loaded, path))
-                queueRepair(spaceId, path);
-            }
-          }
-          try {
-            await applySpaceFileEvent({
-              eventName,
-              getStore: () => useSpaceStore.getState(),
-              payload,
-              readPage: (pagePath) => readWatchedSpacePage(spacePath, pagePath),
-              repairTree: (parentPath) => queueRepair(spaceId, parentPath),
-              spaceId,
-            });
-          } catch (error) {
-            console.warn("Failed to apply space tree event:", error);
-            queueRepair(
-              spaceId,
-              repairParentPathForSpaceFileEvent(payload) ?? payload.parentPath,
-            );
-          }
-        }
-
-        await flushRepairs(repairsBySpace);
-      })().finally(() => {
+      void applySpaceFileEventBatch({
+        events: batch,
+        getStore: () => useSpaceStore.getState(),
+        readPage: readWatchedSpacePage,
+      }).finally(() => {
         flushing = false;
         if (queue.length > 0 && !disposed) {
           timer = setTimeout(flushQueue, SPACE_FILE_EVENT_BATCH_MS);
@@ -159,14 +98,6 @@ export function useSpaceFileWatch() {
     ) => {
       const target = resolveEventTarget(payload);
       if (!target) return;
-      if (
-        payload.affectsTree &&
-        shouldApplySpaceFileEvent(payload, target.spacePath)
-      ) {
-        for (const path of repairPathsForSpaceFileEvent(payload)) {
-          useSpaceStore.getState().markTreeParentDirty(target.spaceId, path);
-        }
-      }
       queue.push({ eventName, payload, ...target });
       if (timer) clearTimeout(timer);
       timer = setTimeout(flushQueue, SPACE_FILE_EVENT_BATCH_MS);

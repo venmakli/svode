@@ -1,10 +1,17 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import { create } from "zustand";
 import { treeLoadTargetFailure } from "../src/platform/space/content-tree-api";
 import type {
   MoveContentResult,
   SpaceInfo,
   TreeNode,
 } from "../src/features/space/model/types";
+import {
+  applySpaceFileEventBatch,
+  type ResolvedSpaceFileEvent,
+} from "../src/features/space/lib/space-file-watch-events";
+import type { SpaceFileEventName } from "../src/features/space/model/space-watch-events";
+let listCalls: Array<string | null>;
 let persisted: Record<string, string[]>;
 let save: (scope: string, paths: string[]) => Promise<void>;
 let read: (scope: string) => Promise<string[]>;
@@ -18,8 +25,10 @@ mock.module("../src/features/space/api/space-store-actions", () => ({
   getSpaceExpandedPaths: (scope: string) => read(scope),
   saveSpaceExpandedPaths: (scope: string, paths: string[]) =>
     save(scope, paths),
-  listSpaceTreeChildren: (scope: string, parent: string | null) =>
-    list(scope, parent),
+  listSpaceTreeChildren: (scope: string, parent: string | null) => {
+    listCalls.push(parent);
+    return list(scope, parent);
+  },
   listSpaceContentTree: (scope: string) => list(scope, null),
   moveSpaceTreeItem: (input: { from: string; toParent: string }) => move(input),
 }));
@@ -72,6 +81,7 @@ function fixture(paths?: string[]) {
   return { get, set };
 }
 beforeEach(() => {
+  listCalls = [];
   persisted = {};
   save = async (scope, paths) => {
     persisted[scope] = paths;
@@ -438,4 +448,312 @@ test("watcher invalidation rejects old child response and retains collapsed inte
   expect(get().childrenByParentPath.root?.app).toEqual([]);
   expect(get().expandedPaths.root).toEqual([]);
   expect(get().treeParentLoading.root?.app).toBeUndefined();
+});
+
+type StoreState = SpaceTreeState & {
+  rootSpaces: SpaceInfo[];
+  spaces: SpaceInfo[];
+  activeRootId: string | null;
+  activeSpaceId: string | null;
+  activeRootPath: string | null;
+  patchSpaceSchemaCapability: (spaceId: string, hasSchema: boolean) => void;
+  patchSpaceAppCapability: (spaceId: string, hasApp: boolean) => void;
+};
+
+function createStore() {
+  const store = create<StoreState>()((set, get) => ({
+    rootSpaces: [{ id: "root", path: "/root" }] as SpaceInfo[],
+    spaces: [],
+    activeRootId: "root",
+    activeSpaceId: null,
+    activeRootPath: "/root",
+    patchSpaceSchemaCapability: () => undefined,
+    patchSpaceAppCapability: () => undefined,
+    ...createSpaceTreeState<StoreState>(set, get),
+  }));
+  let notifications = 0;
+  store.subscribe(() => {
+    notifications++;
+  });
+  return {
+    store,
+    notifications: () => notifications,
+    resetNotifications: () => {
+      notifications = 0;
+    },
+  };
+}
+
+function page(path: string, title = path): TreeNode {
+  return {
+    name: path.split("/").pop() ?? path,
+    path,
+    title,
+    icon: null,
+    has_changes: false,
+    has_schema: false,
+    kind: "page",
+    hasChildren: false,
+    children: [],
+  };
+}
+
+function folder(path: string): TreeNode {
+  return { ...page(path), kind: "folder", hasChildren: true };
+}
+
+function pages(parent: string, count: number): TreeNode[] {
+  return Array.from({ length: count }, (_, index) =>
+    page(`${parent}/p-${index}.md`),
+  );
+}
+
+async function loadBigFolder(size: number) {
+  const fixture = createStore();
+  persisted["/root"] = ["big"];
+  list = async (_scope, parent) =>
+    parent === null
+      ? [folder("big"), folder("other")]
+      : parent === "big"
+        ? pages("big", size)
+        : [];
+  await fixture.store.getState().ensureTreeLoaded("root");
+  expect(fixture.store.getState().fileTrees.root[0].children).toHaveLength(
+    size,
+  );
+  listCalls = [];
+  fixture.resetNotifications();
+  return fixture;
+}
+
+async function runBatch(
+  eventName: SpaceFileEventName,
+  count: number,
+): Promise<{ notifications: number; reads: number; lists: typeof listCalls }> {
+  const { store, notifications } = await loadBigFolder(5000);
+  let reads = 0;
+  const events: ResolvedSpaceFileEvent[] = Array.from(
+    { length: count },
+    (_, index) => ({
+      eventName,
+      payload: {
+        path: `big/${eventName === "file:created" ? "new" : "p"}-${index}.md`,
+        kind: "page",
+        parentPath: "big",
+        affectsTree: eventName === "file:created",
+        affectsMetadata: true,
+      },
+      spaceId: "root",
+      spacePath: "/root",
+    }),
+  );
+  await applySpaceFileEventBatch({
+    events,
+    getStore: () => store.getState(),
+    readPage: async (_space, path) => {
+      reads++;
+      return { meta: { title: path, icon: null, description: null } };
+    },
+  });
+  return { notifications: notifications(), reads, lists: listCalls };
+}
+
+for (const eventName of ["file:created", "file:changed"] as const) {
+  test(`a batch of ${eventName} events updates the store a bounded number of times and lists the parent once`, async () => {
+    const small = await runBatch(eventName, 10);
+    const large = await runBatch(eventName, 1000);
+
+    expect(large.notifications).toBe(small.notifications);
+    expect(large.notifications).toBeLessThanOrEqual(10);
+    expect(large.lists.filter((parent) => parent === "big")).toHaveLength(1);
+    // Created rows also refresh the root row carrying the folder's child hint.
+    expect(large.lists).toEqual(
+      eventName === "file:created" ? ["big", null] : ["big"],
+    );
+    expect(large.reads).toBe(0);
+  });
+}
+
+test("a batch of deletions applies its patches in one store update", async () => {
+  const remove = async (count: number) => {
+    const { store, notifications } = await loadBigFolder(5000);
+    let patchUpdates = 0;
+    const unsubscribe = store.subscribe((state, previous) => {
+      if (state.childrenByParentPath !== previous.childrenByParentPath)
+        patchUpdates++;
+    });
+    list = async (_scope, parent) =>
+      parent === null
+        ? [folder("big"), folder("other")]
+        : pages("big", 5000).slice(count);
+    await applySpaceFileEventBatch({
+      events: Array.from({ length: count }, (_, index) => ({
+        eventName: "file:deleted" as const,
+        payload: {
+          path: `big/p-${index}.md`,
+          kind: "page" as const,
+          parentPath: "big",
+          affectsTree: true,
+        },
+        spaceId: "root",
+        spacePath: "/root",
+      })),
+      getStore: () => store.getState(),
+      readPage: async () => {
+        throw new Error("deletions do not read Pages");
+      },
+    });
+    unsubscribe();
+    expect(store.getState().childrenByParentPath.root.big).toHaveLength(
+      5000 - count,
+    );
+    return { notifications: notifications(), patchUpdates, lists: listCalls };
+  };
+
+  const small = await remove(10);
+  const large = await remove(1000);
+
+  expect(large.notifications).toBe(small.notifications);
+  expect(large.patchUpdates).toBe(1);
+  expect(large.lists.filter((parent) => parent === "big")).toHaveLength(1);
+});
+
+function countingNode(
+  path: string,
+  reads: { count: number },
+  kind: TreeNode["kind"] = "page",
+): TreeNode {
+  const node = { ...(kind === "folder" ? folder(path) : page(path)) };
+  Object.defineProperty(node, "path", {
+    enumerable: true,
+    get() {
+      reads.count++;
+      return path;
+    },
+  });
+  return node;
+}
+
+test("a node patch reads paths of the affected list and parents only", () => {
+  const reads = { count: 0 };
+  const parents = Array.from({ length: 20 }, (_, index) => `f${index}`);
+  const childrenByParent: Record<string, TreeNode[]> = {
+    "": parents.map((path) => countingNode(path, reads, "folder")),
+  };
+  for (const parent of parents) {
+    childrenByParent[parent] = Array.from({ length: 5000 }, (_, index) =>
+      countingNode(`${parent}/p-${index}.md`, reads),
+    );
+  }
+  const { store } = createStore();
+  store.setState({
+    childrenByParentPath: { root: childrenByParent },
+    expandedPaths: { root: parents },
+  });
+  const state = () => store.getState();
+  // The first build of the visible tree reads every loaded path once.
+  state().updateNodeMeta("root", "f7/p-1.md", "Warm", null);
+  expect(state().fileTrees.root).toHaveLength(20);
+  const bound = 5000 + parents.length;
+
+  const measure = (patch: () => void) => {
+    reads.count = 0;
+    patch();
+    return reads.count;
+  };
+
+  expect(
+    measure(() => state().updateNodeMeta("root", "f7/p-123.md", "New", "N")),
+  ).toBeLessThanOrEqual(bound);
+  expect(
+    measure(() => state().upsertTreeNode("root", "f7", page("f7/created.md"))),
+  ).toBeLessThanOrEqual(bound);
+  expect(
+    measure(() => state().removeTreePath("root", "f7/p-456.md")),
+  ).toBeLessThanOrEqual(bound);
+  expect(
+    measure(() => state().applyReadmeMeta("root", "f7/README.md", "F7", null)),
+  ).toBeLessThanOrEqual(bound);
+
+  const f7 = state().childrenByParentPath.root.f7;
+  expect(f7.find((node) => node.title === "New")?.icon).toBe("N");
+  expect(f7.some((node) => node.path === "f7/created.md")).toBe(true);
+  expect(f7.some((node) => node.path === "f7/p-456.md")).toBe(false);
+  expect(state().childrenByParentPath.root[""][7].title).toBe("F7");
+});
+
+function collectNodes(nodes: TreeNode[], result: TreeNode[] = []) {
+  for (const node of nodes) {
+    result.push(node);
+    collectNodes(node.children, result);
+  }
+  return result;
+}
+
+async function loadNestedTree() {
+  const fixture = createStore();
+  persisted["/root"] = ["a", "b", "b/inner"];
+  list = async (_scope, parent) =>
+    parent === null
+      ? [folder("a"), folder("b"), page("top.md")]
+      : parent === "a"
+        ? pages("a", 50)
+        : parent === "b"
+          ? [folder("b/inner"), ...pages("b", 20)]
+          : parent === "b/inner"
+            ? pages("b/inner", 10)
+            : [];
+  await fixture.store.getState().ensureTreeLoaded("root");
+  return fixture;
+}
+
+test("relisting the same content keeps every node of the visible tree", async () => {
+  const { store } = await loadNestedTree();
+  const before = store.getState().fileTrees.root;
+  const nodes = collectNodes(before);
+  const cached = store.getState().childrenByParentPath.root;
+
+  for (const parent of ["", "a", "b", "b/inner"]) {
+    await store.getState().loadTreeChildren("root", parent, { force: true });
+  }
+
+  const after = store.getState().fileTrees.root;
+  expect(after).toBe(before);
+  collectNodes(after).forEach((node, index) => expect(node).toBe(nodes[index]));
+  expect(store.getState().childrenByParentPath.root).toBe(cached);
+});
+
+test("a node patch renews only that node and its ancestors", async () => {
+  const { store } = await loadNestedTree();
+  const before = store.getState().fileTrees.root;
+  const nodes = collectNodes(before);
+
+  store.getState().updateNodeMeta("root", "b/inner/p-3.md", "Renamed", null);
+
+  const after = store.getState().fileTrees.root;
+  const renewed = new Set(["b", "b/inner", "b/inner/p-3.md"]);
+  expect(after).not.toBe(before);
+  collectNodes(after).forEach((node, index) => {
+    if (renewed.has(node.path)) expect(node).not.toBe(nodes[index]);
+    else expect(node).toBe(nodes[index]);
+  });
+  expect(after[1].children[0].children[3].title).toBe("Renamed");
+
+  const unchanged = store.getState().fileTrees.root;
+  store.getState().updateNodeMeta("root", "b/inner/p-3.md", "Renamed", null);
+  expect(store.getState().fileTrees.root).toBe(unchanged);
+});
+
+test("an expansion change keeps unchanged subtrees", async () => {
+  const { store } = await loadNestedTree();
+  const before = store.getState().fileTrees.root;
+
+  store.getState().toggleExpanded("root", "a");
+  await store.getState().loadExpandedPaths("root");
+
+  const after = store.getState().fileTrees.root;
+  expect(after[0]).not.toBe(before[0]);
+  expect(after[0].children).toEqual([]);
+  expect(after[1]).toBe(before[1]);
+  expect(after[2]).toBe(before[2]);
 });

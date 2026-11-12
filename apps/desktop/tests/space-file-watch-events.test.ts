@@ -119,3 +119,38 @@ test("applySpaceFileEvent removes schema marker on deleted schema files", async 
     ["repairTree", ""],
   ]);
 });
+
+test("applySpaceFileEvent does not read a Page whose parent list is refreshed", async () => {
+  const { calls, store } = createStore();
+  const readPage = async (path: string) => {
+    calls.push(["readPage", path]);
+    return page(path);
+  };
+
+  for (const eventName of ["file:created", "file:changed"] as const) {
+    await applySpaceFileEvent({
+      eventName,
+      getStore: () => store,
+      payload: { path: "docs/note.md", kind: "page", parentPath: "docs" },
+      readPage,
+      repairTree: (parentPath) => calls.push(["repairTree", parentPath]),
+      spaceId: "space-1",
+      patchesParent: (parentPath) => parentPath !== "docs",
+    });
+  }
+  await applySpaceFileEvent({
+    eventName: "file:created",
+    getStore: () => store,
+    payload: { path: "docs/guides/README.md", kind: "page" },
+    readPage,
+    repairTree: (parentPath) => calls.push(["repairTree", parentPath]),
+    spaceId: "space-1",
+    patchesParent: (parentPath) => parentPath !== "docs",
+  });
+
+  expect(calls).toEqual([
+    ["repairTree", "docs"],
+    ["repairTree", "docs"],
+    ["repairTree", "docs"],
+  ]);
+});

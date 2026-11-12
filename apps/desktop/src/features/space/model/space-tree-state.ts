@@ -25,9 +25,10 @@ import {
 import {
   ROOT_TREE_PARENT,
   applyReadmeMetaToParents,
-  buildLoadedTree,
   flattenChildrenByParentPath,
   loadedParentCache,
+  rebuildLoadedTree,
+  reconcileTreeChildren,
   removeReadmeMetaFromParents,
   removeTreePathFromParents,
   treeParentKey,
@@ -118,6 +119,11 @@ export interface SpaceTreeState extends SpaceTreeDataState {
   ) => void;
   updateNodeApp: (spaceId: string, folderPath: string, hasApp: boolean) => void;
   markTreeDirty: (spaceId: string) => void;
+  /**
+   * Runs synchronous tree actions as one store update: the visible tree of
+   * each changed Space is rebuilt once at the end.
+   */
+  batchTreeUpdates: (run: () => void) => void;
   markTreeParentDirty: (spaceId: string, parentPath?: string | null) => void;
   beginTreePathMutation: (spacePath: string) => () => void;
   /** Resolves once no structural operation over the Space is unfinished. */
@@ -290,14 +296,6 @@ function shouldValidateTreeParent(
   return Date.now() - cache.loadedAt > TREE_CACHE_TTL_MS;
 }
 
-function rebuildVisibleTree(
-  state: SpaceTreeDataState,
-  spaceId: string,
-  childrenByParentPath = state.childrenByParentPath[spaceId],
-): TreeNode[] {
-  return buildLoadedTree(childrenByParentPath, state.expandedPaths[spaceId]);
-}
-
 function ancestorFolderPathsForTreePath(path: string): string[] {
   const normalized = normalizeTreePath(path);
   if (!normalized || isSystemIgnoredTreePath(normalized)) return [];
@@ -351,10 +349,78 @@ function countTreeNodes(nodes: TreeNode[]): number {
   );
 }
 
+function sameVisibleTreePatch(
+  state: SpaceTreeDataState,
+  spaceId: string,
+  childrenByParentPath: ChildrenByParentPath,
+  tree: TreeNode[],
+): Pick<SpaceTreeDataState, "childrenByParentPath" | "fileTrees"> {
+  return {
+    childrenByParentPath:
+      state.childrenByParentPath[spaceId] === childrenByParentPath
+        ? state.childrenByParentPath
+        : { ...state.childrenByParentPath, [spaceId]: childrenByParentPath },
+    fileTrees:
+      hasRecordKey(state.fileTrees, spaceId) &&
+      state.fileTrees[spaceId] === tree
+        ? state.fileTrees
+        : { ...state.fileTrees, [spaceId]: tree },
+  };
+}
+
 export function createSpaceTreeState<T extends SpaceTreeStoreState>(
-  set: SpaceTreeSet<T>,
-  get: SpaceTreeGet<T>,
+  baseSet: SpaceTreeSet<T>,
+  baseGet: SpaceTreeGet<T>,
 ): SpaceTreeState {
+  // Inside `batchTreeUpdates` actions read and write a draft that reaches the
+  // store as one update.
+  let batch: {
+    state: T;
+    pending: Partial<T>;
+    rebuild: Set<string>;
+  } | null = null;
+  const get: SpaceTreeGet<T> = () => batch?.state ?? baseGet();
+  const set: SpaceTreeSet<T> = (partial) => {
+    if (!batch) {
+      baseSet(partial);
+      return;
+    }
+    const patch = (
+      typeof partial === "function" ? partial(batch.state) : partial
+    ) as Partial<T>;
+    if (patch === batch.state) return;
+    batch.state = { ...batch.state, ...patch };
+    batch.pending = { ...batch.pending, ...patch };
+  };
+  // Children of a Space and the visible tree built over its previous objects.
+  function visibleTreePatch(
+    state: SpaceTreeDataState,
+    spaceId: string,
+    childrenByParentPath: ChildrenByParentPath,
+  ): Partial<SpaceTreeDataState> {
+    if (batch) {
+      batch.rebuild.add(spaceId);
+      return {
+        childrenByParentPath:
+          state.childrenByParentPath[spaceId] === childrenByParentPath
+            ? state.childrenByParentPath
+            : {
+                ...state.childrenByParentPath,
+                [spaceId]: childrenByParentPath,
+              },
+      };
+    }
+    return sameVisibleTreePatch(
+      state,
+      spaceId,
+      childrenByParentPath,
+      rebuildLoadedTree(
+        state.fileTrees[spaceId],
+        childrenByParentPath,
+        state.expandedPaths[spaceId],
+      ),
+    );
+  }
   function scopeId(scope: string) {
     return [...get().rootSpaces, ...get().spaces].find(
       (space) => space.path === scope,
@@ -377,15 +443,19 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       )
         return;
       const next = projectExpansionPaths(paths, get().childrenByParentPath[id]);
-      set((state) => ({
-        expandedPaths: { ...state.expandedPaths, [id]: next },
-        fileTrees: state.childrenByParentPath[id]
-          ? {
-              ...state.fileTrees,
-              [id]: buildLoadedTree(state.childrenByParentPath[id], next),
-            }
-          : state.fileTrees,
-      }));
+      set((state) => {
+        const expanded = { ...state.expandedPaths, [id]: next };
+        const children = state.childrenByParentPath[id];
+        if (!children) return { expandedPaths: expanded };
+        return {
+          ...visibleTreePatch(
+            { ...state, expandedPaths: expanded },
+            id,
+            children,
+          ),
+          expandedPaths: expanded,
+        };
+      });
     },
   });
   const expansionIntents = new Map<string, number>();
@@ -480,6 +550,38 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         false,
       );
   }
+  // A patch of the cached children of a Space, or of its visible tree when
+  // no children are cached.
+  function patchSpaceTree(
+    spaceId: string,
+    patchChildren: (
+      children: ChildrenByParentPath,
+    ) => ChildrenByParentPath | undefined,
+    patchTree: (tree: TreeNode[]) => TreeNode[],
+    touchCache = true,
+  ) {
+    set((state) => {
+      const cache = touchCache
+        ? {
+            treeCache: {
+              ...state.treeCache,
+              [spaceId]: { loadedAt: Date.now(), dirty: false },
+            },
+          }
+        : {};
+      const current = state.childrenByParentPath[spaceId];
+      if (current) {
+        const next = patchChildren(current);
+        if (!next || next === current) return state;
+        return { ...visibleTreePatch(state, spaceId, next), ...cache };
+      }
+      const tree = state.fileTrees[spaceId];
+      if (!tree) return state;
+      const next = patchTree(tree);
+      if (next === tree) return state;
+      return { fileTrees: { ...state.fileTrees, [spaceId]: next }, ...cache };
+    });
+  }
   function projectExpansion(id: string) {
     const paths = get().expandedPaths[id];
     if (!paths) return;
@@ -547,17 +649,22 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
             ]),
         );
         set((s) => ({
-          childrenByParentPath: {
-            ...s.childrenByParentPath,
-            [id]: childrenByParent,
-          },
+          ...visibleTreePatch(
+            s,
+            id,
+            Object.fromEntries(
+              Object.entries(childrenByParent).map(([parent, nodes]) => [
+                parent,
+                reconcileTreeChildren(
+                  s.childrenByParentPath[id]?.[parent],
+                  nodes,
+                ),
+              ]),
+            ),
+          ),
           treeParentCache: {
             ...s.treeParentCache,
             [id]: loadedParentCache(childrenByParent, loadedAt),
-          },
-          fileTrees: {
-            ...s.fileTrees,
-            [id]: buildLoadedTree(childrenByParent, s.expandedPaths[id]),
           },
           treeCache: {
             ...s.treeCache,
@@ -728,29 +835,20 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         nodeCount = children.length;
         const loadedAt = Date.now();
         set((state) => {
-          const nextChildrenByParent = {
-            ...(state.childrenByParentPath[spaceId] ?? {}),
-            [parentKey]: children.map((node) => ({ ...node, children: [] })),
-          };
+          const current = state.childrenByParentPath[spaceId];
+          const list = reconcileTreeChildren(current?.[parentKey], children);
+          const nextChildrenByParent =
+            current && current[parentKey] === list
+              ? current
+              : { ...(current ?? {}), [parentKey]: list };
           return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildrenByParent,
-            },
+            ...visibleTreePatch(state, spaceId, nextChildrenByParent),
             treeParentCache: {
               ...state.treeParentCache,
               [spaceId]: {
                 ...(state.treeParentCache[spaceId] ?? {}),
                 [parentKey]: { loadedAt, dirty: false },
               },
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(
-                state,
-                spaceId,
-                nextChildrenByParent,
-              ),
             },
             treeCache: isRootParent
               ? {
@@ -864,276 +962,95 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       icon: string | null,
       description?: string | null,
     ) => {
-      set((state) => {
-        const nextChildren = updateTreeNodeMetaInParents(
-          state.childrenByParentPath[spaceId],
-          path,
-          { title, icon, description },
-        );
-        if (
-          !nextChildren ||
-          nextChildren === state.childrenByParentPath[spaceId]
-        ) {
-          const tree = state.fileTrees[spaceId];
-          if (!tree) return {};
-          const next = updateTreeNodeMeta(tree, path, {
-            title,
-            icon,
-            description,
-          });
-          if (next === tree) return {};
-          return { fileTrees: { ...state.fileTrees, [spaceId]: next } };
-        }
-        return {
-          childrenByParentPath: {
-            ...state.childrenByParentPath,
-            [spaceId]: nextChildren,
-          },
-          fileTrees: {
-            ...state.fileTrees,
-            [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-          },
-        };
-      });
+      const meta = { title, icon, description };
+      patchSpaceTree(
+        spaceId,
+        (children) => updateTreeNodeMetaInParents(children, path, meta),
+        (tree) => updateTreeNodeMeta(tree, path, meta),
+        false,
+      );
     },
 
     upsertTreeNode: (spaceId, parentPath, node) => {
-      set((state) => {
-        const currentChildren = state.childrenByParentPath[spaceId];
-        if (currentChildren) {
-          const nextChildren = upsertTreeNodeInParent(
-            currentChildren,
-            parentPath,
-            node,
-          );
-          if (!nextChildren || nextChildren === currentChildren) return {};
-          return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildren,
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-            },
-            treeCache: {
-              ...state.treeCache,
-              [spaceId]: { loadedAt: Date.now(), dirty: false },
-            },
-          };
-        }
-
-        const tree = state.fileTrees[spaceId];
-        if (!tree) return {};
-        const next = upsertTreeNodePatch(tree, parentPath, node);
-        if (next === tree) return {};
-        return {
-          fileTrees: { ...state.fileTrees, [spaceId]: next },
-          treeCache: {
-            ...state.treeCache,
-            [spaceId]: { loadedAt: Date.now(), dirty: false },
-          },
-        };
-      });
+      patchSpaceTree(
+        spaceId,
+        (children) => upsertTreeNodeInParent(children, parentPath, node),
+        (tree) => upsertTreeNodePatch(tree, parentPath, node),
+      );
     },
 
     removeTreePath: (spaceId, path) => {
-      set((state) => {
-        const currentChildren = state.childrenByParentPath[spaceId];
-        if (currentChildren) {
-          const nextChildren = removeTreePathFromParents(currentChildren, path);
-          if (!nextChildren || nextChildren === currentChildren) return {};
-          return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildren,
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-            },
-            treeCache: {
-              ...state.treeCache,
-              [spaceId]: { loadedAt: Date.now(), dirty: false },
-            },
-          };
-        }
-
-        const tree = state.fileTrees[spaceId];
-        if (!tree) return {};
-        const next = removeTreePathPatch(tree, path);
-        if (next === tree) return {};
-        return {
-          fileTrees: { ...state.fileTrees, [spaceId]: next },
-          treeCache: {
-            ...state.treeCache,
-            [spaceId]: { loadedAt: Date.now(), dirty: false },
-          },
-        };
-      });
+      patchSpaceTree(
+        spaceId,
+        (children) => removeTreePathFromParents(children, path),
+        (tree) => removeTreePathPatch(tree, path),
+      );
     },
 
     applyReadmeMeta: (spaceId, readmePath, title, icon, description) => {
-      set((state) => {
-        const currentChildren = state.childrenByParentPath[spaceId];
-        if (currentChildren) {
-          const nextChildren = applyReadmeMetaToParents(
-            currentChildren,
-            readmePath,
-            { title, icon, description },
-          );
-          if (!nextChildren || nextChildren === currentChildren) return {};
-          return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildren,
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-            },
-            treeCache: {
-              ...state.treeCache,
-              [spaceId]: { loadedAt: Date.now(), dirty: false },
-            },
-          };
-        }
-
-        const tree = state.fileTrees[spaceId];
-        if (!tree) return {};
-        const next = applyReadmeMetaPatch(tree, readmePath, {
-          title,
-          icon,
-          description,
-        });
-        if (next === tree) return {};
-        return {
-          fileTrees: { ...state.fileTrees, [spaceId]: next },
-          treeCache: {
-            ...state.treeCache,
-            [spaceId]: { loadedAt: Date.now(), dirty: false },
-          },
-        };
-      });
+      const meta = { title, icon, description };
+      patchSpaceTree(
+        spaceId,
+        (children) => applyReadmeMetaToParents(children, readmePath, meta),
+        (tree) => applyReadmeMetaPatch(tree, readmePath, meta),
+      );
     },
 
     removeReadmeMeta: (spaceId, readmePath) => {
-      set((state) => {
-        const currentChildren = state.childrenByParentPath[spaceId];
-        if (currentChildren) {
-          const nextChildren = removeReadmeMetaFromParents(
-            currentChildren,
-            readmePath,
-          );
-          if (!nextChildren || nextChildren === currentChildren) return {};
-          return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildren,
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-            },
-            treeCache: {
-              ...state.treeCache,
-              [spaceId]: { loadedAt: Date.now(), dirty: false },
-            },
-          };
-        }
-
-        const tree = state.fileTrees[spaceId];
-        if (!tree) return {};
-        const next = removeReadmeMetaPatch(tree, readmePath);
-        if (next === tree) return {};
-        return {
-          fileTrees: { ...state.fileTrees, [spaceId]: next },
-          treeCache: {
-            ...state.treeCache,
-            [spaceId]: { loadedAt: Date.now(), dirty: false },
-          },
-        };
-      });
+      patchSpaceTree(
+        spaceId,
+        (children) => removeReadmeMetaFromParents(children, readmePath),
+        (tree) => removeReadmeMetaPatch(tree, readmePath),
+      );
     },
 
     updateNodeSchema: (spaceId, folderPath, hasSchema) => {
-      set((state) => {
-        const currentChildren = state.childrenByParentPath[spaceId];
-        if (currentChildren) {
-          const nextChildren = updateTreeSchemaInParents(
-            currentChildren,
-            folderPath,
-            hasSchema,
-          );
-          if (!nextChildren || nextChildren === currentChildren) return {};
-          return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildren,
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-            },
-            treeCache: {
-              ...state.treeCache,
-              [spaceId]: { loadedAt: Date.now(), dirty: false },
-            },
-          };
-        }
-
-        const tree = state.fileTrees[spaceId];
-        if (!tree) return {};
-        const next = updateTreeFolderSchema(tree, folderPath, hasSchema);
-        if (next === tree) return {};
-        return {
-          fileTrees: { ...state.fileTrees, [spaceId]: next },
-          treeCache: {
-            ...state.treeCache,
-            [spaceId]: { loadedAt: Date.now(), dirty: false },
-          },
-        };
-      });
+      patchSpaceTree(
+        spaceId,
+        (children) =>
+          updateTreeSchemaInParents(children, folderPath, hasSchema),
+        (tree) => updateTreeFolderSchema(tree, folderPath, hasSchema),
+      );
     },
 
     updateNodeApp: (spaceId, folderPath, hasApp) => {
-      set((state) => {
-        const currentChildren = state.childrenByParentPath[spaceId];
-        if (currentChildren) {
-          const nextChildren = updateTreeAppInParents(
-            currentChildren,
-            folderPath,
-            hasApp,
-          );
-          if (!nextChildren || nextChildren === currentChildren) return {};
-          return {
-            childrenByParentPath: {
-              ...state.childrenByParentPath,
-              [spaceId]: nextChildren,
-            },
-            fileTrees: {
-              ...state.fileTrees,
-              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
-            },
-            treeCache: {
-              ...state.treeCache,
-              [spaceId]: { loadedAt: Date.now(), dirty: false },
-            },
-          };
-        }
+      patchSpaceTree(
+        spaceId,
+        (children) => updateTreeAppInParents(children, folderPath, hasApp),
+        (tree) => updateTreeFolderApp(tree, folderPath, hasApp),
+      );
+    },
 
-        const tree = state.fileTrees[spaceId];
-        if (!tree) return {};
-        const next = updateTreeFolderApp(tree, folderPath, hasApp);
-        if (next === tree) return {};
-        return {
-          fileTrees: { ...state.fileTrees, [spaceId]: next },
-          treeCache: {
-            ...state.treeCache,
-            [spaceId]: { loadedAt: Date.now(), dirty: false },
-          },
-        };
-      });
+    batchTreeUpdates: (run) => {
+      if (batch) {
+        run();
+        return;
+      }
+      batch = { state: baseGet(), pending: {}, rebuild: new Set() };
+      try {
+        run();
+      } finally {
+        const current = batch;
+        batch = null;
+        let { pending } = current;
+        for (const id of current.rebuild) {
+          const children = current.state.childrenByParentPath[id];
+          if (!children) continue;
+          const patch = sameVisibleTreePatch(
+            current.state,
+            id,
+            children,
+            rebuildLoadedTree(
+              current.state.fileTrees[id],
+              children,
+              current.state.expandedPaths[id],
+            ),
+          );
+          current.state = { ...current.state, ...patch };
+          pending = { ...pending, ...patch };
+        }
+        if (Object.keys(pending).length > 0) baseSet(pending);
+      }
     },
 
     markTreeDirty: (spaceId) => {
@@ -1254,13 +1171,18 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         set((state) => {
           const children = Object.fromEntries(
             Object.entries(state.childrenByParentPath[id] ?? {}).map(
-              ([parent, nodes]) => [
-                remapTreePath(parent, from, to),
-                nodes.map((node) => ({
-                  ...node,
-                  path: remapTreePath(node.path, from, to),
-                })),
-              ],
+              ([parent, nodes]) => {
+                const remapped = nodes.map((node) => {
+                  const path = remapTreePath(node.path, from, to);
+                  return path === node.path ? node : { ...node, path };
+                });
+                return [
+                  remapTreePath(parent, from, to),
+                  remapped.every((node, index) => node === nodes[index])
+                    ? nodes
+                    : remapped,
+                ];
+              },
             ),
           );
           const oldParent = treeRowParentPath(previous);

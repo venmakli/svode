@@ -11,7 +11,15 @@ function trimSlashes(path: string): string {
 }
 
 export function normalizeTreePath(path: string | null | undefined): string {
-  return trimSlashes((path ?? "").replaceAll("\\", "/"));
+  if (!path) return "";
+  if (
+    path.charCodeAt(0) !== 47 &&
+    path.charCodeAt(path.length - 1) !== 47 &&
+    !path.includes("\\")
+  ) {
+    return path;
+  }
+  return trimSlashes(path.replaceAll("\\", "/"));
 }
 
 export function basename(path: string): string {
