@@ -22,7 +22,9 @@ if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
     );
     if (child.status !== 0) throw new Error(child.stdout + child.stderr);
     expect(child.status).toBe(0);
-  });
+    // The bound covers the whole child process; its scenario keeps the
+    // default timeout.
+  }, 30_000);
 } else {
   const space = { activeRootPath: "/project" };
   mock.module("@/features/space", () => ({

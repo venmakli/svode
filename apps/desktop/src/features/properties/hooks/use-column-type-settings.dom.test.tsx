@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import * as bunTest from "bun:test";
+import { toast } from "sonner";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
@@ -13,7 +14,6 @@ interface PendingRequest {
 }
 
 const requests: PendingRequest[] = [];
-const toastErrors: unknown[] = [];
 const mock = bunTest.mock;
 
 mock.module("../api/schema-api", () => ({
@@ -24,15 +24,13 @@ mock.module("../api/schema-api", () => ({
     }),
 }));
 
-mock.module("sonner", () => ({
-  toast: { error: (message: unknown) => toastErrors.push(message) },
-}));
-
 const { useColumnTypeSettings } = await import("./use-column-type-settings");
 
 test("type settings ignore stale navigation responses and surface current errors", async () => {
   requests.length = 0;
-  toastErrors.length = 0;
+  // A spy, not a module mock: a module mock of sonner stays for every later
+  // test file of the process.
+  const toastError = spyOn(toast, "error").mockReturnValue(0);
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -89,11 +87,12 @@ test("type settings ignore stale navigation responses and surface current errors
       await Promise.resolve();
     });
     expect(schemas).toEqual([]);
-    expect(toastErrors.length).toBe(1);
+    expect(toastError.mock.calls.length).toBe(1);
     expect(dom.window.document.querySelector("button")!.dataset.pending).toBe(
       "false",
     );
   } finally {
+    toastError.mockRestore();
     console.error = originalConsoleError;
     await act(async () => root.unmount());
     restoreGlobals();

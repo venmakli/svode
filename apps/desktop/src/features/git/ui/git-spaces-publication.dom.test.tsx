@@ -17,7 +17,9 @@ if (process.env.SVODE_SPACES_PUBLICATION_DOM !== "1") {
     );
     if (child.status !== 0) throw new Error(child.stdout + child.stderr);
     expect(child.status).toBe(0);
-  });
+    // The bound covers the whole child process; its scenario keeps the
+    // default timeout.
+  }, 30_000);
 } else {
   let activeSpacePath = "/project";
   const space = {

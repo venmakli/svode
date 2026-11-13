@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { create } from "zustand";
 import { treeLoadTargetFailure } from "../src/platform/space/content-tree-api";
 import type {
@@ -20,17 +20,35 @@ let move: (input: {
   from: string;
   toParent: string;
 }) => Promise<MoveContentResult>;
+// A module mock stays for every later test file of the process, so it
+// extends the real module and routes to the fixtures only while this file
+// runs; afterwards every function is the real one again.
+const actions = {
+  ...(await import("../src/features/space/api/space-store-actions")),
+};
+let fixtures = true;
+afterAll(() => {
+  fixtures = false;
+});
 mock.module("../src/features/space/api/space-store-actions", () => ({
+  ...actions,
   treeLoadTargetFailure,
-  getSpaceExpandedPaths: (scope: string) => read(scope),
+  getSpaceExpandedPaths: (scope: string) =>
+    fixtures ? read(scope) : actions.getSpaceExpandedPaths(scope),
   saveSpaceExpandedPaths: (scope: string, paths: string[]) =>
-    save(scope, paths),
+    fixtures
+      ? save(scope, paths)
+      : actions.saveSpaceExpandedPaths(scope, paths),
   listSpaceTreeChildren: (scope: string, parent: string | null) => {
+    if (!fixtures) return actions.listSpaceTreeChildren(scope, parent);
     listCalls.push(parent);
     return list(scope, parent);
   },
-  listSpaceContentTree: (scope: string) => list(scope, null),
-  moveSpaceTreeItem: (input: { from: string; toParent: string }) => move(input),
+  listSpaceContentTree: (scope: string) =>
+    fixtures ? list(scope, null) : actions.listSpaceContentTree(scope),
+  moveSpaceTreeItem: (
+    input: Parameters<typeof actions.moveSpaceTreeItem>[0],
+  ) => (fixtures ? move(input) : actions.moveSpaceTreeItem(input)),
 }));
 const { createSpaceTreeState, createEmptyLoadedSpaceTreeState } =
   await import("../src/features/space/model/space-tree-state");

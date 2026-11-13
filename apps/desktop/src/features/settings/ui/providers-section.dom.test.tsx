@@ -47,7 +47,9 @@ if (!isolatedProcess) {
       throw new Error([child.stdout, child.stderr].filter(Boolean).join("\n"));
     }
     expect(child.status).toBe(0);
-  });
+    // The bound covers the whole child process; its scenario keeps the
+    // default timeout.
+  }, 30_000);
 } else {
   const { mock } = bunTest;
   installDomGlobals(createDom());
