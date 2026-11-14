@@ -32,6 +32,7 @@ import type { SpaceInfo } from "../model";
 import {
   pageNameConflictFromError,
   findPageNameConflictPath,
+  takenNameMessage,
 } from "@/features/page/page-api";
 
 /** The loaded rows that share the name scope of a row, read at submit. */
@@ -39,9 +40,7 @@ function siblingTreeRows(spaceId: string, path: string): readonly TreeNode[] {
   const parent = path.toLowerCase().endsWith("/readme.md")
     ? path.split("/").slice(0, -2).join("/")
     : path.split("/").slice(0, -1).join("/");
-  return (
-    useSpaceStore.getState().childrenByParentPath[spaceId]?.[parent] ?? []
-  );
+  return useSpaceStore.getState().childrenByParentPath[spaceId]?.[parent] ?? [];
 }
 
 interface UseFileTreeItemRenameInput {
@@ -226,7 +225,10 @@ export function useFileTreeItemRename({
         return;
       }
       console.error("Failed to rename:", err);
-      toast.error(m.toast_error());
+      toast.error(
+        takenNameMessage(err, space.name, { childSpaceTaken: true }) ??
+          m.toast_error(),
+      );
     } finally {
       finishTreeMutation();
       renameInFlightRef.current = false;

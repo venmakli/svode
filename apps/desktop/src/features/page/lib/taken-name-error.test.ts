@@ -1,6 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
-import { takenNamePath } from "@/platform/space/content-tree-api";
+import {
+  childSpacePath,
+  takenNamePath,
+} from "@/platform/space/content-tree-api";
 import { takenNameMessage } from "./taken-name-error";
 
 const originalLocale = getLocale();
@@ -59,4 +62,31 @@ test("other errors are left to the caller", () => {
     takenNameMessage({ kind: "source_busy", path: "a.md" }, "Team"),
   ).toBeNull();
   expect(takenNameMessage(takenName("items"), null)).toBeNull();
+});
+
+test("a name a child Space owns counts as taken only when the caller asks", async () => {
+  const childSpace = {
+    kind: "path_in_other_space",
+    message: "Docs/eng belongs to Space eng; run the operation in that Space",
+    path: "Docs/eng",
+    spaceId: "eng",
+  };
+  expect(childSpacePath(childSpace)).toBe("Docs/eng");
+  expect(childSpacePath(takenName("Docs/eng"))).toBeNull();
+  expect(childSpacePath({ kind: "path_in_other_space" })).toBeNull();
+  expect(childSpacePath("Docs/eng belongs to Space eng")).toBeNull();
+  expect(takenNameMessage(childSpace, "Team")).toBeNull();
+  await setLocale("en", { reload: false });
+  expect(takenNameMessage(childSpace, "Team", { childSpaceTaken: true })).toBe(
+    "“eng” is already taken in “Docs”.",
+  );
+  expect(
+    takenNameMessage({ ...childSpace, path: "eng" }, "Team", {
+      childSpaceTaken: true,
+    }),
+  ).toBe("“eng” is already taken in “Team”.");
+  await setLocale("ru", { reload: false });
+  expect(takenNameMessage(childSpace, "Team", { childSpaceTaken: true })).toBe(
+    "Имя «eng» уже занято в «Docs».",
+  );
 });

@@ -1,17 +1,23 @@
-import { takenNamePath } from "@/platform/space/content-tree-api";
+import {
+  childSpacePath,
+  takenNamePath,
+} from "@/platform/space/content-tree-api";
 import * as m from "@/paraglide/messages.js";
 
 /**
  * Toast text for a structural operation refused because the name it wanted
  * is taken: the name and the folder it is taken in, the Space root by the
- * Space's name. Other errors, and a taken name in the root of a Space whose
- * name is unknown, return null for the caller's own text.
+ * Space's name. With `childSpaceTaken`, as a rename asks, a name that a
+ * registered child Space owns counts as taken too. Other errors, and a taken name in the root of a Space whose name is
+ * unknown, return null for the caller's own text.
  */
 export function takenNameMessage(
   error: unknown,
   spaceName: string | null,
+  { childSpaceTaken = false }: { childSpaceTaken?: boolean } = {},
 ): string | null {
-  const path = takenNamePath(error);
+  const path =
+    takenNamePath(error) ?? (childSpaceTaken ? childSpacePath(error) : null);
   if (path === null) return null;
   const slash = path.lastIndexOf("/");
   const folder = slash < 0 ? spaceName : path.slice(0, slash);

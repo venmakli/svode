@@ -34,6 +34,18 @@ export function takenNamePath(error: unknown): string | null {
     : null;
 }
 
+/**
+ * Space-relative path a structural operation refused to take because a
+ * registered child Space owns it.
+ */
+export function childSpacePath(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = error as Record<string, unknown>;
+  return value.kind === "path_in_other_space" && typeof value.path === "string"
+    ? value.path
+    : null;
+}
+
 export function createContentTreeFolder(input: {
   space: string;
   parentPath: string | null;
