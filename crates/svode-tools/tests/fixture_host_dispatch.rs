@@ -4072,6 +4072,42 @@ async fn results_report_the_disk_spelling_of_a_path_requested_in_another_letter_
     .await;
     assert_eq!(structured(&collection)["path"], "tasks/README.md");
     assert_eq!(structured(&collection)["collectionPath"], "tasks");
+    assert_eq!(
+        collection.content[0].text,
+        "Updated Collection README for tasks."
+    );
+
+    let metadata = call(
+        "update_page_metadata",
+        json!({ "path": "LEAF.md", "icon": "X" }),
+    )
+    .await;
+    assert_eq!(metadata.content[0].text, "Updated metadata for leaf.md.");
+    assert_eq!(structured(&metadata)["page"]["path"], "leaf.md");
+    let item_metadata = call(
+        "update_collection_item_metadata",
+        json!({ "path": "TASKS/A.md", "icon": "Y" }),
+    )
+    .await;
+    assert_eq!(
+        item_metadata.content[0].text,
+        "Updated metadata for Collection item tasks/a.md."
+    );
+    let fields = call(
+        "update_collection_item_fields",
+        json!({ "path": "TASKS/A.md", "fields": { "Points": 3 } }),
+    )
+    .await;
+    assert_eq!(fields.content[0].text, "Updated fields for tasks/a.md.");
+    let no_fields = call(
+        "update_collection_item_fields",
+        json!({ "path": "TASKS/A.md", "fields": {} }),
+    )
+    .await;
+    assert_eq!(
+        no_fields.content[0].text,
+        "No field changes for tasks/a.md."
+    );
 
     let renamed = call(
         "rename_content",
@@ -4097,4 +4133,8 @@ async fn results_report_the_disk_spelling_of_a_path_requested_in_another_letter_
     let leaf = call("convert_page_to_leaf", json!({ "path": "SOLO/readme.md" })).await;
     assert_eq!(structured(&leaf)["oldPath"], "solo/README.md");
     assert_eq!(structured(&leaf)["newPath"], "solo.md");
+
+    let deleted = call("delete_page", json!({ "path": "DRAFTS/LINKS.md" })).await;
+    assert_eq!(deleted.content[0].text, "Deleted Page drafts/links.md.");
+    assert_eq!(structured(&deleted)["deletedRoot"], "drafts/links.md");
 }

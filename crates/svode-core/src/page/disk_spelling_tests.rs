@@ -224,7 +224,12 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
         }
         Write::Delete => structure::delete(&space, path, None, structure_runtime(&index))
             .await
-            .map(|outcome| format!("{} {:?}", outcome.deleted_root, outcome.changed_paths)),
+            .map(|outcome| {
+                format!(
+                    "{} {} {:?}",
+                    outcome.source_path, outcome.deleted_root, outcome.changed_paths
+                )
+            }),
         Write::Title(title) => patch_metadata(&space, path, &index, Some(title), None).await,
         Write::Icon => patch_metadata(&space, path, &index, None, Some("star")).await,
         Write::FieldTitle(title) => {
@@ -242,7 +247,7 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
                 authorize,
             )
             .await
-            .map(|outcome| outcome.page.path)
+            .map(|outcome| format!("{} {}", outcome.source_path, outcome.page.path))
         }
         Write::Body => {
             let nonces = WriteNonceRegistry::default();
@@ -276,7 +281,7 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
         Write::ConvertToFolder => {
             structure::convert_to_folder(&space, path, None, structure_runtime(&index))
                 .await
-                .map(|page| page.path)
+                .map(|outcome| format!("{} {}", outcome.old_path, outcome.page.path))
         }
         Write::ConvertToLeaf => {
             structure::convert_to_leaf(&space, path, None, structure_runtime(&index))
@@ -304,7 +309,9 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
                     )
                 })
         }
-        Write::Nest => structure::nest(&space, path, None, structure_runtime(&index)).await,
+        Write::Nest => structure::nest(&space, path, None, structure_runtime(&index))
+            .await
+            .map(|outcome| format!("{} {}", outcome.old_path, outcome.new_path)),
         Write::Duplicate => structure::duplicate(&space, path, None, structure_runtime(&index))
             .await
             .map(|page| page.path),
@@ -371,7 +378,8 @@ async fn patch_metadata(
     .await
     .map(|outcome| {
         format!(
-            "{} {:?}",
+            "{} {} {:?}",
+            outcome.source_path,
             outcome.page.path,
             relative(space, &outcome.changed_paths)
         )

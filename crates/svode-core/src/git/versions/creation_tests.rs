@@ -305,7 +305,8 @@ async fn converting_an_uncommitted_page_to_a_folder_stays_in_its_creation() {
     let created = create_page(&fixture).await;
     let converted = structure::convert_to_folder(root, &created, Some(root), fixture.structure())
         .await
-        .unwrap();
+        .unwrap()
+        .page;
     assert_eq!(converted.path, "Untitled/README.md");
     stays_open(&fixture).await;
     let renamed = fixture.rename(&converted.path, "Plan").await;

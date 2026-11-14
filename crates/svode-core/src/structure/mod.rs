@@ -21,10 +21,10 @@ pub use naming::{
     page_paths_with_order, page_relocation, page_rename_op, root_path_for_head,
 };
 pub use ops::{
-    CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, ConvertToLeafOutcome,
-    ConvertedParent, DeleteOutcome, MovePageOutcome, RenameOutcome, StructureRuntime,
-    convert_to_collection, convert_to_folder, convert_to_leaf, create_collection, create_folder,
-    delete, duplicate, move_page, nest, rename,
+    CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, ConvertToFolderOutcome,
+    ConvertToLeafOutcome, ConvertedParent, DeleteOutcome, MovePageOutcome, NestOutcome,
+    RenameOutcome, StructureRuntime, convert_to_collection, convert_to_folder, convert_to_leaf,
+    create_collection, create_folder, delete, duplicate, move_page, nest, rename,
 };
 pub use plan::{
     backlink_mutation_paths, collection_create_schema_paths, delete_mutation_paths,

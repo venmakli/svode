@@ -23,6 +23,9 @@ impl PageMetadataPatch {
 }
 
 pub struct PageMetadataOutcome {
+    /// The source the write addressed, in the disk spelling, before any
+    /// rename.
+    pub source_path: String,
     pub page: store::Page,
     pub changed_paths: Vec<PathBuf>,
 }
@@ -47,6 +50,7 @@ where
     let path: &str = &disk_spelling(space, path);
     if patch.is_empty() {
         return Ok(PageMetadataOutcome {
+            source_path: path.to_string(),
             page: store::read(space, path)?,
             changed_paths: Vec::new(),
         });
@@ -88,6 +92,7 @@ where
     let mut page = store::read(space, current_path)?;
     page.warnings = result.warnings;
     Ok(PageMetadataOutcome {
+        source_path: path.to_string(),
         page,
         changed_paths,
     })

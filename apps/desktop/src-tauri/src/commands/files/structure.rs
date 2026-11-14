@@ -34,8 +34,8 @@ pub async fn nest_page(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &path, &result);
-    Ok(result)
+    crate::navigation::artifact_moved(&app, &space, &result.old_path, &result.new_path);
+    Ok(result.new_path)
 }
 
 #[tauri::command]
@@ -71,8 +71,8 @@ pub async fn convert_page_to_folder(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &file_path, &result.path);
-    Ok(result)
+    crate::navigation::artifact_moved(&app, &space, &result.old_path, &result.page.path);
+    Ok(result.page)
 }
 
 #[tauri::command]

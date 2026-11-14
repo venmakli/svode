@@ -358,7 +358,8 @@ async fn rename_move_and_folder_relocations_commit_from_the_final_folder() {
     assert_eq!(moved, "Area/Plan.md");
     let converted = structure::convert_to_folder(root, &moved, Some(root), fixture.structure())
         .await
-        .unwrap();
+        .unwrap()
+        .page;
     assert_eq!(converted.path, "Area/Plan/README.md");
     assert_eq!(
         fixture.rename(&converted.path, "Goal").await,

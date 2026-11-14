@@ -598,7 +598,8 @@ async fn import_into_a_leaf_in_another_letter_case_is_the_import_in_the_disk_spe
                 plan_managed_import(&index, &project, None, content_path, &source, None).await?;
             let result = execute_managed_import(import, MutationOrigin::Mcp, plan).await?;
             Ok::<_, crate::page::PageError>(format!(
-                "{} {} {} {:?}",
+                "{} {} {} {} {:?}",
+                result.source_path,
                 result.content_path,
                 result.attachment_path,
                 result.markdown_url,

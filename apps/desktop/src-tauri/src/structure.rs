@@ -9,7 +9,8 @@ use std::pin::Pin;
 use svode_core::git::pending::StructuralChange;
 use svode_core::page::store::Page;
 use svode_core::structure::{
-    ConvertToLeafOutcome, RenameOutcome, StructuralCommitSink, StructureRuntime,
+    ConvertToFolderOutcome, ConvertToLeafOutcome, NestOutcome, RenameOutcome, StructuralCommitSink,
+    StructureRuntime,
 };
 
 use crate::error::AppError;
@@ -195,7 +196,7 @@ pub async fn convert_to_folder(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<Page, AppError> {
+) -> Result<ConvertToFolderOutcome, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::convert_to_folder(
@@ -294,7 +295,7 @@ pub async fn nest(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
+) -> Result<NestOutcome, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::nest(

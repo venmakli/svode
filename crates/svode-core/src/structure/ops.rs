@@ -57,6 +57,9 @@ impl<E> Copy for StructureRuntime<'_, E> {}
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteOutcome {
+    /// The deleted path as addressed, in the disk spelling.
+    #[serde(skip)]
+    pub source_path: String,
     pub deleted_root: String,
     pub deleted_paths: Vec<String>,
     pub cascade_touched: Vec<String>,
@@ -472,6 +475,7 @@ pub async fn delete<E: GitDateExecutor>(
     }
 
     Ok(DeleteOutcome {
+        source_path: path.to_string(),
         deleted_root: deleted.deleted_root,
         deleted_paths: deleted.deleted_paths,
         cascade_touched,
@@ -813,15 +817,23 @@ where
     })
 }
 
+/// A leaf Page turned into a folder Page.
+#[derive(Debug, Clone)]
+pub struct ConvertToFolderOutcome {
+    /// The leaf, in the disk spelling.
+    pub old_path: String,
+    pub page: Page,
+}
+
 pub async fn convert_to_folder<E: GitDateExecutor>(
     space: &str,
     file_path: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<Page, PageError> {
+) -> Result<ConvertToFolderOutcome, PageError> {
     ensure_path_in_space(space, file_path)?;
     let file_path: &str = &disk_spelling(space, file_path);
-    convert_to_folder_with_publication(
+    let page = convert_to_folder_with_publication(
         space,
         file_path,
         project_path,
@@ -829,7 +841,11 @@ pub async fn convert_to_folder<E: GitDateExecutor>(
         true,
         OperationId::next(),
     )
-    .await
+    .await?;
+    Ok(ConvertToFolderOutcome {
+        old_path: file_path.to_string(),
+        page,
+    })
 }
 
 async fn convert_to_folder_with_publication<E: GitDateExecutor>(
@@ -1842,12 +1858,21 @@ pub(crate) async fn republish_after_rollback<E: GitDateExecutor>(
     }
 }
 
+/// A leaf Page nested as the README of a folder Page.
+#[derive(Debug, Clone)]
+pub struct NestOutcome {
+    /// The leaf, in the disk spelling.
+    pub old_path: String,
+    /// The README of the folder Page.
+    pub new_path: String,
+}
+
 pub async fn nest<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<String, PageError> {
+) -> Result<NestOutcome, PageError> {
     ensure_path_in_space(space, path)?;
     let path: &str = &disk_spelling(space, path);
     let state = runtime.index;
@@ -1913,7 +1938,10 @@ pub async fn nest<E: GitDateExecutor>(
             [abs_page_path(space, path), abs_page_path(space, &new_path)],
         ),
     );
-    Ok(new_path)
+    Ok(NestOutcome {
+        old_path: path.to_string(),
+        new_path,
+    })
 }
 
 pub async fn duplicate<E: GitDateExecutor>(

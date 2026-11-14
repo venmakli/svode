@@ -273,7 +273,7 @@ async fn delete_markdown_content(
     .await
     .map_err(|error| space_relative_busy(space, error))?;
     Ok(ToolCallResult::ok(
-        format!("Deleted {label} {path}."),
+        format!("Deleted {label} {}.", deleted.source_path),
         json!({
             "deletedRoot": deleted.deleted_root,
             "deletedPaths": deleted.deleted_paths,

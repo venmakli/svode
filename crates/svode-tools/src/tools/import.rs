@@ -74,8 +74,8 @@ pub(crate) async fn import_asset(
 
     Ok(ToolCallResult::ok(
         format!(
-            "Imported asset {} for content {content_path}.",
-            result.file_name
+            "Imported asset {} for content {}.",
+            result.file_name, result.source_path
         ),
         json!({
             "spaceId": owner_space_id,

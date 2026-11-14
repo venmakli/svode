@@ -244,7 +244,7 @@ pub(crate) async fn update_page_metadata(
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
-        format!("Updated metadata for {path}."),
+        format!("Updated metadata for {}.", outcome.source_path),
         json!({ "sourceVersion": source_version(&outcome.page), "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
@@ -329,10 +329,11 @@ pub(crate) async fn write_collection_readme(
         Ok(outcome) => outcome,
         Err(error) => return failure(error),
     };
+    let addressed = parent_dir(&outcome.source_path);
     let mut response = write_response(&space, outcome);
     response["collectionPath"] = json!(parent_dir(response["path"].as_str().unwrap_or(&path)));
     Ok(ToolCallResult::ok(
-        format!("Updated Collection README for {collection_path}."),
+        format!("Updated Collection README for {addressed}."),
         response,
     ))
 }
@@ -388,7 +389,10 @@ pub(crate) async fn update_collection_item_metadata(
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
-        format!("Updated metadata for Collection item {path}."),
+        format!(
+            "Updated metadata for Collection item {}.",
+            outcome.source_path
+        ),
         json!({ "sourceVersion": source_version(&outcome.page), "item": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
@@ -405,7 +409,7 @@ pub(crate) async fn update_collection_item_fields(
     if args.fields.is_empty() {
         let item = store::read(&space, &path)?;
         return Ok(ToolCallResult::ok(
-            format!("No field changes for {path}."),
+            format!("No field changes for {}.", item.path),
             json!({ "sourceVersion": source_version(&item), "item": item, "changedPaths": [] }),
         ));
     }
@@ -428,7 +432,7 @@ pub(crate) async fn update_collection_item_fields(
     };
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
-        format!("Updated fields for {path}."),
+        format!("Updated fields for {}.", outcome.source_path),
         json!({ "sourceVersion": source_version(&outcome.page), "item": outcome.page, "changedPaths": changed_paths }),
     ))
 }

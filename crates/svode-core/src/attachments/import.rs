@@ -101,6 +101,10 @@ pub struct ManagedImportSourceInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedImportResult {
+    /// The content the import addressed, in the disk spelling, before a
+    /// leaf conversion.
+    #[serde(skip)]
+    pub source_path: String,
     pub content_path: String,
     pub attachment_path: String,
     pub markdown_url: String,
@@ -501,6 +505,7 @@ pub async fn execute_managed_import(
         }
 
         Ok(ManagedImportResult {
+            source_path: revalidated.content_path.clone(),
             content_path: revalidated.canonical_content_path.clone(),
             attachment_path: attachment_path.clone(),
             markdown_url,

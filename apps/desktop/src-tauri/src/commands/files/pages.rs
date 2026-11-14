@@ -334,8 +334,8 @@ pub async fn update_page_field(
     .await?;
     // An editor edit during an agent turn keeps its own group (1.E).
     svode_core::git::versions::turns::editor_wrote(&outcome.changed_paths);
-    if outcome.page.path != file_path {
-        crate::navigation::artifact_moved(&app, &space, &file_path, &outcome.page.path);
+    if outcome.page.path != outcome.source_path {
+        crate::navigation::artifact_moved(&app, &space, &outcome.source_path, &outcome.page.path);
     }
     Ok(outcome.page)
 }
