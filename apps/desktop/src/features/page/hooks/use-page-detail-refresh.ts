@@ -67,6 +67,9 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     writes.clock += 1;
     writes.fields.set(field, writes.clock);
   }, []);
+  // Reads the shown Page again now, as an event of its file would.
+  const recheckRef = useRef<() => void>(() => {});
+  const recheck = useCallback(() => recheckRef.current(), []);
 
   useEffect(() => {
     if (!path) return;
@@ -145,6 +148,7 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     };
     const warn = (error: unknown) =>
       console.warn("Failed to refresh the Page detail:", error);
+    recheckRef.current = () => void refreshPage().catch(warn);
 
     const unlisten = listenPageSourceEvents({
       spacePath,
@@ -160,10 +164,11 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     });
     return () => {
       active = false;
+      recheckRef.current = () => {};
       ownChange.stop();
       void unlisten.then((stop) => stop());
     };
   }, [path, spacePath]);
 
-  return { markLocalWrite };
+  return { markLocalWrite, recheck };
 }

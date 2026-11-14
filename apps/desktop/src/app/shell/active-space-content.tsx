@@ -1,5 +1,5 @@
 import { FileText } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
 import { fileChangesTarget } from "@/features/changes";
 import { PublishMainHeader } from "./main-header-contribution";
@@ -168,15 +168,13 @@ export function ActiveSpaceContent() {
     spacePath: activeSpace?.status === "ready" ? activeSpace.path : null,
     rootSpaceId: activeRootId,
   });
-  // A Collection or App whose folder is gone closes as a vanished Page does;
-  // a Page closes itself, and a Collection that lost only its README stays.
+  // A Collection or App whose folder is gone closes as a vanished Page does,
+  // unless its README keeps unsaved work open (DF-269 R3); a Page closes
+  // itself, and a Collection that lost only its README stays.
   const folderOwnerGone =
     ownerGone &&
     (owner?.identityKind === "collection-directory" ||
       owner?.identityKind === "app-directory");
-  useEffect(() => {
-    if (folderOwnerGone) closeActiveContent();
-  }, [closeActiveContent, folderOwnerGone]);
 
   const activeContent =
     owner?.identityKind === "collection-directory" && selectionSpaceId ? (
@@ -189,6 +187,8 @@ export function ActiveSpaceContent() {
         openRequestKey={scopeOwnerRequest?.key}
         previousOwnerKey={previousCollectionOwnerKey}
         sessionKey={collectionSessionKey}
+        onPageGone={closeActiveContent}
+        ownerGone={folderOwnerGone}
       />
     ) : appOwner && selectionSpaceId ? (
       <ScopeSurfacePage
@@ -200,6 +200,7 @@ export function ActiveSpaceContent() {
         previousOwnerKey={previousAppOwnerKey ?? replacedAppOwnerKey}
         sessionKey={appSessionKey}
         onPageGone={closeActiveContent}
+        ownerGone={folderOwnerGone}
       />
     ) : owner && scopeOwnerRequest && selectionSpaceId ? (
       // A Collection or App target whose marker is gone keeps its owner session.

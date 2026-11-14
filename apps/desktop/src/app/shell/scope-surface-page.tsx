@@ -76,6 +76,8 @@ interface ScopeSurfacePageProps {
   fallbackIcon?: string | null;
   registerNavigationGuard?: (guard: PeekNavigationGuard) => () => void;
   onPageGone?: () => void;
+  /** The folder of the App or Collection is gone; see `PageDetailProvider`. */
+  ownerGone?: boolean;
 }
 
 export function ScopeSurfacePage({
@@ -96,6 +98,7 @@ export function ScopeSurfacePage({
   fallbackIcon,
   registerNavigationGuard,
   onPageGone,
+  ownerGone,
 }: ScopeSurfacePageProps) {
   const [compactViewName, setCompactViewName] = useState<string | null>(null);
   const [compactCalendarScope, setCompactCalendarScope] =
@@ -244,6 +247,7 @@ export function ScopeSurfacePage({
         fallbackIcon={fallbackIcon}
         onOpenPath={openPath}
         onPageGone={onPageGone}
+        ownerGone={ownerGone}
       >
         <ScopePageSurfaceHost
           owner={owner}

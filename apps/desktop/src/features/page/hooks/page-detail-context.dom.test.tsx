@@ -61,6 +61,8 @@ async function harness(
   let session!: PageSurfaceSession;
   const restores: Record<string, unknown>[] = [];
   let restoreFailure: unknown = null;
+  // The owner resolver confirmed the folder of the README owner gone.
+  let ownerGone = false;
   const spacePath = `/repo-df090-${Math.random()}`;
   mockNativeIpc(
     async (command, args) => {
@@ -203,6 +205,7 @@ async function harness(
                 target={options.target}
                 onOpenPath={() => {}}
                 onPageGone={options.onPageGone}
+                ownerGone={ownerGone}
               >
                 <Probe />
               </PageDetailProvider>
@@ -224,6 +227,11 @@ async function harness(
     render,
     failRestore: (value: unknown) => {
       restoreFailure = value;
+    },
+    /** The owner resolver confirms the owner folder gone, or back. */
+    goneOwner: async (value: boolean) => {
+      ownerGone = value;
+      await render();
     },
     context: () => context,
     session: () => session,
@@ -1445,6 +1453,202 @@ test("a directory owner whose README is gone shows the missing README state", as
     await view.cleanup();
   }
 });
+
+for (const loss of [
+  "README",
+  "owner folder first",
+  "owner folder last",
+] as const) {
+  test(`a home page README with unsaved work keeps it open in the gone state when another writer takes away its ${loss}`, async () => {
+    let gone = 0;
+    const toasts = captureToasts();
+    const view = await readyHarness({
+      target: "readme",
+      fieldError: `File not found: ${README}`,
+      onPageGone: () => (gone += 1),
+    });
+    try {
+      await typeHeldDraft(view);
+      view.pages.delete(README);
+      // The resolver may confirm the folder gone before or after the README
+      // hears of its file.
+      if (loss === "owner folder first") await view.goneOwner(true);
+      await view.fileEvent(README, "file:deleted");
+      if (loss === "owner folder last") await view.goneOwner(true);
+      await act(async () => {
+        await turn();
+        await turn();
+      });
+      expect(gone).toBe(0);
+      expect(view.context().status).toBe("ready");
+      expect(view.session().goneState).toEqual({ pending: false, error: null });
+      expect(
+        view.dom.window.document
+          .querySelector("[data-page-save-block]")
+          ?.getAttribute("data-page-save-block"),
+      ).toBe("gone");
+      expect(toasts.shown).toEqual([
+        {
+          kind: "warning",
+          message: m.page_gone_kept_title({ title: "App only" }),
+          description: m.page_gone_kept_description(),
+        },
+      ]);
+      // Nothing is written at the gone path, and the draft stays.
+      await pastFieldSaveDelay();
+      expect(view.calls.includes("update_page_field")).toBe(false);
+      expect(view.context().metadataDrafts.get("description")?.value).toBe(
+        "Draft",
+      );
+      // Closing without saving drops the work, reading and writing nothing:
+      // a home page whose folder is gone closes, one that lost its README
+      // shows the missing README.
+      const reads = readCount(view);
+      await act(async () => {
+        await view.session().closeGoneSource();
+        await turn();
+      });
+      expect(readCount(view)).toBe(reads);
+      expect(view.restores).toHaveLength(0);
+      expect(view.context().metadataDrafts.size).toBe(0);
+      expect(view.session().goneState).toBeNull();
+      if (loss === "README") {
+        expect(gone).toBe(0);
+        expect(view.context().status).toBe("missing");
+      } else expect(gone).toBe(1);
+      expect(toasts.shown).toHaveLength(1);
+    } finally {
+      toasts.restore();
+      await view.cleanup();
+    }
+  });
+}
+
+test("restoring a home page README whose owner folder is gone writes it with the draft at the same path", async () => {
+  const view = await readyHarness({
+    target: "readme",
+    fieldError: `File not found: ${README}`,
+  });
+  try {
+    await typeHeldDraft(view);
+    view.pages.delete(README);
+    await view.goneOwner(true);
+    await view.fileEvent(README, "file:deleted");
+    expect(view.session().goneState).not.toBeNull();
+    await act(async () => {
+      await view.session().restoreGoneSource();
+      await turn();
+    });
+    expect(view.restores).toHaveLength(1);
+    expect(view.restores[0]!.path).toBe(README);
+    expect(
+      (view.restores[0]!.page as { meta: { description: string } }).meta
+        .description,
+    ).toBe("Draft");
+    expect(view.session().goneState).toBeNull();
+    expect(view.context().status).toBe("ready");
+    expect(view.context().metadataDrafts.size).toBe(0);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a home page README in the gone state comes back with its folder and saves the held draft against it", async () => {
+  let gone = 0;
+  const view = await readyHarness({
+    target: "readme",
+    onPageGone: () => (gone += 1),
+  });
+  try {
+    await typeHeldDraft(view);
+    view.pages.delete(README);
+    await view.goneOwner(true);
+    await view.fileEvent(README, "file:deleted");
+    expect(view.session().goneState).not.toBeNull();
+    // The folder is moved back: the resolver finds it, and the README is read.
+    view.pages.set(README, readmePage());
+    await view.goneOwner(false);
+    await view.fileEvent(README, "file:created");
+    expect(view.session().goneState).toBeNull();
+    await pastFieldSaveDelay();
+    expect(view.pages.get(README)?.meta.description).toBe("Draft");
+    expect(gone).toBe(0);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a home page whose owner folder is gone closes at once without unsaved work and its README is not read for it", async () => {
+  let gone = 0;
+  const toasts = captureToasts();
+  const view = await readyHarness({
+    target: "readme",
+    onPageGone: () => (gone += 1),
+  });
+  try {
+    view.pages.delete(README);
+    const reads = readCount(view);
+    await view.goneOwner(true);
+    expect(gone).toBe(1);
+    expect(readCount(view)).toBe(reads);
+    // The README hears of its file later and only shows it missing.
+    await view.fileEvent(README, "file:deleted");
+    expect(gone).toBe(1);
+    expect(view.session().goneState).toBeNull();
+    expect(toasts.shown).toEqual([]);
+  } finally {
+    toasts.restore();
+    await view.cleanup();
+  }
+});
+
+for (const order of ["README first", "owner first"] as const) {
+  test(`an own deletion of a home page owner with unsaved work closes it as before, without the gone state (${order})`, async () => {
+    let gone = 0;
+    const toasts = captureToasts();
+    const view = await readyHarness({
+      target: "readme",
+      fieldError: `File not found: ${README}`,
+      onPageGone: () => (gone += 1),
+    });
+    try {
+      await typeHeldDraft(view);
+      const { trackOwnContentDeletion } = await import("../page-api");
+      const deleted = deferred<void>();
+      let deletion!: Promise<unknown>;
+      await act(async () => {
+        deletion = trackOwnContentDeletion(
+          { spacePath: view.spacePath, path: "app-only" },
+          async () => {
+            view.pages.delete(README);
+            await deleted.promise;
+          },
+        );
+        await turn();
+      });
+      // The resolver may confirm the folder gone while the deletion runs.
+      if (order === "owner first") await view.goneOwner(true);
+      await act(async () => {
+        deleted.resolve();
+        await deletion;
+        await turn();
+        await turn();
+      });
+      if (order === "README first") await view.goneOwner(true);
+      await act(async () => {
+        await turn();
+        await turn();
+      });
+      expect(view.session().goneState).toBeNull();
+      expect(view.context().status).toBe("missing");
+      expect(gone).toBe(1);
+      expect(toasts.shown).toEqual([]);
+    } finally {
+      toasts.restore();
+      await view.cleanup();
+    }
+  });
+}
 
 function installDomGlobals(dom: JSDOM) {
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {

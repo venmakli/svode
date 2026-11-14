@@ -72,6 +72,8 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
   let scopeMounts = 0;
   // Renders the tabs of the owner surface through the real host.
   let hostTabs = false;
+  // The README of the owner surface keeps unsaved work its folder took away.
+  let scopeKeepsWork = false;
   const tabContributions: ScopeSurfaceContribution[] = [
     {
       id: "readme",
@@ -99,17 +101,26 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       sessionKey,
       openIntent,
       openRequestKey,
+      onPageGone,
+      ownerGone,
     }: {
       owner: ScopeOwnerRef;
       previousOwnerKey?: ScopeOwnerKey;
       sessionKey?: string | number;
       openIntent?: ScopeOpenIntent;
       openRequestKey?: number;
+      onPageGone?: () => void;
+      ownerGone?: boolean;
     }) => {
       renders.push(`scope:${describe(owner)}`);
       useEffect(() => {
         scopeMounts += 1;
       }, []);
+      // The surface closes an owner whose folder is gone unless its README
+      // keeps unsaved work open; that choice is the Page detail's.
+      useEffect(() => {
+        if (ownerGone && !scopeKeepsWork) onPageGone?.();
+      }, [ownerGone, onPageGone]);
       return (
         <div
           data-scope-owner={describe(owner)}
@@ -714,6 +725,17 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
         expect(getActiveContentSelection().selection).toBeNull();
       }
 
+      // The surface of an owner whose README keeps unsaved work the folder
+      // took away stays open in the gone state (DF-269 R3).
+      scopeKeepsWork = true;
+      openScopeOwner({ kind: "collection", path: "drafts", spaceId: "root" });
+      await f.render();
+      await f.settle();
+      await vanish("drafts");
+      expect(getActiveContentSelection().selection === null).toBe(false);
+      scopeKeepsWork = false;
+      closeActiveContent();
+
       // Only the README of a Collection is deleted: the Collection stays.
       openPage("notes/README.md");
       await f.render();
@@ -750,6 +772,7 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       await vanish("Note.md");
       expect(getActiveContentSelection().selection === null).toBe(false);
     } finally {
+      scopeKeepsWork = false;
       await f.cleanup();
     }
   });

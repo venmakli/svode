@@ -28,6 +28,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   let _unmounts = 0;
   let flushBody: () => Promise<void> = async () => {};
   let discardBody: () => Promise<void> = async () => {};
+  // The body holds unsaved work, which a drop gives up.
+  let bodyWork = false;
   let _convert: (path: string) => void = () => {};
   const appBroken = false;
   let headerBroken = false;
@@ -58,6 +60,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         participant: {
           flush: () => Promise<void>;
           discard: () => Promise<void>;
+          hasWork: () => boolean;
+          drop: () => void;
         },
       ): () => void;
       onDocumentPathChange(path: string): void;
@@ -69,6 +73,10 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         const unregister = registerPersistence("body", {
           flush: () => flushBody(),
           discard: () => discardBody(),
+          hasWork: () => bodyWork,
+          drop: () => {
+            bodyWork = false;
+          },
         });
         return () => {
           _unmounts += 1;
@@ -179,6 +187,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   const { AttachmentsPeek } = await import("@/features/attachments");
   const { AttachmentOwnerPeek } = await import("./attachment-owner-peek");
   const { TooltipProvider } = await import("@/components/ui/tooltip");
+  const { SidebarProvider } = await import("@/components/ui/sidebar");
   const { getActiveContentSelection, closeActiveContent } =
     await import("@/features/artifact");
   const { openPage } = await import("@/features/page/navigation");
@@ -1323,11 +1332,29 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
     }
   });
   test("the Peek of a nested Collection closes once its folder is gone and stays when only its README is", async () => {
+    await nestedCollectionFolderGone(false);
+  });
+
+  test("the Peek of a nested Collection whose README holds unsaved work stays in the gone state when another writer takes its folder away", async () => {
+    await nestedCollectionFolderGone(true);
+  });
+
+  async function nestedCollectionFolderGone(unsaved: boolean) {
+    toasts.length = 0;
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
       pretendToBeVisual: true,
       url: "http://localhost/",
     });
     const restore = installDomGlobals(dom);
+    // The owner menu of a Collection header lives in the sidebar context.
+    Object.defineProperty(dom.window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: false,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
+    });
     let readme = true;
     let folder = true;
     const page: Page = {
@@ -1382,25 +1409,47 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
     try {
       await act(async () => {
         root.render(
-          <TooltipProvider>
-            <CompactScopePeek
-              path="Tasks/Sub/README.md"
-              spaceId="space"
-              spacePath="/space"
-              projectPath="/space"
-              sessionKey="peek"
-              onExpand={() => {}}
-              onClose={() => {}}
-              registerNavigationGuard={() => () => {}}
-              dismiss={() => {
-                dismissed += 1;
-              }}
-            />
-          </TooltipProvider>,
+          <SidebarProvider>
+            <TooltipProvider>
+              <CompactScopePeek
+                path="Tasks/Sub/README.md"
+                spaceId="space"
+                spacePath="/space"
+                projectPath="/space"
+                sessionKey="peek"
+                onExpand={() => {}}
+                onClose={() => {}}
+                registerNavigationGuard={() => () => {}}
+                dismiss={() => {
+                  dismissed += 1;
+                }}
+              />
+            </TooltipProvider>
+          </SidebarProvider>,
         );
         await settle();
       });
       expect(dismissed).toBe(0);
+
+      if (unsaved) {
+        // The folder with the README holding unsaved body work is removed
+        // outside Svode: the Peek stays with it, its README in the gone state.
+        bodyWork = true;
+        readme = false;
+        folder = false;
+        await deleted("Tasks/Sub/s1.md");
+        await deleted("Tasks/Sub/README.md");
+        expect(dismissed).toBe(0);
+        expect(
+          Boolean(
+            dom.window.document.querySelector(
+              '[data-editor="Tasks/Sub/README.md"]',
+            ),
+          ),
+        ).toBe(true);
+        expect(toasts).toEqual([m.page_gone_kept_title({ title: "Sub" })]);
+        return;
+      }
 
       // Only its README is gone: the Peek stays.
       readme = false;
@@ -1417,12 +1466,13 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         false,
       );
     } finally {
+      bodyWork = false;
       await act(async () => root.unmount());
       clearNativeMocks();
       restore();
       dom.window.close();
     }
-  });
+  }
 
   test("peek replacement is guarded, ignores late targets and keeps canonical handoff in one session", async () => {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {

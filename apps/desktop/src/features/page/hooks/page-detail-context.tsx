@@ -106,8 +106,17 @@ export interface PageDetailProviderProps {
   fallbackTitle?: string;
   fallbackIcon?: string | null;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  /** Closes the presentation whose Page file stopped existing. */
+  /**
+   * Closes the presentation whose Page file, or the folder of the App or
+   * Collection that owns its README, stopped existing.
+   */
   onPageGone?: () => void;
+  /**
+   * The owner resolver confirmed that the folder of this README's App or
+   * Collection is gone: the presentation closes through `onPageGone`, unless
+   * the README holds unsaved work another writer took away (DF-269 R3).
+   */
+  ownerGone?: boolean;
 }
 
 export function PageDetailProvider({
@@ -122,6 +131,7 @@ export function PageDetailProvider({
   fallbackIcon = null,
   onOpenPath,
   onPageGone,
+  ownerGone = false,
 }: PageDetailProviderProps) {
   const resolvedFallbackTitle =
     fallbackTitle?.trim() || humanizeOwnerPath(ownerPath);
@@ -415,21 +425,37 @@ export function PageDetailProvider({
       spacePath,
     ],
   );
+  const showReadmeMissing = useCallback(() => {
+    reloadSequenceRef.current += 1;
+    setPage(null);
+    setSchemaResult(null);
+    setStatus("missing");
+  }, []);
+  // A gone file closed without saving closes like one without work: a Page
+  // and the home page whose owner folder is gone close, a README whose owner
+  // stays shows its missing state.
+  const closeGone = () => {
+    if (target === "page" || ownerGone) onPageGone?.();
+    else showReadmeMissing();
+  };
   const goneOwnerRef = useRef({
     restore: restoreFile,
-    close: () => onPageGone?.(),
+    close: closeGone,
     text: () => page?.body ?? "",
     refusal: (error: unknown) => takenNameMessage(error, spaceName(spacePath)),
   });
   useLayoutEffect(() => {
     goneOwnerRef.current = {
       restore: restoreFile,
-      close: () => onPageGone?.(),
+      close: closeGone,
       text: () => page?.body ?? "",
       refusal: (error) => takenNameMessage(error, spaceName(spacePath)),
     };
   });
-  const { markLocalWrite } = usePageDetailRefresh({
+  // Set while the owner whose folder is gone waits for its README to tell
+  // whether another writer took unsaved work away.
+  const ownerAwaitsGoneRef = useRef(false);
+  const { markLocalWrite, recheck } = usePageDetailRefresh({
     spacePath,
     path: status === "ready" ? (page?.path ?? null) : null,
     readSource: (path) => readPage({ spacePath, path }),
@@ -444,24 +470,26 @@ export function PageDetailProvider({
       await pageSurface?.settled();
     },
     onGone: (changedHere) => {
+      const ownerAwaits = ownerAwaitsGoneRef.current;
+      ownerAwaitsGoneRef.current = false;
+      const pageTitle = page?.meta.title.trim() || resolvedFallbackTitle;
+      // Unsaved work keeps a Page or README another writer took away open at
+      // its path until the user restores the file, copies the text or closes
+      // it without saving (DF-269 R3).
+      if (!changedHere && pageSurface?.holdsUnsavedWork()) {
+        // The owner acts on the work as it is when the user asks.
+        pageSurface.holdGoneSource({
+          restore: (body) => goneOwnerRef.current.restore(body),
+          close: () => goneOwnerRef.current.close(),
+          text: () => goneOwnerRef.current.text(),
+          refusal: (error) => goneOwnerRef.current.refusal(error),
+        });
+        toast.warning(m.page_gone_kept_title({ title: pageTitle }), {
+          description: m.page_gone_kept_description(),
+        });
+        return true;
+      }
       if (target === "page") {
-        const pageTitle = page?.meta.title.trim() || resolvedFallbackTitle;
-        // Unsaved work keeps a Page another writer took away open at its
-        // path until the user restores the file, copies the text or closes
-        // it without saving (DF-269 R3).
-        if (!changedHere && pageSurface?.holdsUnsavedWork()) {
-          // The owner acts on the work as it is when the user asks.
-          pageSurface.holdGoneSource({
-            restore: (body) => goneOwnerRef.current.restore(body),
-            close: () => goneOwnerRef.current.close(),
-            text: () => goneOwnerRef.current.text(),
-            refusal: (error) => goneOwnerRef.current.refusal(error),
-          });
-          toast.warning(m.page_gone_kept_title({ title: pageTitle }), {
-            description: m.page_gone_kept_description(),
-          });
-          return true;
-        }
         // The user deleted, renamed or moved it here; only another writer's
         // change is news.
         if (!changedHere)
@@ -472,10 +500,9 @@ export function PageDetailProvider({
         return;
       }
       // The directory owner stays; its README can be created again.
-      reloadSequenceRef.current += 1;
-      setPage(null);
-      setSchemaResult(null);
-      setStatus("missing");
+      showReadmeMissing();
+      // The owner whose folder is gone waited for this answer to close.
+      if (ownerAwaits) onPageGone?.();
     },
     onReturned: () => void pageSurface?.releaseGoneSource(),
     // A Page stays open at its new path when a folder above it moves here,
@@ -487,6 +514,25 @@ export function PageDetailProvider({
       home: target === "readme",
     },
   });
+  const ownerGoneActionRef = useRef(() => {});
+  useLayoutEffect(() => {
+    ownerGoneActionRef.current = () => {
+      // A README held after its file went away waits for the user (R4).
+      if (pageSurface?.writesHeld()) return;
+      // Its unsaved work stays if another writer took the folder away, which
+      // only the README's own read tells from this Desktop's deletion (R1).
+      if (pageSurface?.holdsUnsavedWork() && status === "ready") {
+        ownerAwaitsGoneRef.current = true;
+        recheck();
+        return;
+      }
+      onPageGone?.();
+    };
+  });
+  useEffect(() => {
+    if (ownerGone) ownerGoneActionRef.current();
+    else ownerAwaitsGoneRef.current = false;
+  }, [ownerGone]);
   // The failure detail stays in the write session; the surface names it in
   // user terms like the rest of the Page save feedback.
   const writeError = failedWrite ? m.page_surface_save_error() : null;

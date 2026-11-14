@@ -77,18 +77,20 @@ export function CompactScopePeek(props: ScopePeekContext) {
   const { owner, error, gone, retry } = spaceRoot
     ? { ...resolved, owner: spaceOwner, error: null, gone: !spaceOwner }
     : resolved;
-  // A Collection, App or Space whose folder is gone closes its Peek; a Page
-  // closes it itself, and a Collection that lost only its README stays.
+  // A Collection, App or Space whose folder is gone closes its Peek, a
+  // Collection or App through its surface, which keeps a README with unsaved
+  // work open (DF-269 R3); a Page closes it itself, and a Collection that
+  // lost only its README stays.
   const folderOwnerGone =
-    spaceRoot ||
-    owner?.identityKind === "collection-directory" ||
-    owner?.identityKind === "app-directory"
-      ? gone
-      : false;
+    !spaceRoot &&
+    (owner?.identityKind === "collection-directory" ||
+      owner?.identityKind === "app-directory") &&
+    gone;
+  const spaceGone = spaceRoot && gone;
   const { dismiss } = props;
   useEffect(() => {
-    if (folderOwnerGone) dismiss();
-  }, [dismiss, folderOwnerGone]);
+    if (spaceGone) dismiss();
+  }, [dismiss, spaceGone]);
   const fallbackTitle = spaceRoot ? space?.name : props.fallbackTitle;
   const fallbackIcon = spaceRoot ? space?.icon || null : props.fallbackIcon;
   const [surfaceId, setSurfaceId] = useState<ScopeSurfaceId | null>(null);
@@ -224,6 +226,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
               renderHeaderActions={props.renderHeaderActions}
               registerNavigationGuard={props.registerNavigationGuard}
               onPageGone={props.dismiss}
+              ownerGone={folderOwnerGone}
               onIdentityChange={setIdentity}
               onContentPathChange={(nextPath) => {
                 setPathState({ input: props.path, current: nextPath });
