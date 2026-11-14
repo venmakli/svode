@@ -4,8 +4,8 @@ use crate::index::backlinks::BacklinkIndex;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
 use crate::page::dates::GitDateExecutor;
-use crate::page::ensure_path_in_space;
 use crate::page::nonce::WriteNonceRegistry;
+use crate::page::{disk_spelling, ensure_path_in_space};
 
 /// Shared runtime state a Page mutation publishes into: the Project index,
 /// Routine observation, watcher echo nonces and the Git date provider.
@@ -53,6 +53,11 @@ where
     Err: From<PageError> + RepositoryAccessRefusal,
 {
     ensure_path_in_space(request.space, request.path).map_err(Err::from)?;
+    let path = disk_spelling(request.space, request.path);
+    let request = PageWrite {
+        path: &path,
+        ..request
+    };
     let state = runtime.index;
     let nonces = runtime.nonces;
     let backlink_index = state

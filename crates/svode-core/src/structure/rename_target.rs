@@ -11,12 +11,22 @@ use crate::content_tree::source_directory_kind;
 use crate::page::identity::{
     ContentOwnerKind, is_agent_context_source, resolve_markdown_identity_for_path,
 };
-use crate::page::{ChildSpaceRoots, PageError, TitledContent, ensure_path_in_space};
+use crate::page::{ChildSpaceRoots, PageError, TitledContent, disk_spelling, ensure_path_in_space};
 
 /// Refuse a rename by path of anything but an existing folder without a
 /// title, and a new name that a registered child Space owns, before any
-/// planning or write.
-pub(crate) fn ensure_renamable_folder(space: &str, from: &str, to: &str) -> Result<(), PageError> {
+/// planning or write. Returns `from` and `to` in the disk spelling of the
+/// existing path: the new name `to` gives keeps its own spelling.
+pub(crate) fn ensure_renamable_folder(
+    space: &str,
+    from: &str,
+    to: &str,
+) -> Result<(String, String), PageError> {
+    let from = &disk_spelling(space, from);
+    let to = &match to.rfind(|character| character == '/' || (cfg!(windows) && character == '\\')) {
+        Some(split) => format!("{}{}", disk_spelling(space, &to[..split]), &to[split..]),
+        None => to.to_string(),
+    };
     if !same_parent(from, to) {
         return Err(PageError::General(
             "rename_entry cannot change parent; use move_entry to move an entry".to_string(),
@@ -53,7 +63,8 @@ pub(crate) fn ensure_renamable_folder(space: &str, from: &str, to: &str) -> Resu
             }
             // The new name stays in this Space, like every other write.
             DirectoryKind::App | DirectoryKind::Directory => {
-                return ensure_path_in_space(space_path, to);
+                ensure_path_in_space(space_path, to)?;
+                return Ok((from.clone(), to.clone()));
             }
         }
     } else if rel.to_ascii_lowercase().ends_with(".md") {

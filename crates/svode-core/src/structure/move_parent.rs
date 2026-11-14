@@ -58,9 +58,10 @@ impl MovePlan {
     }
 }
 
-/// Resolve a move of `from` under `to_parent`, refusing a missing source or
-/// parent with `FileNotFound`, a parent that cannot hold the source with
-/// `UnsupportedMoveParent` and a taken name with `FileAlreadyExists`.
+/// Resolve a move of `from`, in the disk spelling, under `to_parent`,
+/// refusing a missing source or parent with `FileNotFound`, a parent that
+/// cannot hold the source with `UnsupportedMoveParent` and a taken name with
+/// `FileAlreadyExists`.
 pub(crate) fn plan_move(space: &str, from: &str, to_parent: &str) -> Result<MovePlan, PageError> {
     let root = Path::new(space);
     let source = root.join(from);
@@ -83,7 +84,7 @@ pub(crate) fn plan_move(space: &str, from: &str, to_parent: &str) -> Result<Move
     // The source cannot hold itself: the resolved parent is neither the
     // source nor inside the moved tree.
     let holder = target_leaf.as_deref().unwrap_or(&parent);
-    if !holder.is_empty() && Path::new(holder).starts_with(disk_spelling(space, from)) {
+    if !holder.is_empty() && Path::new(holder).starts_with(from) {
         return Err(unsupported());
     }
     let name = Path::new(from)

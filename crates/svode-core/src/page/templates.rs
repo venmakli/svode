@@ -7,7 +7,7 @@ use crate::page::filename;
 use crate::page::frontmatter::{self, FrontmatterFields};
 use crate::page::store::{self, Page, PageMeta};
 use crate::page::write::SourceSnapshot;
-use crate::page::{PageError, ensure_path_in_space};
+use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
 use crate::collections::engine::{
     README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
@@ -157,6 +157,8 @@ pub fn instantiate(
 ) -> Result<InstantiatedTemplate, PageError> {
     ensure_path_in_space(space, collection_path)?;
     ensure_path_in_space(space, parent_dir)?;
+    let collection_path: &str = &disk_spelling(space, collection_path);
+    let parent_dir: &str = &disk_spelling(space, parent_dir);
     crate::page::naming::with_document_name_lock(space, || {
         instantiate_inner(
             space,

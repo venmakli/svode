@@ -7,7 +7,7 @@ use crate::collections::CollectionError;
 use crate::collections::engine::{ItemFieldBatchIntent, prepare_item_field_batch};
 use crate::page::dates::GitDateExecutor;
 use crate::page::store;
-use crate::page::{PageError, ensure_path_in_space};
+use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
 use super::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
@@ -49,6 +49,7 @@ where
         values,
         intent,
     } = request;
+    let path: &str = &disk_spelling(space, path);
     if values.is_empty() {
         return Err(Err::from(PageError::from(CollectionError::Schema(
             "property batch cannot be empty".to_string(),

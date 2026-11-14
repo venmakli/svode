@@ -380,6 +380,7 @@ pub async fn delete<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<DeleteOutcome, PageError> {
     ensure_path_in_space(space, path)?;
+    let path: &str = &disk_spelling(space, path);
     let planned = delete_mutation_paths(space, project_path, path)?;
     ensure_mutation_paths_were_authorized(&planned)?;
     let state = runtime.index;
@@ -817,6 +818,7 @@ pub async fn convert_to_folder<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Page, PageError> {
     ensure_path_in_space(space, file_path)?;
+    let file_path: &str = &disk_spelling(space, file_path);
     convert_to_folder_with_publication(
         space,
         file_path,
@@ -938,6 +940,7 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<ConvertToLeafOutcome, PageError> {
     ensure_path_in_space(space, file_path)?;
+    let file_path: &str = &disk_spelling(space, file_path);
     convert_to_leaf_of(space, file_path, project_path, runtime, OperationId::next()).await
 }
 
@@ -1065,6 +1068,7 @@ pub async fn convert_to_collection<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<ConvertToCollectionOutcome, PageError> {
     ensure_path_in_space(space, path)?;
+    let path: &str = &disk_spelling(space, path);
     let old_path = normalize_repo_relative(path, RootMode::Reject)?;
     let source = Path::new(space).join(&old_path);
     let leaf_folder = old_path.strip_suffix(".md").filter(|_| {
@@ -1268,8 +1272,8 @@ pub async fn rename<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Vec<String>, PageError> {
-    super::rename_target::ensure_renamable_folder(space, from, to)?;
-    apply_move(space, from, MoveTo::Rename(to), project_path, runtime)
+    let (from, to) = super::rename_target::ensure_renamable_folder(space, from, to)?;
+    apply_move(space, &from, MoveTo::Rename(&to), project_path, runtime)
         .await
         .map(|outcome| outcome.modified_paths)
 }
@@ -1310,6 +1314,7 @@ pub async fn move_page<E: GitDateExecutor>(
 ) -> Result<MovePageOutcome, PageError> {
     ensure_path_in_space(space, from)?;
     ensure_path_in_space(space, to_parent)?;
+    let from: &str = &disk_spelling(space, from);
     let plan = super::move_parent::plan_move(space, from, to_parent)?;
     apply_move(space, from, MoveTo::Parent(&plan), project_path, runtime)
         .await
@@ -1821,6 +1826,7 @@ pub async fn nest<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<String, PageError> {
     ensure_path_in_space(space, path)?;
+    let path: &str = &disk_spelling(space, path);
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
@@ -1894,6 +1900,7 @@ pub async fn duplicate<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Page, PageError> {
     ensure_path_in_space(space, file_path)?;
+    let file_path: &str = &disk_spelling(space, file_path);
     let old_name = page_history_commit_name(space, file_path);
     let duplicated = store::duplicate_page(Path::new(space), file_path)?;
     let root_path = duplicated

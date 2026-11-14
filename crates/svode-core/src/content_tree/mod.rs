@@ -18,7 +18,7 @@ use self::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use self::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::page::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
 use crate::page::naming::{DocumentHead, DocumentNameConflict, DocumentNames};
-use crate::page::{FrontmatterHead, frontmatter_head};
+use crate::page::{FrontmatterHead, disk_spelling, frontmatter_head};
 use crate::page::{SpaceReadiness, space_reference_status};
 
 #[derive(Debug, thiserror::Error)]
@@ -1253,13 +1253,18 @@ pub struct ContentOrderOutcome {
 
 /// Replace the sibling order under `parent_path`. The proposal must be exactly
 /// the current direct children, so a stale client cannot drop or invent one.
-/// A no-op order never creates the order source.
+/// The parent and the children take their disk spelling. A no-op order
+/// never creates the order source.
 pub fn reorder_content(
     space: &str,
     parent_path: &str,
     ordered_children: Vec<String>,
 ) -> Result<ContentOrderOutcome, ContentTreeError> {
-    let parent_path = normalize_tree_parent_path(Some(parent_path))?;
+    let parent_path = disk_spelling(space, &normalize_tree_parent_path(Some(parent_path))?);
+    let ordered_children = ordered_children
+        .iter()
+        .map(|child| disk_spelling(space, child))
+        .collect::<Vec<_>>();
     let actual_children = list_tree_children_unmarked(space, Some(&parent_path))?;
     let previous_order = actual_children
         .iter()

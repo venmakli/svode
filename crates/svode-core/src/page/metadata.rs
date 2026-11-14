@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::page::dates::GitDateExecutor;
 use crate::page::store;
-use crate::page::{PageError, ensure_path_in_space};
+use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
 use super::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
@@ -44,6 +44,7 @@ where
     Err: From<PageError> + crate::git::access::RepositoryAccessRefusal,
 {
     ensure_path_in_space(space, path).map_err(Err::from)?;
+    let path: &str = &disk_spelling(space, path);
     if patch.is_empty() {
         return Ok(PageMetadataOutcome {
             page: store::read(space, path)?,

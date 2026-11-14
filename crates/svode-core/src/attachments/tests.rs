@@ -576,3 +576,56 @@ async fn local_import_keeps_listed_formats_by_the_block_and_large_files_by_an_ex
         assert_eq!(out.exit_code == 0, hidden, "{path}");
     }
 }
+
+#[tokio::test]
+async fn import_into_a_leaf_in_another_letter_case_is_the_import_in_the_disk_spelling() {
+    async fn import(content_path: &str) -> (Result<String, String>, Vec<(String, Vec<u8>)>) {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        leaf_import_project(&project);
+        let project = fs::canonicalize(&project).unwrap();
+        let source = temp.path().join("photo.png");
+        fs::write(&source, b"image").unwrap();
+        let index = IndexRuntimeState::default();
+        let repository = GitRepositoryState::new();
+        let cli = GitCli::detect().ok();
+        let import = ImportRuntime {
+            cli: cli.as_ref(),
+            ..runtime(&index, &repository)
+        };
+        let result = async {
+            let plan =
+                plan_managed_import(&index, &project, None, content_path, &source, None).await?;
+            let result = execute_managed_import(import, MutationOrigin::Mcp, plan).await?;
+            Ok::<_, crate::page::PageError>(format!(
+                "{} {} {} {:?}",
+                result.content_path,
+                result.attachment_path,
+                result.markdown_url,
+                result.changed_paths
+            ))
+        }
+        .await
+        .map_err(|error| error.to_string());
+        (result, project_sources(&project))
+    }
+
+    let (exact, exact_tree) = import("Area/Tasks/Item.md").await;
+    assert!(exact.is_ok(), "{exact:?}");
+    let other = "area/tasks/item.md";
+    let (result, tree) = import(other).await;
+    let before = {
+        let temp = tempfile::tempdir().unwrap();
+        leaf_import_project(temp.path());
+        project_sources(temp.path())
+    };
+    if result.is_ok() {
+        // The folder Page keeps the name of the leaf on disk, the links and
+        // relations follow it.
+        assert_eq!(result, exact);
+        assert_eq!(tree, exact_tree);
+    } else {
+        // A file system that does not find the path refuses as before.
+        assert_eq!(tree, before, "{result:?}");
+    }
+}

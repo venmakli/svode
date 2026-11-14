@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::collections::engine::{self, CollectionSchema};
 use crate::index::state::IndexRuntimeState;
 use crate::page::store;
-use crate::page::{PageError, ensure_path_in_space};
+use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 use crate::storage::routes::{
     managed_attachment_local_rules_path, managed_attachment_policy_paths,
 };
@@ -20,6 +20,7 @@ pub async fn move_mutation_paths(
 ) -> Result<Vec<PathBuf>, PageError> {
     ensure_path_in_space(space, from)?;
     ensure_path_in_space(space, to)?;
+    let from: &str = &disk_spelling(space, from);
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         let mut paths = vec![PathBuf::from(space)];
         paths.extend(managed_attachment_policy_paths(space, None));
@@ -58,6 +59,7 @@ pub async fn move_page_mutation_paths(
 ) -> Result<Vec<PathBuf>, PageError> {
     ensure_path_in_space(space, from)?;
     ensure_path_in_space(space, to_parent)?;
+    let from: &str = &disk_spelling(space, from);
     let plan = super::move_parent::plan_move(space, from, to_parent)?;
     let mut paths = move_mutation_paths(state, space, project_path, from, &plan.planned).await?;
     for (old, new) in plan.conversions() {
@@ -77,8 +79,8 @@ pub async fn rename_mutation_paths(
     from: &str,
     to: &str,
 ) -> Result<Vec<PathBuf>, PageError> {
-    super::rename_target::ensure_renamable_folder(space, from, to)?;
-    move_mutation_paths(state, space, project_path, from, to).await
+    let (from, to) = super::rename_target::ensure_renamable_folder(space, from, to)?;
+    move_mutation_paths(state, space, project_path, &from, &to).await
 }
 
 pub async fn backlink_mutation_paths(
@@ -89,6 +91,7 @@ pub async fn backlink_mutation_paths(
     folder_rename: bool,
 ) -> Result<Vec<PathBuf>, PageError> {
     ensure_path_in_space(space, from)?;
+    let from: &str = &disk_spelling(space, from);
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         return Ok(vec![PathBuf::from(space)]);
     };
@@ -128,6 +131,7 @@ pub fn delete_mutation_paths(
     path: &str,
 ) -> Result<Vec<PathBuf>, PageError> {
     ensure_path_in_space(space, path)?;
+    let path: &str = &disk_spelling(space, path);
     let deleted = store::planned_deleted_page_paths(space, path)?;
     let mut paths = engine::cascade_clean_deleted_items_mutation_paths_with_project(
         space,
