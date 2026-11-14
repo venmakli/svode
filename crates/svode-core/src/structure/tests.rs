@@ -522,7 +522,7 @@ async fn bare_folder_rename_changes_case_and_refuses_portable_collisions() {
     assert!(tmp.path().join("Notes/a.md").is_file());
 
     let before = tree_snapshot(tmp.path());
-    for taken in ["archive", "ARCHIVE", "Cafe\u{301}"] {
+    for taken in ["Archive", "archive", "ARCHIVE", "Cafe\u{301}"] {
         let error = super::rename(space, "Notes", taken, None, runtime(&state))
             .await
             .expect_err(taken);
@@ -537,6 +537,78 @@ async fn bare_folder_rename_changes_case_and_refuses_portable_collisions() {
         .await
         .expect("an App folder has no title");
     assert!(tmp.path().join("Site/app.yaml").is_file());
+}
+
+/// DF-260 R1: a Collection without a README has no title and takes the
+/// checks of a folder without one, before planning and in the operation;
+/// a Collection with a README still asks for a title change.
+#[tokio::test]
+async fn a_collection_without_readme_takes_the_checks_of_a_folder_without_a_title() {
+    use crate::page::PageError;
+
+    let tmp = rename_target_fixture();
+    write_tree(
+        tmp.path(),
+        &[
+            ("Shelf/schema.yaml", "columns: []\n"),
+            ("Shelf/Item.md", "---\ntitle: Item\n---\n"),
+            ("Rack/a.md", "---\ntitle: A\n---\n"),
+        ],
+    );
+    let space = tmp.path().to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let before = tree_snapshot(tmp.path());
+
+    for taken in ["Rack", "rack", "RACK", "Doc"] {
+        let error = super::rename(space, "Shelf", taken, None, runtime(&state))
+            .await
+            .expect_err(taken);
+        assert!(
+            matches!(&error, PageError::FileAlreadyExists(path) if path == taken),
+            "{taken}: {error:?}"
+        );
+    }
+    let in_child = super::rename(space, "Shelf", "child", None, runtime(&state))
+        .await
+        .expect_err("child Space root");
+    assert!(
+        matches!(&in_child, PageError::PathInOtherSpace { path, space_id }
+            if path == "child" && space_id == "child"),
+        "{in_child:?}"
+    );
+    let planned_in_child =
+        super::rename_mutation_paths(&state, space, Some(space), "Shelf", "child")
+            .await
+            .expect_err("child Space root before planning");
+    assert!(
+        matches!(planned_in_child, PageError::PathInOtherSpace { .. }),
+        "{planned_in_child:?}"
+    );
+    let titled = super::rename(space, "Tasks", "Todo", None, runtime(&state))
+        .await
+        .expect_err("Collection with a README");
+    assert!(
+        matches!(&titled, PageError::TitleRenameRequired { path, kind }
+            if path == "Tasks" && *kind == crate::page::TitledContent::Collection),
+        "{titled:?}"
+    );
+    assert_eq!(tree_snapshot(tmp.path()), before);
+
+    super::rename_mutation_paths(&state, space, Some(space), "Shelf", "Box")
+        .await
+        .expect("plan of a Collection without a README");
+    let renamed = super::rename(space, "Shelf", "shelf", None, runtime(&state))
+        .await
+        .expect("case-only rename");
+    assert_eq!(renamed.new_path, "shelf");
+    let names = fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"shelf".to_string()), "{names:?}");
+    assert!(!names.contains(&"Shelf".to_string()), "{names:?}");
+    assert!(tmp.path().join("shelf/schema.yaml").is_file());
+    assert!(!tmp.path().join("shelf/README.md").exists());
 }
 
 #[tokio::test]
@@ -758,6 +830,88 @@ async fn renaming_a_folder_rewrites_relation_schemas_of_nested_collections() {
             .unwrap();
     assert_eq!(order["."], vec!["Zone", "Decisions"]);
     assert_nested_collections_moved(root, "Zone");
+}
+
+/// DF-260 R2: renaming a Collection without a README rewrites the relation
+/// schemas of the project that target it, in its Space, the root and other
+/// Spaces, rebases its order and leaves the relation values resolvable.
+#[tokio::test]
+async fn renaming_a_collection_without_readme_rewrites_relation_schemas_across_spaces() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alpha = nested_collections_project(root, false);
+    fs::remove_file(alpha.join("Area/Tasks/README.md")).unwrap();
+    let state = IndexRuntimeState::default();
+    let project = root.to_str().unwrap();
+
+    let plan = super::rename_mutation_paths(
+        &state,
+        alpha.to_str().unwrap(),
+        Some(project),
+        "Area/Tasks",
+        "Area/Todo",
+    )
+    .await
+    .unwrap();
+    for schema in [
+        alpha.join("Decisions/schema.yaml"),
+        root.join("Refs/schema.yaml"),
+    ] {
+        assert!(
+            plan.contains(&schema),
+            "{} not in {plan:?}",
+            schema.display()
+        );
+    }
+
+    super::rename(
+        alpha.to_str().unwrap(),
+        "Area/Tasks",
+        "Area/Todo",
+        Some(project),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+
+    assert!(!alpha.join("Area/Tasks").exists());
+    assert!(!alpha.join("Area/Todo/README.md").exists());
+    assert_eq!(
+        relation_targets(&alpha.join("Decisions/schema.yaml")),
+        vec!["Area/Todo".to_string(), "Area/Sub/Deep".to_string()]
+    );
+    assert_eq!(
+        relation_targets(&root.join("Refs/schema.yaml")),
+        vec!["Area/Todo".to_string()]
+    );
+    assert_eq!(
+        relation_targets(&root.join("spaces/beta/Refs/schema.yaml")),
+        vec!["Area/Sub/Deep".to_string()]
+    );
+    assert_eq!(
+        relation_targets(&alpha.join("Area/Todo/schema.yaml")),
+        vec!["Decisions".to_string()]
+    );
+    let order: std::collections::HashMap<String, Vec<String>> =
+        serde_json::from_str(&fs::read_to_string(alpha.join(".svode/order.json")).unwrap())
+            .unwrap();
+    assert_eq!(order["Area"], vec!["Sub", "Todo"]);
+    assert_eq!(order["Area/Todo"], vec!["Item.md"]);
+    assert!(!order.contains_key("Area/Tasks"), "{order:?}");
+    for space in [alpha.clone(), root.to_path_buf(), root.join("spaces/beta")] {
+        let report = crate::collections::engine::validate_collection_integrity_with_project(
+            space.to_str().unwrap(),
+            None,
+            Some(project),
+        )
+        .unwrap();
+        assert!(
+            report.errors.is_empty(),
+            "{}: {:?}",
+            space.display(),
+            report.errors
+        );
+    }
 }
 
 #[tokio::test]
@@ -1171,6 +1325,84 @@ async fn rename_and_move_register_every_changed_file_in_one_group() {
         ],
     );
     assert!(!paths.contains(&root.join("Decisions/schema.yaml")));
+}
+
+/// DF-260 R2: a Collection without a README renamed by path registers every
+/// changed file in one pending group, creates no README and keeps relation
+/// values and links working.
+#[tokio::test]
+async fn a_collection_without_readme_renamed_by_path_registers_one_group() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    relation_target_space(root);
+    fs::remove_file(root.join("Area/Tasks/README.md")).unwrap();
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+    let decision = fs::read_to_string(root.join("Decisions/Decision.md")).unwrap();
+
+    let outcome = super::rename(
+        space,
+        "Area/Tasks",
+        "Area/Todo",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.old_path, "Area/Tasks");
+    assert_eq!(outcome.new_path, "Area/Todo");
+    assert_eq!(outcome.modified_paths, vec!["Link.md".to_string()]);
+    assert!(!root.join("Area/Tasks").exists());
+    assert!(root.join("Area/Todo/schema.yaml").is_file());
+    assert!(root.join("Area/Todo/Item.md").is_file());
+    assert!(!root.join("Area/Todo/README.md").exists());
+    assert_eq!(
+        relation_targets(&root.join("Decisions/schema.yaml")),
+        vec!["Area/Todo".to_string()]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Decisions/Decision.md")).unwrap(),
+        decision
+    );
+    assert!(
+        fs::read_to_string(root.join("Link.md"))
+            .unwrap()
+            .contains("(Area/Todo/Item.md)")
+    );
+    let order: std::collections::HashMap<String, Vec<String>> =
+        serde_json::from_str(&fs::read_to_string(root.join(".svode/order.json")).unwrap()).unwrap();
+    assert_eq!(order["Area/Todo"], vec!["Item.md"]);
+    assert!(!order.contains_key("Area/Tasks"), "{order:?}");
+    let groups = sink.take();
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    let (now, owner, paths) = &groups[0];
+    assert!(!now);
+    assert_eq!(owner, root);
+    assert_contains_all(
+        paths,
+        root,
+        &[
+            "Area/Tasks",
+            "Area/Todo",
+            "Area/Tasks/Item.md",
+            "Area/Todo/Item.md",
+            "Link.md",
+            "Decisions/schema.yaml",
+            ".svode/order.json",
+        ],
+    );
+    let report = crate::collections::engine::validate_collection_integrity_with_project(
+        space,
+        None,
+        Some(space),
+    )
+    .unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
 }
 
 #[tokio::test]

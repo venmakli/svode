@@ -8,13 +8,13 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use svode_core::collections::engine::ItemFieldBatchIntent;
-use svode_core::page::SourceVersion;
 use svode_core::page::create::PageCreate;
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::identity::ContentOwnerKind;
 use svode_core::page::metadata::{PageMetadataPatch, relative_changed_paths};
 use svode_core::page::store::{self, Cover};
 use svode_core::page::write::{PageWrite, PageWriteOutcome};
+use svode_core::page::{PageError, SourceVersion};
 
 use crate::args::deserialize_present;
 use crate::error::ToolError;
@@ -356,6 +356,11 @@ pub(crate) async fn update_collection_metadata(
     };
     let outcome = match patch_metadata(host, target, &space, &path, patch).await {
         Ok(outcome) => outcome,
+        Err(MutationError::Page(PageError::FileNotFound(_)))
+            if !has_readme(&space, &collection_path) =>
+        {
+            return Err(collection_without_readme(&collection_path));
+        }
         Err(error) => return failure(error),
     };
     let collection_path = parent_dir(&outcome.page.path);
@@ -365,6 +370,23 @@ pub(crate) async fn update_collection_metadata(
         format!("Updated Collection metadata for {collection_path}."),
         json!({ "collectionPath": collection_path, "sourceVersion": source_version(&outcome.page), "collectionReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
+}
+
+fn has_readme(space: &str, collection_path: &str) -> bool {
+    svode_core::content_tree::source_directory_facts(&Path::new(space).join(collection_path))
+        .is_ok_and(|facts| facts.has_head)
+}
+
+/// A Collection without a README has no metadata or title to change: the
+/// refusal names the cause and the rename by path that renames it.
+fn collection_without_readme(collection_path: &str) -> ToolError {
+    ToolError::new(
+        "FILE_NOT_FOUND",
+        format!(
+            "File not found: {readme}. The Collection {collection_path} has no README, so it has no title or metadata to change and update_collection_metadata changed nothing. A Collection without a README is renamed by path with rename_content (CLI: svode content rename --path {collection_path} --to <new path in the same parent>).",
+            readme = collection_readme_path(collection_path),
+        ),
+    )
 }
 
 pub(crate) async fn update_collection_item_metadata(

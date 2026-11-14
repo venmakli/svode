@@ -215,8 +215,9 @@ fn every_help_page_has_an_example_and_needs_no_project() {
     assert!(empty.path().read_dir().unwrap().next().is_none());
 }
 
-/// Help routes a Page, item or Collection rename to a title change and
-/// keeps `content rename` for folders without a title with its refusals.
+/// Help routes a Page, item or Collection with a README rename to a title
+/// change and keeps `content rename` for folders without a title, including
+/// a Collection without a README, with its refusals.
 #[test]
 fn rename_help_routes_pages_and_collections_to_a_title_change() {
     let empty = tempfile::tempdir().unwrap();
@@ -237,6 +238,29 @@ fn rename_help_routes_pages_and_collections_to_a_title_change() {
     assert!(content.contains("TITLE_RENAME_REQUIRED"), "{content}");
     assert!(content.contains("UNSUPPORTED_RENAME_TARGET"), "{content}");
     assert!(!content.contains("keeps its old title"), "{content}");
+    // DF-260 R5: a Collection without a README has no title and is renamed
+    // by path; only one with a README is renamed by its title.
+    assert!(
+        content.contains("including a Collection without a README"),
+        "{content}"
+    );
+    assert!(
+        content.contains(
+            "Collection item or Collection with a README is renamed by setting its title"
+        ),
+        "{content}"
+    );
+    let collection_meta = help(&["collection", "meta", "set"]);
+    assert!(
+        collection_meta.contains("Collection item or Collection with a README"),
+        "{collection_meta}"
+    );
+    assert!(
+        collection_meta.contains(
+            "A Collection without a README has no title: rename it with `content rename`"
+        ),
+        "{collection_meta}"
+    );
 }
 
 /// Help of `content move` names the parents it accepts, the conversions of

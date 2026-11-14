@@ -2633,6 +2633,69 @@ async fn rename_content_refuses_titled_and_unsupported_targets_with_stable_codes
     assert!(denied.deliveries.lock().unwrap().is_empty());
 }
 
+/// DF-260 R1, R2, R5: a Collection without a README has no title, so
+/// rename_content renames it by path and rewrites the relation schema that
+/// targets it, while update_collection_metadata refuses it with
+/// FILE_NOT_FOUND naming the cause and the rename by path.
+#[tokio::test]
+async fn rename_content_renames_a_collection_without_readme_by_path() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    fs::remove_file(project.join("sprints/README.md")).unwrap();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let before = source_snapshot(project);
+
+    let refused = call_tool(
+        &host,
+        Some(&target),
+        "update_collection_metadata",
+        json!({ "collectionPath": "sprints", "title": "Cycles" }),
+    )
+    .await;
+    assert_eq!(error_code(&refused), "FILE_NOT_FOUND");
+    let message = format!("{refused:?}");
+    for phrase in [
+        "sprints/README.md",
+        "The Collection sprints has no README",
+        "rename_content",
+        "svode content rename --path sprints",
+    ] {
+        assert!(message.contains(phrase), "{phrase}: {message}");
+    }
+    assert_eq!(source_snapshot(project), before);
+
+    let renamed = call_tool(
+        &host,
+        Some(&target),
+        "rename_content",
+        json!({ "from": "sprints", "to": "cycles" }),
+    )
+    .await;
+    let renamed = structured(&renamed);
+    assert_eq!(renamed["oldPath"], "sprints");
+    assert_eq!(renamed["newPath"], "cycles");
+    assert!(!project.join("sprints").exists());
+    assert!(project.join("cycles/schema.yaml").is_file());
+    assert!(project.join("cycles/one.md").is_file());
+    assert!(!project.join("cycles/README.md").exists());
+    assert!(read(&fixture, "tasks/schema.yaml").contains("relation: cycles"));
+    assert!(read(&fixture, "tasks/alpha.md").contains("Sprint: one.md"));
+    let changed = changed(renamed);
+    for path in ["tasks/schema.yaml", "cycles/one.md", "cycles/schema.yaml"] {
+        assert!(changed.contains(&path.to_string()), "{path}: {changed:?}");
+    }
+
+    let titled = call_tool(
+        &host,
+        Some(&target),
+        "rename_content",
+        json!({ "from": "tasks", "to": "jobs" }),
+    )
+    .await;
+    assert_eq!(error_code(&titled), "TITLE_RENAME_REQUIRED");
+}
+
 /// A write addressed through the root Space at a path of the registered
 /// child Space is refused with PATH_IN_OTHER_SPACE before any write;
 /// read_page and rename_content keep their own codes.

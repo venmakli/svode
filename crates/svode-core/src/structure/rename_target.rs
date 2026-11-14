@@ -1,13 +1,14 @@
 //! Target rule of a rename by path: only a folder without a title is renamed
-//! this way. A Page, Collection item or Collection is named by its title and
-//! renamed by a title change; every other path is refused.
+//! this way, including a Collection without a README. A Page, Collection item
+//! or Collection with a README is named by its title and renamed by a title
+//! change; every other path is refused.
 
 use std::path::Path;
 
 use super::naming::same_parent;
 use crate::content_tree::children::DirectoryKind;
 use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
-use crate::content_tree::source_directory_kind;
+use crate::content_tree::source_directory_facts;
 use crate::page::identity::{
     ContentOwnerKind, is_agent_context_source, resolve_markdown_identity_for_path,
 };
@@ -56,13 +57,15 @@ pub(crate) fn ensure_renamable_folder(
         return Err(unsupported());
     }
     let titled = if is_dir {
-        match source_directory_kind(&abs)? {
-            DirectoryKind::Collection => TitledContent::Collection,
+        let facts = source_directory_facts(&abs)?;
+        match facts.kind() {
+            DirectoryKind::Collection if facts.has_head => TitledContent::Collection,
             DirectoryKind::Page => {
                 markdown_kind(space_path, &format!("{rel}/README.md"))?.ok_or_else(unsupported)?
             }
-            // The new name stays in this Space, like every other write.
-            DirectoryKind::App | DirectoryKind::Directory => {
+            // A Collection without a README has no title either. The new
+            // name stays in this Space, like every other write.
+            DirectoryKind::Collection | DirectoryKind::App | DirectoryKind::Directory => {
                 ensure_path_in_space(space_path, to)?;
                 return Ok((from.clone(), to.clone()));
             }

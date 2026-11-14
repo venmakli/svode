@@ -158,6 +158,9 @@ pub(crate) fn mapped_path(path: &Path, roots: Option<&(PathBuf, PathBuf)>) -> Pa
 pub(crate) struct SourceSnapshot {
     files: BTreeMap<PathBuf, Option<Vec<u8>>>,
     roots: Option<(PathBuf, PathBuf)>,
+    /// Whether the new root already existed: it is not the operation's, so
+    /// the rollback leaves it in place, as when the target name is taken.
+    new_root_existed: bool,
     created_dirs: Vec<PathBuf>,
     removed_dirs: Vec<PathBuf>,
 }
@@ -186,9 +189,11 @@ impl SourceSnapshot {
             };
             files.insert(path.clone(), bytes);
         }
+        let new_root_existed = roots.as_ref().is_some_and(|(_, new)| present_as_named(new));
         Ok(Self {
             files,
             roots,
+            new_root_existed,
             created_dirs: Vec::new(),
             removed_dirs: Vec::new(),
         })
@@ -226,7 +231,7 @@ impl SourceSnapshot {
             if !present_as_named(old) && present_as_named(new) && fs::rename(new, old).is_err() {
                 failed.extend([old.display().to_string(), new.display().to_string()]);
             }
-            if present_as_named(new) {
+            if !self.new_root_existed && present_as_named(new) {
                 failed.push(new.display().to_string());
             }
         }

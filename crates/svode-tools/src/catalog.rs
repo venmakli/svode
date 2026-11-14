@@ -316,7 +316,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Modified, file_of("/collectionPath", COLLECTION_README), at("/path"))] }),
         def(
             "update_collection_metadata",
-            "Update one Collection owner's README metadata without classifying it as a Page or Collection item. A new title is how to rename a Collection: Svode renames its directory, rewrites links to it and its items (including link text that followed the old name), relations and relation schemas that target it, and sidebar order, and returns the actual collectionPath with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Does not autocommit.",
+            "Update one Collection owner's README metadata without classifying it as a Page or Collection item. A new title is how to rename a Collection with a README: Svode renames its directory, rewrites links to it and its items (including link text that followed the old name), relations and relation schemas that target it, and sidebar order, and returns the actual collectionPath with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. A Collection without a README has no title and is refused with FILE_NOT_FOUND: rename it by path with rename_content. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -714,7 +714,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Deleted, file_of("/collectionPath", COLLECTION_README), None)] }),
         def(
             "rename_content",
-            "Rename a folder without a title in its current parent through Svode's managed structural backend. A Page, Collection item, or Collection is named by its title: rename_content refuses it with TITLE_RENAME_REQUIRED and changes nothing; to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. A file, a child Space directory, or a system or hidden path (such as .assets) is refused with UNSUPPORTED_RENAME_TARGET, and a new name that a registered child Space owns with PATH_IN_OTHER_SPACE. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the rename restores every touched file and returns the error, so a failed rename changes nothing.",
+            "Rename a folder without a title in its current parent through Svode's managed structural backend; a Collection without a README has no title and is renamed this way too. A Page, Collection item, or Collection with a README is named by its title: rename_content refuses it with TITLE_RENAME_REQUIRED and changes nothing; to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. A file, a child Space directory, or a system or hidden path (such as .assets) is refused with UNSUPPORTED_RENAME_TARGET, and a new name that a registered child Space owns with PATH_IN_OTHER_SPACE. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed. To change parent, use move_content. This rewrites managed relations (for a Collection also the relation schemas that target it), backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the rename restores every touched file and returns the error, so a failed rename changes nothing.",
             schema(
                 &[
                     space_id(),
@@ -1132,17 +1132,17 @@ Body saves:
 
 Structural work and integrity:
 - Files-first work covers the body text described under Body saves and new plain Markdown Pages in an existing folder without a schema; create them directly and Svode picks them up. Everything that changes frontmatter, names, structure, schema, attachments or system folders goes through Svode tools.
-- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, renames, moves, or Collections manually. Rename a Page, Collection item, or Collection by changing its title as described under Renaming; use rename_content only for a folder without a title (it refuses every other target) and move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection for the other structural changes so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
+- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, renames, moves, or Collections manually. Rename a Page, Collection item, or Collection with a README by changing its title as described under Renaming; use rename_content only for a folder without a title, including a Collection without a README (it refuses every other target) and move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection for the other structural changes so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
 - Every write addressed through a Space stays inside it: a registered child Space owns its directory and everything in it, so a write from the Space that registers it with a source, parent or destination there (delete, move, create, conversion, duplicate, title, metadata, body, import) fails with PATH_IN_OTHER_SPACE and changes nothing. Run it in that child Space with its spaceId and a path relative to it; removing a Space from the project is not a Page or Collection delete.
 - move_content moves under a folder, Collection, folder Page (or its README.md) or leaf Page, or to the space root with an empty toParent. A leaf Page parent becomes `<name>/README.md` first, and a folder Page the move leaves holding nothing but its README.md becomes a leaf again, in the same operation; convertedParents reports both, so continue with the returned paths. A missing parent is FILE_NOT_FOUND and creates no folder; a file that is not a Markdown Page, the moved content itself or a path inside it is UNSUPPORTED_MOVE_PARENT.
 - Structural tools do not autocommit and return changed/touched paths. rename_content and move_content apply all their effects or none: when any step fails they restore every touched file, return the error and leave no pending change. PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored; inspect them before retrying. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
 - When structural files changed outside Svode (by hand, Git or another program), run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
 
 Renaming:
-- Renaming a Page (leaf, directory-backed, or Collection item) or a Collection means changing its title: update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata, or write_page/write_collection_readme with a title. Svode renames the file or directory to match, rewrites links to it (including link text that followed the old name), relations (for a Collection also the relation schemas that target it), and sidebar order in one rollback, and returns the actual path and changedPaths. Continue with the returned path.
+- Renaming a Page (leaf, directory-backed, or Collection item) or a Collection with a README means changing its title: update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata, or write_page/write_collection_readme with a title. Svode renames the file or directory to match, rewrites links to it (including link text that followed the old name), relations (for a Collection also the relation schemas that target it), and sidebar order in one rollback, and returns the actual path and changedPaths. Continue with the returned path.
 - When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision. When a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Both are applied outcomes, not failures.
 - The title of a Space README (update_space_metadata, write_space_readme) never renames the Space or its directory.
-- rename_content renames only a folder without a title in its parent. It refuses a Page, Collection item, or Collection with TITLE_RENAME_REQUIRED (change its title instead) and a file, child Space directory, or system or hidden path with UNSUPPORTED_RENAME_TARGET; a refusal changes nothing. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed.
+- rename_content renames only a folder without a title in its parent. A Collection without a README has no title: rename it with rename_content, which rewrites the relation schemas that target it like move_content; update_collection_metadata refuses it with FILE_NOT_FOUND. rename_content refuses a Page, Collection item, or Collection with a README with TITLE_RENAME_REQUIRED (change its title instead) and a file, child Space directory, or system or hidden path with UNSUPPORTED_RENAME_TARGET; a refusal changes nothing. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed.
 
 Managed colocated attachments:
 - To use a new local image, media file, or attachment, call import_asset with the existing Page, Collection item, or owner README contentPath and an absolute local sourcePath. The source is copied, never moved. A leaf Page may become `<name>/README.md`; always use the returned canonical contentPath for the next content or metadata tool call.
@@ -2480,6 +2480,20 @@ mod tests {
         let rename_content = description("rename_content");
         assert!(rename_content.contains("Rename a folder without a title"));
         assert!(rename_content.contains("change its title"));
+        // DF-260 R5: a Collection without a README is renamed by path, only
+        // one with a README is a TITLE_RENAME_REQUIRED target.
+        assert!(
+            rename_content
+                .contains("a Collection without a README has no title and is renamed this way too")
+        );
+        assert!(rename_content.contains(
+            "A Page, Collection item, or Collection with a README is named by its title"
+        ));
+        assert!(!rename_content.contains("A Page, Collection item, or Collection is named"));
+        assert!(
+            description("update_collection_metadata")
+                .contains("A Collection without a README has no title and is refused with FILE_NOT_FOUND: rename it by path with rename_content")
+        );
         for code in [
             "TITLE_RENAME_REQUIRED",
             "UNSUPPORTED_RENAME_TARGET",
@@ -2491,8 +2505,22 @@ mod tests {
         let guide = guide_text();
         assert!(guide.contains("Renaming a Page"));
         assert!(guide.contains("never renames the Space"));
-        assert!(guide.contains("use rename_content only for a folder without a title"));
+        assert!(guide.contains("use rename_content only for a folder without a title, including a Collection without a README"));
         assert!(guide.contains("rename_content renames only a folder without a title"));
+        assert!(
+            guide.contains(
+                "A Collection without a README has no title: rename it with rename_content"
+            )
+        );
+        assert!(guide.contains("a Collection with a README means changing its title"));
+        assert!(guide.contains(
+            "refuses a Page, Collection item, or Collection with a README with TITLE_RENAME_REQUIRED"
+        ));
+        assert!(
+            !guide.contains(
+                "refuses a Page, Collection item, or Collection with TITLE_RENAME_REQUIRED"
+            )
+        );
         assert!(guide.contains("rename_content and move_content apply all their effects or none"));
         assert!(guide.contains("TITLE_RENAME_REQUIRED"));
         assert!(guide.contains("UNSUPPORTED_RENAME_TARGET"));
