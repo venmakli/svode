@@ -607,3 +607,335 @@ async fn inspection_stats_enforce_scope_size_and_child_repository_boundaries() {
         assert!(result["items"][0]["additions"].is_null());
     }
 }
+
+const FRONTMATTER: [&str; 3] = ["---", "title: Note", "---"];
+const BODY: [&str; 6] = [
+    "",
+    "First paragraph.",
+    "",
+    "Second paragraph.",
+    "",
+    "Third paragraph.",
+];
+
+/// The Page with frontmatter and body lines ending in the given endings.
+fn page(frontmatter: &str, body: &str, edited: bool) -> String {
+    let mut text = String::new();
+    for line in FRONTMATTER {
+        text.push_str(line);
+        text.push_str(frontmatter);
+    }
+    for line in BODY {
+        let line = if edited && line == "Second paragraph." {
+            "Second paragraph, edited."
+        } else {
+            line
+        };
+        text.push_str(line);
+        text.push_str(body);
+    }
+    text
+}
+
+/// A repository whose local configuration and attributes leave only the line
+/// ending policy of the case in effect, whatever the global configuration.
+async fn line_ending_repo(
+    config: &[(&str, &str)],
+    attributes: &str,
+) -> (tempfile::TempDir, GitCli) {
+    let (dir, cli) = repo().await;
+    for (key, value) in [
+        ("core.autocrlf", "false"),
+        ("core.eol", "lf"),
+        ("core.safecrlf", "false"),
+        ("core.attributesFile", ""),
+    ]
+    .iter()
+    .chain(config)
+    {
+        cli.exec(dir.path(), &["config", key, value]).await.unwrap();
+    }
+    if !attributes.is_empty() {
+        std::fs::write(dir.path().join(".gitattributes"), attributes).unwrap();
+        commit_file(&cli, dir.path(), ".gitattributes")
+            .await
+            .unwrap();
+    }
+    (dir, cli)
+}
+
+fn numstat(stdout: &str) -> (usize, usize) {
+    stdout
+        .lines()
+        .next()
+        .and_then(|line| {
+            let mut fields = line.split('\t');
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .unwrap_or((0, 0))
+}
+
+/// Lines added and removed between two texts, counted by Git without any
+/// conversion, as the Sheet diff compares them.
+async fn changed_lines(cli: &GitCli, before: &str, after: &str) -> (usize, usize) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("before"), before).unwrap();
+    std::fs::write(dir.path().join("after"), after).unwrap();
+    let output = cli
+        .exec(
+            dir.path(),
+            &[
+                "-c",
+                "core.autocrlf=false",
+                "diff",
+                "--no-index",
+                "--numstat",
+                "before",
+                "after",
+            ],
+        )
+        .await
+        .unwrap();
+    numstat(&output.stdout)
+}
+
+/// Bytes of the index and the names of every loose and packed object.
+fn repository_state(
+    dir: &std::path::Path,
+) -> (Vec<u8>, Option<std::time::SystemTime>, Vec<String>) {
+    let index = dir.join(".git/index");
+    let mut objects = Vec::new();
+    let mut pending = vec![dir.join(".git/objects")];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                objects.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    objects.sort();
+    (
+        std::fs::read(&index).unwrap(),
+        std::fs::metadata(&index).unwrap().modified().ok(),
+        objects,
+    )
+}
+
+#[tokio::test]
+async fn inspection_compares_the_working_file_in_repository_form_as_git_diff() {
+    // (case, configuration, attributes, committed endings, Git normalizes)
+    let cases: [(&str, &[(&str, &str)], &str, &str, bool); 6] = [
+        ("autocrlf", &[("core.autocrlf", "true")], "", "\r\n", true),
+        (
+            "eol=crlf",
+            // An empty context line is then printed without its space.
+            &[("diff.suppressBlankEmpty", "true")],
+            "*.md text eol=crlf\n",
+            "\r\n",
+            true,
+        ),
+        ("text=auto", &[], "*.md text=auto\n", "\r\n", true),
+        ("stored crlf", &[], "", "\r\n", false),
+        (
+            "-text",
+            &[("core.autocrlf", "true")],
+            "*.md -text\n",
+            "\r\n",
+            false,
+        ),
+        // A blob with CR is not normalized after autocrlf is turned on.
+        ("safe-crlf", &[], "", "\r\n", false),
+    ];
+    for (case, config, attributes, committed, normalizes) in cases {
+        let (dir, cli) = line_ending_repo(config, attributes).await;
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, page(committed, committed, false)).unwrap();
+        commit_file(&cli, dir.path(), "note.md").await.unwrap();
+        if case == "safe-crlf" {
+            cli.exec(dir.path(), &["config", "core.autocrlf", "true"])
+                .await
+                .unwrap();
+        }
+        let blob = cli
+            .exec(dir.path(), &["show", "HEAD:note.md"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(blob.contains('\r'), !normalizes, "{case}");
+        for (write, frontmatter, body) in [
+            ("mixed", "\r\n", "\n"),
+            ("crlf", "\r\n", "\r\n"),
+            ("lf", "\n", "\n"),
+        ] {
+            for edited in [true, false] {
+                let written = page(frontmatter, body, edited);
+                std::fs::write(&path, &written).unwrap();
+                let state = repository_state(dir.path());
+                let item = serde_json::to_value(
+                    read_item(&cli, dir.path(), "note.md", "1".into())
+                        .await
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(state, repository_state(dir.path()), "{case} {write}");
+                let label = format!("{case} {write} edited={edited}");
+                assert_eq!(item["before"], blob, "{label}");
+                assert_eq!(item["afterBytes"], written.len(), "{label}");
+                assert_eq!(item["title"], "Note", "{label}");
+                let after = item["after"].as_str().unwrap();
+                let git = numstat(
+                    &cli.exec(
+                        dir.path(),
+                        &["diff", "--numstat", "--no-renames", "HEAD", "--", "note.md"],
+                    )
+                    .await
+                    .unwrap()
+                    .stdout,
+                );
+                let shown = changed_lines(&cli, &blob, after).await;
+                assert_eq!(shown, git, "{label}");
+                if normalizes {
+                    assert_eq!(shown, if edited { (1, 1) } else { (0, 0) }, "{label}");
+                    assert_eq!(
+                        item["state"],
+                        if edited { "text" } else { "no_content_diff" },
+                        "{label}"
+                    );
+                } else if write != "crlf" {
+                    // A real change of endings that Git commits stays visible.
+                    assert_ne!(item["state"], "no_content_diff", "{label}");
+                    assert!(shown.0 > 1, "{label}");
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn inspection_keeps_line_endings_at_the_end_of_the_file_as_git() {
+    let (dir, cli) = line_ending_repo(&[("core.autocrlf", "true")], "").await;
+    let path = dir.path().join("note.md");
+    for (committed, written, after) in [
+        ("a\r\nb", "a\r\nc", "a\nc"),
+        ("a\r\nb\r\n", "a\r\nb", "a\nb"),
+        ("a\r\nb", "a\r\nb\r\n", "a\nb\n"),
+        ("a\r\nb", "x\r\na\r\nb", "x\na\nb"),
+    ] {
+        std::fs::write(&path, committed).unwrap();
+        commit_file(&cli, dir.path(), "note.md").await.unwrap();
+        std::fs::write(&path, written).unwrap();
+        let item = serde_json::to_value(
+            read_item(&cli, dir.path(), "note.md", "1".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            item["before"],
+            committed.replace("\r\n", "\n"),
+            "{written:?}"
+        );
+        assert_eq!(item["after"], after, "{written:?}");
+    }
+}
+
+#[tokio::test]
+async fn inspection_diff_never_runs_a_clean_driver_and_compares_its_path_raw() {
+    let (dir, cli) = line_ending_repo(
+        &[
+            ("core.autocrlf", "true"),
+            ("filter.probe.clean", "echo run >> filter-runs && cat"),
+            ("filter.probe.smudge", "cat"),
+        ],
+        "*.md filter=probe\n",
+    )
+    .await;
+    let path = dir.path().join("note.md");
+    std::fs::write(&path, "a\r\nb\r\n").unwrap();
+    commit_file(&cli, dir.path(), "note.md").await.unwrap();
+    let runs = dir.path().join("filter-runs");
+    std::fs::write(&path, "a\r\nc\r\n").unwrap();
+    // The item status the inspection already reads hashes a stat-dirty file
+    // through the driver; the repository form adds no run of its own.
+    std::fs::remove_file(&runs).unwrap();
+    let status = cli
+        .exec(
+            dir.path(),
+            &[
+                "--literal-pathspecs",
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--untracked-files=no",
+                "--ignore-submodules=dirty",
+                "--",
+                ".",
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.exit_code, 0);
+    let status_runs = std::fs::read_to_string(&runs).unwrap_or_default();
+    std::fs::remove_file(&runs).ok();
+    let state = repository_state(dir.path());
+    let item = serde_json::to_value(
+        read_item(&cli, dir.path(), "note.md", "1".into())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&runs).unwrap_or_default(),
+        status_runs
+    );
+    assert_eq!(state, repository_state(dir.path()));
+    assert_eq!(item["before"], "a\nb\n");
+    assert_eq!(item["after"], "a\r\nc\r\n");
+}
+
+#[tokio::test]
+async fn inspection_keeps_new_deleted_renamed_and_oversized_sources_under_autocrlf() {
+    let (dir, cli) = line_ending_repo(&[("core.autocrlf", "true")], "").await;
+    for name in ["gone.md", "moved.md"] {
+        std::fs::write(dir.path().join(name), "base\r\n").unwrap();
+    }
+    std::fs::write(dir.path().join("large.md"), "a\r\n".repeat(200 * 1024)).unwrap();
+    std::fs::write(dir.path().join("grows.md"), "a\r\n").unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
+    std::fs::write(dir.path().join("new.md"), "a\r\nb").unwrap();
+    std::fs::remove_file(dir.path().join("gone.md")).unwrap();
+    cli.exec(dir.path(), &["mv", "moved.md", "renamed.md"])
+        .await
+        .unwrap();
+    std::fs::write(dir.path().join("renamed.md"), "base\r\nmore\r\n").unwrap();
+    std::fs::write(dir.path().join("large.md"), "b\r\n".repeat(200 * 1024)).unwrap();
+    std::fs::write(dir.path().join("grows.md"), "a\r\n".repeat(200 * 1024)).unwrap();
+    let read = |name: &'static str| {
+        let cli = cli.clone();
+        let root = dir.path().to_path_buf();
+        async move {
+            serde_json::to_value(read_item(&cli, &root, name, "1".into()).await.unwrap()).unwrap()
+        }
+    };
+    let new = read("new.md").await;
+    assert_eq!(
+        (new["before"].as_str(), new["after"].as_str()),
+        (Some(""), Some("a\r\nb"))
+    );
+    let gone = read("gone.md").await;
+    assert_eq!(
+        (gone["before"].as_str(), gone["after"].as_str()),
+        (Some("base\n"), Some(""))
+    );
+    let renamed = read("renamed.md").await;
+    assert_eq!(renamed["previousPath"], "moved.md");
+    assert_eq!(renamed["after"], "base\r\nmore\r\n");
+    for name in ["large.md", "grows.md"] {
+        let item = read(name).await;
+        assert_eq!(item["state"], "truncated", "{name}");
+        assert!(item["after"].is_null(), "{name}");
+    }
+}

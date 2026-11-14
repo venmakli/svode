@@ -7,9 +7,14 @@ use super::{GitState, require_cli};
 use crate::AppError;
 use svode_core::git::cli::GitCli;
 use svode_core::git::path::{RootMode, contained_file, normalize_repo_relative};
+use svode_core::storage::policy::check_lfs_filters;
 
 const MAX_BYTES: usize = 512 * 1024;
 const MAX_LINE_BYTES: usize = 16 * 1024;
+/// Patch of one file with full context: both sides within [`MAX_BYTES`] plus
+/// a one-byte prefix per line and the headers. A larger patch means more
+/// content or lines than a text diff shows anyway.
+const PATCH_BYTES: usize = 2 * MAX_BYTES + 64 * 1024;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -261,6 +266,18 @@ pub(crate) async fn read_scoped_item(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(error.into()),
     };
+    // A new file has nothing to be normalized against and keeps its bytes.
+    // Read before the source check below, so a write meanwhile means retry.
+    let after = if baseline_exists
+        && current_exists
+        && !is_binary_format(&path)
+        && before.len() <= MAX_BYTES
+        && after.len() <= MAX_BYTES
+    {
+        repository_form(cli, &root, &head_id, &relative, &before, after).await?
+    } else {
+        Some(after)
+    };
     contained_file(space, &path)?;
     let current_metadata = std::fs::metadata(&target).ok();
     if source_metadata
@@ -289,6 +306,10 @@ pub(crate) async fn read_scoped_item(
         result.state = "disappeared";
         return Ok(result);
     }
+    let Some(after) = after else {
+        result.state = "truncated";
+        return Ok(result);
+    };
     if is_binary_format(&path) {
         result.state = "binary";
     } else if before.len() > MAX_BYTES || after.len() > MAX_BYTES {
@@ -322,6 +343,113 @@ pub(crate) async fn read_scoped_item(
         result.state = "invalid_encoding";
     }
     Ok(result)
+}
+
+/// The working file `after` of the tracked `relative` as `git diff <head>`
+/// compares it: converted by Git itself to the repository form of the path
+/// (`core.autocrlf`, `core.eol`, `text`/`eol`, safe-crlf, `ident`,
+/// `working-tree-encoding`), so a line differing only by an ending Git
+/// normalizes is not a change. A path with a `filter` driver keeps its bytes:
+/// running a clean driver may write (Git LFS stores objects). `None` when the
+/// patch exceeds [`PATCH_BYTES`].
+async fn repository_form(
+    cli: &GitCli,
+    root: &Path,
+    head_id: &str,
+    relative: &str,
+    before: &[u8],
+    after: Vec<u8>,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let filter = check_lfs_filters(cli, root, &[relative.to_string()]).await?;
+    if filter
+        .first()
+        .is_none_or(|check| !matches!(check.value.as_str(), "unspecified" | "unset"))
+    {
+        return Ok(Some(after));
+    }
+    let lines = |bytes: &[u8]| bytes.iter().filter(|byte| **byte == b'\n').count();
+    let context = format!("-U{}", lines(before) + lines(&after) + 1);
+    // The index is not refreshed and no object is written.
+    let (read, patch) = svode_core::git::cli::read_bounded(
+        cli,
+        root,
+        &[
+            "--literal-pathspecs",
+            "diff-index",
+            "-p",
+            "-a",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            &context,
+            head_id,
+            "--",
+            relative,
+        ],
+        PATCH_BYTES,
+    )
+    .await?;
+    if patch.len() > PATCH_BYTES {
+        return Ok(None);
+    }
+    if !read {
+        return Err(AppError::GitCommandFailed(
+            "Could not read source changes".into(),
+        ));
+    }
+    Ok(Some(after_from_patch(&patch, before).unwrap_or(after)))
+}
+
+/// The new side of a one-hunk full-context `patch` of `before`; `None` when
+/// the patch is not a modification of exactly `before` (the path left the
+/// index, an unexpected shape), so the caller keeps the bytes on disk.
+fn after_from_patch(patch: &[u8], before: &[u8]) -> Option<Vec<u8>> {
+    if patch.is_empty() {
+        return Some(before.to_vec());
+    }
+    let mut old = Vec::new();
+    let mut new = Vec::new();
+    let mut in_hunk = false;
+    let mut last = None;
+    for line in patch.split_inclusive(|byte| *byte == b'\n') {
+        if !in_hunk {
+            if line.starts_with(b"@@ ") {
+                in_hunk = true;
+            } else if line.starts_with(b"new file mode")
+                || line.starts_with(b"deleted file mode")
+                || line.starts_with(b"Binary files")
+            {
+                return None;
+            }
+            continue;
+        }
+        match line.first() {
+            Some(b' ') => {
+                old.extend_from_slice(&line[1..]);
+                new.extend_from_slice(&line[1..]);
+            }
+            Some(b'-') => old.extend_from_slice(&line[1..]),
+            Some(b'+') => new.extend_from_slice(&line[1..]),
+            // An empty context line under `diff.suppressBlankEmpty`.
+            Some(b'\n') => {
+                old.push(b'\n');
+                new.push(b'\n');
+            }
+            // `\ No newline at end of file` ends the side(s) of the line above.
+            Some(b'\\') => {
+                if matches!(last, Some(b' ' | b'-')) && old.pop() != Some(b'\n') {
+                    return None;
+                }
+                if matches!(last, Some(b' ' | b'+')) && new.pop() != Some(b'\n') {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        last = line.first().copied();
+    }
+    (in_hunk && old == before).then_some(new)
 }
 
 pub(crate) fn is_binary_format(path: &str) -> bool {
