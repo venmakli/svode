@@ -12,6 +12,7 @@ import {
 } from "@/features/agent-sessions";
 import {
   closeActiveContent,
+  openScopeOwner,
   prepareActiveContentDeactivation,
 } from "@/features/artifact";
 import {
@@ -23,7 +24,7 @@ import {
   type NavigationItem,
   type NavigationKey,
 } from "@/features/navigation";
-import { useSpace } from "@/features/space";
+import { getSpaceSnapshot, useSpace } from "@/features/space";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useMainAreaObject, type MainAreaObject } from "./main-area-object";
 import {
@@ -188,8 +189,8 @@ export function useKeepEditedObjects() {
 }
 
 /**
- * Closing actions of the main area object and of Now. On Home a closed
- * object gives way to a new chat with its project, not to a Space page.
+ * Closing actions of the main area object and of Now. A closed object gives
+ * way to the main page of its Space; on Home, to a new chat with its project.
  */
 export function useWorkingSetActions() {
   const object = useMainAreaObject();
@@ -223,7 +224,7 @@ export function useWorkingSetActions() {
 
   /**
    * Closes the display after the guards; the main page of its Space shows,
-   * on Home a new chat with its project.
+   * on Home a new chat with its project (DF-259 R1).
    */
   const closeDisplay = useCallback(async () => {
     if ((await prepareActiveContentDeactivation()) === "blocked") return false;
@@ -235,9 +236,13 @@ export function useWorkingSetActions() {
     if (useShellStore.getState().mainSurface === "session") {
       openContentSurface();
     }
-    closeActiveContent();
+    const spaceId = objectSpaceId(object);
+    showSpaceMainPage(
+      spaceId === undefined ? getSpaceSnapshot().activeSpaceId : spaceId,
+      object?.kind === "item",
+    );
     return true;
-  }, [home, openContentSurface, showProjectChat]);
+  }, [home, object, openContentSurface, showProjectChat]);
 
   /**
    * ⌘W without a peek: the Graph returns to its object; the main area object
@@ -338,6 +343,55 @@ export function useWorkingSetActions() {
   );
 
   return { closeMainAreaObject, closeItem, closeActiveSession, closeAll };
+}
+
+/**
+ * The Space of a main area object, null for the project root: an artifact,
+ * owner or item by its path, a session by its scope (DF-259 R2). Undefined
+ * without an object or for a session whose Space the project does not list.
+ */
+function objectSpaceId(
+  object: MainAreaObject | null,
+): string | null | undefined {
+  if (!object) return undefined;
+  if (object.kind !== "session") {
+    const key = object.item.key;
+    return key.kind === "session" || key.kind === "sessionLaunch"
+      ? undefined
+      : (key.spaceId ?? null);
+  }
+  const { session } = object;
+  if (session.scopeKind !== "space") return null;
+  return getSpaceSnapshot().spaces.find(
+    (space) =>
+      space.id === session.spaceId ||
+      (session.spacePath !== undefined && space.path === session.spacePath),
+  )?.id;
+}
+
+/**
+ * Shows the main page of a Space, or of the project root for null, in the
+ * sidebar as well, as opening it from the sidebar does once the guards have
+ * passed. The main page already shown stays (DF-259 R3); an item expanded
+ * over it folds back into it.
+ */
+function showSpaceMainPage(spaceId: string | null, fromItem: boolean) {
+  const { activeRootId, activeSpaceId, openSpace, clearActiveSpace } =
+    getSpaceSnapshot();
+  const target = spaceId ?? activeRootId;
+  if (!target) {
+    closeActiveContent();
+    return;
+  }
+  if (target === activeRootId) {
+    if (activeSpaceId) clearActiveSpace();
+  } else if (target !== activeSpaceId) {
+    void openSpace(target);
+  }
+  openScopeOwner(
+    { kind: "space", spaceId: target },
+    fromItem ? { scopeOpenIntent: { kind: "default" } } : undefined,
+  );
 }
 
 function sameId(left: NavigationKey, right: NavigationKey) {

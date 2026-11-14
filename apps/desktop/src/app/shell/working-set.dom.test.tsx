@@ -1,5 +1,5 @@
 import * as bunTest from "bun:test";
-import { expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act, useEffect, useSyncExternalStore } from "react";
@@ -44,11 +44,15 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     title: string;
     source: string;
     launchId?: string;
+    scopeKind?: string;
+    spaceId?: string;
+    spacePath?: string;
   }
   interface Key {
     kind: string;
     sessionId?: string;
     launchId?: string;
+    spaceId?: string;
   }
   interface Item {
     key: Key;
@@ -133,7 +137,24 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
   }));
   const unkept: Key[][] = [];
   const hidden: [string, unknown][] = [];
+  /**
+   * Closes of the display: `content` counts the closed object, whether it
+   * gives way to nothing or, in a Space, to the main page of its Space.
+   */
   const closes = { content: 0, chat: 0, guard: "ready" };
+  /** The main pages of Spaces closing showed, with their open options. */
+  const opened: [unknown, unknown][] = [];
+  /** The sidebar as the Space store holds it, and its switches. */
+  const sidebar = {
+    activeRootId: "root",
+    activeSpaceId: null as string | null,
+    spaces: [
+      { id: "s1", path: "/project/s1" },
+      { id: "s2", path: "/project/s2" },
+    ],
+    switches: [] as (string | null)[],
+  };
+  let contentSurfaceOpens = 0;
   let mainObject: {
     kind: string;
     item: { key: Key; title: string };
@@ -148,11 +169,28 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     closeActiveContent: () => {
       closes.content++;
     },
+    openScopeOwner: (owner: unknown, options: unknown) => {
+      closes.content++;
+      opened.push([owner, options]);
+    },
     prepareActiveContentDeactivation: async () => closes.guard,
   }));
   mock.module("@/features/space", () => ({
     useSpace: (selector: (state: { activeRootId: string }) => unknown) =>
       selector({ activeRootId: "root" }),
+    getSpaceSnapshot: () => ({
+      activeRootId: sidebar.activeRootId,
+      activeSpaceId: sidebar.activeSpaceId,
+      spaces: sidebar.spaces,
+      openSpace: async (id: string) => {
+        sidebar.switches.push(id);
+        sidebar.activeSpaceId = id;
+      },
+      clearActiveSpace: () => {
+        sidebar.switches.push(null);
+        sidebar.activeSpaceId = null;
+      },
+    }),
   }));
   mock.module("./main-area-object", () => ({
     useMainAreaObject: () => mainObject,
@@ -162,7 +200,14 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     nowOrderRow: (row: { session: Session }) => ({ ids: [row.session.id] }),
   }));
   mock.module("./model", () => {
-    const useShellStore = () => () => {};
+    const actions = {
+      openContentSurface: () => {
+        contentSurfaceOpens++;
+      },
+      closeGraphSurface: () => {},
+    };
+    const useShellStore = (select: (state: typeof actions) => unknown) =>
+      select(actions);
     useShellStore.getState = () => shell;
     return { useShellStore };
   });
@@ -438,5 +483,201 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     expect(closes.content).toBe(1);
     pinned = [];
     await act(async () => actionsRoot.unmount());
+  });
+
+  describe("closing in a Space (DF-259)", () => {
+    let actions: ReturnType<typeof useWorkingSetActions> | null = null;
+    function Actions() {
+      const current = useWorkingSetActions();
+      useEffect(() => {
+        actions = current;
+      });
+      return null;
+    }
+    const actionsRoot = createRoot(document.createElement("div"));
+    const space = (spaceId: string) => ({ kind: "space", spaceId });
+    const show = async (
+      object: typeof mainObject,
+      surface: "content" | "session" = "content",
+    ) => {
+      mainObject = object;
+      shell = { mainSurface: surface, mainSessionDraft: null };
+      await act(async () => actionsRoot.render(<Actions />));
+    };
+    const reset = (sidebarSpaceId: string | null) => {
+      sidebar.activeSpaceId = sidebarSpaceId;
+      sidebar.switches = [];
+      opened.length = 0;
+      unkept.length = 0;
+      hidden.length = 0;
+      kept.length = 0;
+      pinned = [];
+      closes.content = 0;
+      closes.chat = 0;
+      closes.guard = "ready";
+      contentSurfaceOpens = 0;
+    };
+
+    test("the close button of a temporary Page opens the main page of its Space, in the sidebar too", async () => {
+      reset(null);
+      const page = {
+        key: { kind: "page", sessionId: "brief", spaceId: "s1" },
+        title: "Brief",
+      };
+      await show({ kind: "artifact", item: page });
+
+      // A cancelled guard changes nothing.
+      closes.guard = "blocked";
+      await act(async () => actions!.closeItem(page.key as never));
+      expect([opened, sidebar.switches, unkept]).toEqual([[], [], []]);
+
+      closes.guard = "ready";
+      await act(async () => actions!.closeItem(page.key as never));
+      expect(opened).toEqual([[space("s1"), undefined]]);
+      expect(sidebar.switches).toEqual(["s1"]);
+      expect(closes.content).toBe(1);
+    });
+
+    test("the close button of a kept root Collection opens the main page of the root", async () => {
+      reset("s1");
+      const tasks = {
+        key: { kind: "collection", sessionId: "tasks" },
+        title: "Tasks",
+      };
+      kept.push(tasks);
+      await show({ kind: "artifact", item: tasks });
+      await act(async () => actions!.closeItem(tasks.key as never));
+      expect(opened).toEqual([[space("root"), undefined]]);
+      expect(sidebar.switches).toEqual([null]);
+      expect(unkept).toEqual([[tasks.key]]);
+    });
+
+    test("the close button of an active session opens the main page of its scope", async () => {
+      reset(null);
+      const working = {
+        id: "codex:w",
+        title: "Work",
+        source: "codex",
+        scopeKind: "space",
+        spaceId: "s2",
+      };
+      const key = { kind: "session", sessionId: "codex:w" };
+      const row = {
+        kind: "active" as const,
+        session: working,
+        kept: null,
+        main: true,
+      };
+      await show(
+        { kind: "session", item: { key, title: "Work" }, session: working },
+        "session",
+      );
+      await act(async () => actions!.closeActiveSession(row as never));
+      expect(contentSurfaceOpens).toBe(1);
+      expect(opened).toEqual([[space("s2"), undefined]]);
+      expect(sidebar.switches).toEqual(["s2"]);
+      expect(hidden).toEqual([["/project", { ids: ["codex:w"] }]]);
+
+      // A session of the project root opens the main page of the root; one
+      // of a Space found by its path, that Space.
+      reset("s1");
+      const project = { ...working, scopeKind: "project", spaceId: undefined };
+      await show(
+        { kind: "session", item: { key, title: "Work" }, session: project },
+        "session",
+      );
+      await act(async () => actions!.closeMainAreaObject());
+      expect(opened).toEqual([[space("root"), undefined]]);
+      expect(sidebar.switches).toEqual([null]);
+
+      reset("s2");
+      const byPath = {
+        ...working,
+        spaceId: undefined,
+        spacePath: "/project/s1",
+      };
+      await show(
+        { kind: "session", item: { key, title: "Work" }, session: byPath },
+        "session",
+      );
+      await act(async () => actions!.closeMainAreaObject());
+      expect(opened).toEqual([[space("s1"), undefined]]);
+      expect(sidebar.switches).toEqual(["s1"]);
+    });
+
+    test("⌘W of a session the catalog does not list opens the main page of the sidebar's Space", async () => {
+      reset("s2");
+      await show(null, "session");
+      await act(async () => actions!.closeMainAreaObject());
+      expect(contentSurfaceOpens).toBe(1);
+      expect(opened).toEqual([[space("s2"), undefined]]);
+      expect(sidebar.switches).toEqual([]);
+
+      reset(null);
+      await show(null, "session");
+      await act(async () => actions!.closeMainAreaObject());
+      expect(opened).toEqual([[space("root"), undefined]]);
+    });
+
+    test("⌘W of an object of another Space switches the sidebar to it", async () => {
+      reset("s2");
+      const page = {
+        key: { kind: "page", sessionId: "notes", spaceId: "s1" },
+        title: "Notes",
+      };
+      await show({ kind: "artifact", item: page });
+      closes.guard = "blocked";
+      await act(async () => actions!.closeMainAreaObject());
+      expect([opened, sidebar.switches]).toEqual([[], []]);
+      closes.guard = "ready";
+      await act(async () => actions!.closeMainAreaObject());
+      expect(opened).toEqual([[space("s1"), undefined]]);
+      expect(sidebar.switches).toEqual(["s1"]);
+    });
+
+    test("Close all opens the main page of the open object's Space", async () => {
+      reset(null);
+      const page = {
+        key: { kind: "page", sessionId: "plan", spaceId: "s2" },
+        title: "Plan",
+      };
+      await show({ kind: "artifact", item: page });
+      await act(async () =>
+        actions!.closeAll([{ kind: "temporary", item: page }] as never),
+      );
+      expect(opened).toEqual([[space("s2"), undefined]]);
+      expect(sidebar.switches).toEqual(["s2"]);
+    });
+
+    test("closing the display of a Space's main page leaves it shown (R3)", async () => {
+      reset("s1");
+      const home = { key: { kind: "space", spaceId: "s1" }, title: "S1" };
+      pinned = [home];
+      await show({ kind: "space", item: home });
+      await act(async () => actions!.closeMainAreaObject());
+      // The same owner without an intent: the selection keeps the page.
+      expect(opened).toEqual([[space("s1"), undefined]]);
+      expect([sidebar.switches, unkept]).toEqual([[], []]);
+    });
+
+    test("an item expanded over its Space folds back into the main page", async () => {
+      reset("s1");
+      const routine = {
+        key: { kind: "routine", sessionId: "daily", spaceId: "s1" },
+        title: "Daily",
+      };
+      await show({ kind: "item", item: routine, shown: true });
+      await act(async () => actions!.closeMainAreaObject());
+      expect(opened).toEqual([
+        [space("s1"), { scopeOpenIntent: { kind: "default" } }],
+      ]);
+    });
+
+    afterAll(async () => {
+      mainObject = null;
+      shell = { mainSurface: "content", mainSessionDraft: null };
+      pinned = [];
+      await act(async () => actionsRoot.unmount());
+    });
   });
 }
