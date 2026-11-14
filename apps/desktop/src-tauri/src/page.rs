@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use svode_core::page::create::{PageCreate, PageCreateOutcome};
 use svode_core::page::fields::{PageFieldOutcome, PageFieldUpdate};
 use svode_core::page::nonce::WriteNonceRegistry;
-use svode_core::page::write::{PageRuntime, PageWrite, PageWriteOutcome};
+use svode_core::page::write::{PageRestore, PageRuntime, PageWrite, PageWriteOutcome};
 
 use crate::error::AppError;
 use crate::index::{IndexState, update::IndexUpdateState};
@@ -43,6 +43,26 @@ where
 {
     let cli = crate::git::dates::detected_cli();
     svode_core::page::write::write(
+        request,
+        runtime(state, updates, nonces, cli.as_ref()),
+        authorize,
+    )
+    .await
+}
+
+pub(crate) async fn restore<F, Fut>(
+    request: PageRestore<'_>,
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    nonces: &WriteNonceRegistry,
+    authorize: F,
+) -> Result<PageWriteOutcome, AppError>
+where
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
+{
+    let cli = crate::git::dates::detected_cli();
+    svode_core::page::write::restore(
         request,
         runtime(state, updates, nonces, cli.as_ref()),
         authorize,

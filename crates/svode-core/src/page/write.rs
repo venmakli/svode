@@ -11,7 +11,9 @@ use crate::index::backlinks::{
 use crate::page::store::{self, PageWarning, WriteResult};
 use crate::page::{PageError, SourceVersion, current_source_version};
 
+mod restore;
 mod runtime;
+pub use restore::{PageRestore, restore};
 pub use runtime::{PageRuntime, write};
 
 pub struct PageWrite<'a> {

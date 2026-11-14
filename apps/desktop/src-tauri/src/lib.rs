@@ -328,6 +328,7 @@ pub fn run() {
             commands::files::list_actors,
             commands::files::refresh_actors,
             commands::files::write_page_body,
+            commands::files::restore_page_file,
             commands::files::delete_content,
             commands::files::rename_content,
             commands::files::move_content,

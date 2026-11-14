@@ -1539,6 +1539,65 @@ async fn write_page_passes_the_source_version_and_returns_the_version_of_its_res
     save("Unversioned\n", None).await.unwrap();
 }
 
+/// DF-269 R7: the restore of a gone Page asks for access to its path and,
+/// when the repository refuses, creates neither the folders nor the file.
+#[tokio::test]
+async fn restore_page_file_is_refused_by_repository_access_before_writing() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().canonicalize().unwrap();
+    write_tree_config(&tmp, vec![], vec![]);
+    std::fs::create_dir_all(space.join(".git")).unwrap();
+    let space_str = space.to_string_lossy().into_owned();
+    let (index_state, nonces) = (IndexState::new(), WriteNonceRegistry::new());
+    let restore = |authorize: Result<(), AppError>| {
+        let expected = space.join("docs/a.md");
+        restore_page_file_shared(
+            space_str.clone(),
+            "docs/a.md".into(),
+            "---\ntitle: A\n---\nKept edit\n".into(),
+            Some(space_str.clone()),
+            &index_state,
+            updates(),
+            &nonces,
+            move |paths: Vec<PathBuf>| async move {
+                assert_eq!(paths, vec![expected]);
+                authorize.map(|()| paths)
+            },
+        )
+    };
+
+    let denied = restore(Err(AppError::RepositoryAccessDenied {
+        repository_id: "root".into(),
+        status: "read_only".into(),
+        reason: "test".into(),
+        blockers: Vec::new(),
+    }))
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(denied, AppError::RepositoryAccessDenied { .. }),
+        "{denied:?}"
+    );
+    assert_eq!(
+        serde_json::to_value(&denied).unwrap()["kind"],
+        "repository_access_denied"
+    );
+    assert!(!space.join("docs").exists());
+    assert!(nonces.take_metadata(&space.join("docs/a.md")).is_none());
+
+    let restored = restore(Ok(())).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(space.join("docs/a.md")).unwrap(),
+        "---\ntitle: A\n---\nKept edit\n"
+    );
+    let page = store::read(&space_str, "docs/a.md").unwrap();
+    assert_eq!(
+        restored.source_version.as_deref(),
+        page.source_version.as_ref().map(|version| version.as_str())
+    );
+}
+
 #[tokio::test]
 async fn df_251_project_link_validation_reports_definition_targets() {
     let tmp = TempDir::new().unwrap();

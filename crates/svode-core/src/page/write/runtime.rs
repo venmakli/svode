@@ -310,7 +310,7 @@ async fn prepare(
     })
 }
 
-async fn publish<E: GitDateExecutor>(
+pub(super) async fn publish<E: GitDateExecutor>(
     runtime: PageRuntime<'_, E>,
     backlinks: &BacklinkIndex,
     space: &str,

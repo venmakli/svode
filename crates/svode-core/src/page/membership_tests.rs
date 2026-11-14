@@ -476,6 +476,23 @@ async fn run_every_write_through_root(
         );
     }
     ran.push("write::write");
+    for path in [at("Restored.md"), at("Gone/Restored.md")] {
+        assert_refused(
+            "write::restore",
+            write::restore(
+                write::PageRestore {
+                    space,
+                    path: &path,
+                    content: "---\ntitle: Restored\n---\n",
+                    project: Some(project_str),
+                },
+                page_runtime(index, &nonces),
+                authorize,
+            )
+            .await,
+        );
+    }
+    ran.push("write::restore");
 
     // page::templates
     let tasks = at("Tasks");
@@ -1030,6 +1047,7 @@ const INVENTORY: &[(&str, &str, Guard)] = {
         ("page/templates.rs", "delete", Direct),
         ("page/templates.rs", "duplicate", Direct),
         ("page/templates.rs", "instantiate", Direct),
+        ("page/write/restore.rs", "restore", Direct),
         ("page/write/runtime.rs", "write", Direct),
         (
             "structure/commit.rs",
@@ -1099,7 +1117,7 @@ fn operation_name(file: &str, name: &str) -> &'static str {
         "page/metadata.rs" => "metadata",
         "page/store.rs" => "store",
         "page/templates.rs" => "templates",
-        "page/write/runtime.rs" => "write",
+        "page/write/runtime.rs" | "page/write/restore.rs" => "write",
         "structure/ops.rs" | "structure/plan.rs" => "structure",
         other => panic!("no operation name for {other}"),
     };

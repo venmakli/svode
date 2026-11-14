@@ -428,6 +428,66 @@ pub(super) async fn write_page_body_shared(
     })
 }
 
+/// Writes the source of an open Page whose file disappeared outside this
+/// window back to its path, creating the missing folders. Like a body
+/// write, the change stays pending for autocommit.
+#[tauri::command]
+pub async fn restore_page_file(
+    app: AppHandle,
+    space: String,
+    path: String,
+    content: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
+    nonces: State<'_, Arc<WriteNonceRegistry>>,
+) -> Result<WriteResult, AppError> {
+    let authorization_space = space.clone();
+    restore_page_file_shared(
+        space,
+        path,
+        content,
+        project_path,
+        &index_state,
+        &index_updates,
+        &nonces,
+        |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
+    )
+    .await
+}
+
+pub(super) async fn restore_page_file_shared<F, Fut>(
+    space: String,
+    path: String,
+    content: String,
+    project_path: Option<String>,
+    index_state: &IndexState,
+    index_updates: &IndexUpdateState,
+    nonces: &WriteNonceRegistry,
+    authorize: F,
+) -> Result<WriteResult, AppError>
+where
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, AppError>>,
+{
+    let outcome = crate::page::restore(
+        svode_core::page::write::PageRestore {
+            space: &space,
+            path: &path,
+            content: &content,
+            project: project_path.as_deref().filter(|path| !path.is_empty()),
+        },
+        index_state,
+        index_updates,
+        nonces,
+        authorize,
+    )
+    .await?;
+    // An editor edit during an agent turn keeps its own group (1.E).
+    svode_core::git::versions::turns::editor_wrote(&outcome.changed_paths);
+    Ok(outcome.result)
+}
+
 #[tauri::command]
 pub async fn delete_content(
     app: AppHandle,
