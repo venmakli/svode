@@ -118,14 +118,16 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
           options?.value ?? editor.children,
         );
         if (isEmptyDocument(editor, value)) return "";
+        const serialized = withListLineBreaks(editor, value);
         return serializeMarkdownWithComments(editor, {
           ...options,
           remarkStringifyOptions: withMinimalTextEscapes(
             editor,
             options?.remarkStringifyOptions ??
               editor.getOptions(MarkdownPlugin).remarkStringifyOptions,
+            serialized,
           ),
-          value: withListLineBreaks(editor, value),
+          value: serialized,
         });
       },
     }))

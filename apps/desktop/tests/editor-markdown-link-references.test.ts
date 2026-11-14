@@ -158,7 +158,8 @@ test("a reference without a definition stays text", () => {
   expect(NodeApi.string(editor.children[0]!)).toBe(
     "See [nope][missing] and [x].",
   );
-  expect(save(editor)).toBe("See \\[nope]\\[missing] and \\[x].\n");
+  // DF-265: without a definition the brackets are text and written bare.
+  expect(save(editor)).toBe("See [nope][missing] and [x].\n");
 });
 
 test("a reference resolves by a definition on the other side of a conflict block", () => {

@@ -2,10 +2,19 @@ import {
   markdownToAstProcessor,
   type SerializeMdOptions,
 } from "@platejs/markdown";
-import type { SlateEditor } from "platejs";
+import {
+  type Descendant,
+  ElementApi,
+  getPluginType,
+  type SlateEditor,
+} from "platejs";
 
 import { markdownRootHandler } from "./markdown-comments";
 import { readWithMdxOrWithout } from "./markdown-io";
+import {
+  createReferenceResolution,
+  linkDefinitionsOf,
+} from "./markdown-references";
 import { mapHtmlToJsx, type MdastNode } from "./markdown-source";
 
 /**
@@ -15,16 +24,20 @@ import { mapHtmlToJsx, type MdastNode } from "./markdown-source";
  * (`snake\_case`, `2 \* 3`, `AT\&T`). Svode writes a character of
  * `ESCAPABLE_CHARACTERS` with `\` only where the Svode reading of the written
  * text would otherwise differ: emphasis, strikethrough, inline code, a
- * character reference or a block at the start of a line.
+ * character reference, a link, image, footnote call or reference by the
+ * definitions of the document, a task marker or a block at the start of a
+ * line.
  *
  * Inline markup never crosses a paragraph, heading or table cell, so the
  * decision is made per such inline container, inside the one stringify of the
  * document: the container is written once with its candidate characters
  * marked, its text is read back with different sets of escapes, and the
  * container is written again with the fewest escapes whose reading is that of
- * the text with all of them (see `decideEscapes`). Decisions are cached per
- * editor by the container text, so a save reads only the containers that
- * changed.
+ * the text with all of them (see `decideEscapes`). The text is read with the
+ * link and footnote labels the document defines, so a bracket is escaped where
+ * the document would read a reference. Decisions are cached per editor by the
+ * container text and what is read with it, so a save reads only the
+ * containers that changed.
  */
 
 type StringifyOptions = NonNullable<
@@ -36,7 +49,19 @@ type State = Parameters<Handle>[2];
 type Info = Parameters<Handle>[3];
 type TextNode = { type: "text"; value: string };
 
-const ESCAPABLE_CHARACTERS = new Set(["_", "*", "`", "&", "~", "@"]);
+// `(` is a candidate as remark escapes it after `]`, as part of a link.
+const ESCAPABLE_CHARACTERS = new Set([
+  "_",
+  "*",
+  "`",
+  "&",
+  "~",
+  "@",
+  "[",
+  "]",
+  "!",
+  "(",
+]);
 
 // A candidate is marked in the probe output by a punctuation sentinel, which
 // attention flanking classifies like the `\` or the character written in its
@@ -61,6 +86,10 @@ interface EscapeRun {
   mode: ContainerMode | null;
   ids: Map<TextNode, number>;
   nextId: number;
+  /** Definitions of the labels the document defines, to read text with. */
+  definitions: string;
+  /** The head paragraph of each list item, by whether the item is a task. */
+  listHeads: WeakMap<MdastNode, boolean>;
 }
 
 const decisionCache = new WeakMap<SlateEditor, Map<string, number[]>>();
@@ -315,14 +344,24 @@ function isSpace(character: string | undefined): boolean {
   return character === " " || character === "\t";
 }
 
+const LINK_HINT_RE = /\](?:\(|:)/;
+
 /**
  * Whether no candidate of `probe` can be markup by its neighbours alone: `_`
  * inside a word neither opens nor closes emphasis, `*` and `~` between spaces
  * are no delimiters and not at a line start, `&` that starts no character
- * reference is text. Text that may hold an autolink is always read.
+ * reference is text. Brackets are text when the document defines no label,
+ * no `](` or `]:` makes a link or definition and the text does not start a
+ * list item with one; then `!` and `(` are text too, as are `!` before
+ * anything but `[` and `(` after anything but `]`. Text that may hold an
+ * autolink is always read.
  */
-function isInert(probe: Probe): boolean {
+function isInert(probe: Probe, frame: ContainerFrame): boolean {
   if (AUTOLINK_HINT_RE.test(probe.text)) return false;
+  const linkable =
+    frame.defines ||
+    LINK_HINT_RE.test(probe.text) ||
+    (frame.prefix.startsWith("-") && probe.text.startsWith("["));
   return probe.offsets.every((offset) => {
     const before = probe.text[offset - 1];
     const after = probe.text[offset + 1];
@@ -335,24 +374,52 @@ function isInert(probe: Probe): boolean {
       case "&":
         CHARACTER_REFERENCE_RE.lastIndex = offset;
         return !CHARACTER_REFERENCE_RE.test(probe.text);
+      case "[":
+      case "]":
+        return !linkable;
+      case "!":
+        return !linkable || after !== "[";
+      case "(":
+        return !linkable || before !== "]";
       default:
         return false;
     }
   });
 }
 
-function containerFrame(container: MdastNode): {
+interface ContainerFrame {
+  /** Text before the container that reads it as what it is. */
   prefix: string;
+  /** Text after it, ending with the definitions of the document. */
   suffix: string;
-} {
+  /** Whether the document defines any label. */
+  defines: boolean;
+}
+
+/**
+ * How the text of `container` is read on its own as it reads in the document:
+ * a heading after its marker, a table cell inside a table, the head paragraph
+ * of a list item after a list marker (and the task marker of a task), each
+ * followed by the definitions of the document.
+ */
+function containerFrame(container: MdastNode, run: EscapeRun): ContainerFrame {
+  let prefix = "";
+  let ownSuffix = "";
   if (container.type === "heading") {
     const depth = (container as MdastNode & { depth?: number }).depth ?? 1;
-    return { prefix: `${"#".repeat(depth)} `, suffix: "" };
+    prefix = `${"#".repeat(depth)} `;
+  } else if (container.type === "tableCell") {
+    prefix = "| ";
+    ownSuffix = " |\n| - |";
+  } else {
+    const task = run.listHeads.get(container);
+    if (task !== undefined) prefix = task ? "- [ ] " : "- ";
   }
-  if (container.type === "tableCell") {
-    return { prefix: "| ", suffix: " |\n| - |" };
-  }
-  return { prefix: "", suffix: "" };
+  return {
+    prefix,
+    suffix: ownSuffix + run.definitions,
+    defines: run.definitions !== "",
+  };
 }
 
 /**
@@ -366,11 +433,9 @@ function containerFrame(container: MdastNode): {
  */
 function decideEscapes(
   editor: SlateEditor,
-  container: MdastNode,
+  { prefix, suffix }: ContainerFrame,
   probe: Probe,
 ): number[] {
-  const { prefix, suffix } = containerFrame(container);
-
   const reads = new Map<
     string,
     { shape: string; literal: boolean[]; escaped: boolean[] }
@@ -432,6 +497,7 @@ function decideEscapes(
 
 function cachedEscapes(
   editor: SlateEditor,
+  run: EscapeRun,
   container: MdastNode,
   probe: Probe,
 ): number[] {
@@ -440,15 +506,15 @@ function cachedEscapes(
     cache = new Map();
     decisionCache.set(editor, cache);
   }
-  const { prefix, suffix } = containerFrame(container);
-  const key = `${prefix}\u0000${suffix}\u0000${withMarks(
+  const frame = containerFrame(container, run);
+  const key = `${frame.prefix}\u0000${frame.suffix}\u0000${withMarks(
     probe.text,
     probe.offsets,
     () => SENTINEL,
   )}`;
   let escapes = cache.get(key);
   if (!escapes) {
-    escapes = isInert(probe) ? [] : decideEscapes(editor, container, probe);
+    escapes = isInert(probe, frame) ? [] : decideEscapes(editor, frame, probe);
     if (cache.size >= CACHE_LIMIT) cache.clear();
     cache.set(key, escapes);
   }
@@ -527,7 +593,7 @@ function writeInlineContainer(
     return write();
   }
 
-  const escapes = cachedEscapes(editor, container, probe);
+  const escapes = cachedEscapes(editor, run, container, probe);
   run.mode = {
     kind: "write",
     escapes: new Set(escapes.map((index) => probe.ids[index])),
@@ -541,13 +607,29 @@ function writeInlineContainer(
  * `writeInlineContainer`; the text handler writes text as the container
  * decided.
  */
-function minimalEscapeHandlers(editor: SlateEditor): Handlers {
-  const run: EscapeRun = { mode: null, ids: new Map(), nextId: 0 };
+function minimalEscapeHandlers(
+  editor: SlateEditor,
+  definitions: string,
+): Handlers {
+  const run: EscapeRun = {
+    mode: null,
+    ids: new Map(),
+    nextId: 0,
+    definitions,
+    listHeads: new WeakMap(),
+  };
   const prepared = new WeakSet<State>();
 
-  const prepare = (state: State) => {
+  const prepare = (state: State, root: MdastNode) => {
     if (prepared.has(state)) return;
     prepared.add(state);
+    visit(root, (node) => {
+      const [head] = node.children ?? [];
+      if (node.type === "listItem" && head?.type === "paragraph") {
+        const { checked } = node as MdastNode & { checked?: boolean | null };
+        run.listHeads.set(head, typeof checked === "boolean");
+      }
+    });
     const containerPhrasing = state.containerPhrasing;
     let depth = 0;
     state.containerPhrasing = function (parent, info) {
@@ -575,7 +657,7 @@ function minimalEscapeHandlers(editor: SlateEditor): Handlers {
 
   return {
     root: (node, parent, state, info) => {
-      prepare(state);
+      prepare(state, node as unknown as MdastNode);
       return markdownRootHandler(
         node,
         parent,
@@ -588,13 +670,52 @@ function minimalEscapeHandlers(editor: SlateEditor): Handlers {
   };
 }
 
-/** `remarkStringifyOptions` of `editor` with minimal escaping of text. */
+function visit(node: MdastNode, callback: (node: MdastNode) => void) {
+  callback(node);
+  for (const child of node.children ?? []) visit(child, callback);
+}
+
+/**
+ * Definitions of the link and footnote labels `value` defines, as text to read
+ * a container with: a bracket reads as a reference or footnote call only by a
+ * definition of its label in the read text.
+ */
+function definitionsOf(editor: SlateEditor, value: Descendant[]): string {
+  const footnoteType = getPluginType(editor, "footnoteDefinition");
+  const footnotes = new Set<string>();
+  const walk = (nodes: Descendant[]) => {
+    for (const node of nodes) {
+      if (!ElementApi.isElement(node)) continue;
+      if (node.type === footnoteType && typeof node.identifier === "string") {
+        footnotes.add(node.identifier);
+      }
+      walk(node.children);
+    }
+  };
+  walk(value);
+  const links = createReferenceResolution(
+    linkDefinitionsOf(editor, value),
+  ).suffix;
+  return [...footnotes].reduce(
+    (text, identifier) => `${text}\n\n[^${identifier}]: x\n`,
+    links,
+  );
+}
+
+/**
+ * `remarkStringifyOptions` of `editor` with minimal escaping of the text of
+ * `value`, the value they write.
+ */
 export function withMinimalTextEscapes(
   editor: SlateEditor,
   options: StringifyOptions | null | undefined,
+  value: Descendant[],
 ): StringifyOptions {
   return {
     ...options,
-    handlers: { ...options?.handlers, ...minimalEscapeHandlers(editor) },
+    handlers: {
+      ...options?.handlers,
+      ...minimalEscapeHandlers(editor, definitionsOf(editor, value)),
+    },
   };
 }
