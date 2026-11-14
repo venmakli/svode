@@ -57,6 +57,7 @@ where
     let PageWriteOutcome {
         result,
         changed_paths,
+        ..
     } = super::write::on_current_source(path, || async move {
         let current = store::read(space, path)?;
         let candidate = patched_metadata(&current.meta, patch)?;

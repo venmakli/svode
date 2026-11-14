@@ -220,7 +220,7 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
         Write::MoveSource(to_parent) => {
             structure::move_page(&space, path, to_parent, None, structure_runtime(&index))
                 .await
-                .map(|outcome| outcome.new_path)
+                .map(|outcome| format!("{} {}", outcome.old_path, outcome.new_path))
         }
         Write::Delete => structure::delete(&space, path, None, structure_runtime(&index))
             .await
@@ -266,7 +266,8 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
             .await
             .map(|outcome| {
                 format!(
-                    "{:?} {:?}",
+                    "{} {:?} {:?}",
+                    outcome.source_path,
                     outcome.result.new_path,
                     relative(&space, &outcome.changed_paths)
                 )
@@ -282,7 +283,8 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
                 .await
                 .map(|outcome| {
                     format!(
-                        "{} {:?}",
+                        "{} {} {:?}",
+                        outcome.old_path,
                         outcome.page.path,
                         relative(&space, &outcome.removed_paths)
                     )
@@ -315,7 +317,12 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
             };
             structure::rename(&space, path, &to, None, structure_runtime(&index))
                 .await
-                .map(|modified| format!("{modified:?}"))
+                .map(|outcome| {
+                    format!(
+                        "{} {} {:?}",
+                        outcome.old_path, outcome.new_path, outcome.modified_paths
+                    )
+                })
         }
         Write::Reorder(names) => {
             let children = names

@@ -962,7 +962,8 @@ async fn df_154_move_rename_and_conversion_rewrite_percent_encoded_links() {
 
     let modified = super::ops::rename(space, "notes", "Old Notes", Some(space), runtime(&state))
         .await
-        .unwrap();
+        .unwrap()
+        .modified_paths;
     assert!(
         modified.iter().any(|path| path == "Index.md"),
         "{modified:?}"
@@ -1110,7 +1111,8 @@ async fn rename_and_move_register_every_changed_file_in_one_group() {
 
     let modified = super::rename(space, "Area", "Zone", Some(space), runtime())
         .await
-        .unwrap();
+        .unwrap()
+        .modified_paths;
     assert_eq!(modified, vec!["Link.md".to_string()]);
     let groups = sink.take();
     assert_eq!(groups.len(), 1, "{groups:?}");
@@ -1414,7 +1416,9 @@ async fn a_read_only_source_fails_the_operation_without_a_false_recovery() {
         };
 
         let result = if rename {
-            super::rename(space, "Area", "Zone", Some(space), runtime).await
+            super::rename(space, "Area", "Zone", Some(space), runtime)
+                .await
+                .map(|outcome| outcome.modified_paths)
         } else {
             super::move_page(
                 space,
@@ -2291,7 +2295,8 @@ async fn df_251_moves_renames_and_conversions_rewrite_and_rebase_definitions() {
     // A path with a space takes the angle form.
     let modified = super::ops::rename(space, "notes", "Old Notes", Some(space), runtime(&state))
         .await
-        .unwrap();
+        .unwrap()
+        .modified_paths;
     assert!(
         modified.iter().any(|path| path == "Index.md"),
         "{modified:?}"

@@ -1348,6 +1348,7 @@ async fn shared_move_nest_and_leaf_conversion_use_the_structural_owner() {
     let leaf = crate::structure::convert_to_leaf(space, &nested, None, &state, updates(), None)
         .await
         .unwrap()
+        .page
         .path;
     assert_eq!(leaf, "target/Page.md");
     assert!(tmp.path().join(&leaf).is_file());
@@ -1761,4 +1762,51 @@ async fn delete_content_through_the_root_space_refuses_a_child_space_path() {
     ] {
         assert!(root.join(path).is_file(), "{path}");
     }
+}
+
+#[tokio::test]
+async fn structural_outcomes_name_the_source_in_the_disk_spelling() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().to_str().unwrap();
+    std::fs::write(tmp.path().join("Probe.md"), "").unwrap();
+    let case_insensitive = tmp.path().join("probe.md").exists();
+    std::fs::remove_file(tmp.path().join("Probe.md")).unwrap();
+    if !case_insensitive {
+        // A case-sensitive file system does not find the path.
+        return;
+    }
+    std::fs::create_dir_all(tmp.path().join("Target/Inner")).unwrap();
+    std::fs::write(tmp.path().join("Target/Inner/.gitkeep"), "").unwrap();
+    std::fs::write(tmp.path().join("Page.md"), "---\ntitle: Page\n---\nbody").unwrap();
+    std::fs::create_dir(tmp.path().join("Solo")).unwrap();
+    std::fs::write(tmp.path().join("Solo/README.md"), "---\ntitle: Solo\n---\n").unwrap();
+    let state = IndexState::new();
+
+    let renamed = crate::structure::rename(
+        space,
+        "target/inner",
+        "target/Renamed",
+        None,
+        &state,
+        updates(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(renamed.old_path, "Target/Inner");
+    assert_eq!(renamed.new_path, "Target/Renamed");
+
+    let moved =
+        crate::structure::move_page(space, "page.md", "target", None, &state, updates(), None)
+            .await
+            .unwrap();
+    assert_eq!(moved.old_path, "Page.md");
+    assert_eq!(moved.new_path, "Target/Page.md");
+
+    let leaf =
+        crate::structure::convert_to_leaf(space, "solo/readme.md", None, &state, updates(), None)
+            .await
+            .unwrap();
+    assert_eq!(leaf.old_path, "Solo/README.md");
+    assert_eq!(leaf.page.path, "Solo.md");
 }

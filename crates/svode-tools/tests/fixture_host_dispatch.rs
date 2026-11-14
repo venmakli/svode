@@ -4033,3 +4033,68 @@ async fn move_content_tells_the_host_the_paths_it_moved() {
         ]
     );
 }
+
+#[tokio::test]
+async fn results_report_the_disk_spelling_of_a_path_requested_in_another_letter_case() {
+    let fixture = write_fixture();
+    let root = fixture.project.as_path();
+    if !root.join("LEAF.md").exists() {
+        // A case-sensitive file system does not find the path; the core
+        // refusal is covered by its own tests.
+        return;
+    }
+    write(&root.join("solo/README.md"), "---\ntitle: Solo\n---\n");
+    write(&root.join("drafts/inner/.gitkeep"), "");
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    let page = call(
+        "write_page",
+        json!({ "path": "LEAF.md", "content": "Body\n", "sourceVersion": version(root, "leaf.md") }),
+    )
+    .await;
+    assert_eq!(page.content[0].text, "Updated Page leaf.md.");
+    assert_eq!(structured(&page)["path"], "leaf.md");
+    assert_eq!(structured(&page)["newPath"], Value::Null);
+
+    let item = call(
+        "update_collection_item_body",
+        json!({ "path": "TASKS/A.md", "body": "Item\n", "sourceVersion": version(root, "tasks/a.md") }),
+    )
+    .await;
+    assert_eq!(structured(&item)["path"], "tasks/a.md");
+
+    let collection = call(
+        "write_collection_readme",
+        json!({ "collectionPath": "TASKS", "content": "Board\n", "sourceVersion": version(root, "tasks/README.md") }),
+    )
+    .await;
+    assert_eq!(structured(&collection)["path"], "tasks/README.md");
+    assert_eq!(structured(&collection)["collectionPath"], "tasks");
+
+    let renamed = call(
+        "rename_content",
+        json!({ "from": "DRAFTS/inner", "to": "DRAFTS/renamed" }),
+    )
+    .await;
+    assert_eq!(structured(&renamed)["oldPath"], "drafts/inner");
+    assert_eq!(structured(&renamed)["newPath"], "drafts/renamed");
+
+    let moved = call(
+        "move_content",
+        json!({ "from": "LINKS.md", "toParent": "DRAFTS" }),
+    )
+    .await;
+    assert_eq!(structured(&moved)["oldPath"], "links.md");
+    assert_eq!(structured(&moved)["newPath"], "drafts/links.md");
+    let relocations = host.relocations.lock().unwrap().clone();
+    assert_eq!(
+        relocations.last().unwrap()["relocations"],
+        json!([{ "from": "links.md", "to": "drafts/links.md", "converted": false }])
+    );
+
+    let leaf = call("convert_page_to_leaf", json!({ "path": "SOLO/readme.md" })).await;
+    assert_eq!(structured(&leaf)["oldPath"], "solo/README.md");
+    assert_eq!(structured(&leaf)["newPath"], "solo.md");
+}

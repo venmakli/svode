@@ -590,7 +590,7 @@ pub async fn rename_content(
     )
     .await?;
     let _changing = crate::navigation::path_change(&space);
-    let modified = scope_authorized_mutation_paths(authorized_paths, async {
+    let renamed = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::rename(
             &space,
             &from,
@@ -603,8 +603,8 @@ pub async fn rename_content(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &from, &to);
-    Ok(modified)
+    crate::navigation::artifact_moved(&app, &space, &renamed.old_path, &renamed.new_path);
+    Ok(renamed.modified_paths)
 }
 
 #[tauri::command]
@@ -641,7 +641,7 @@ pub async fn move_content(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &from, &moved.new_path);
+    crate::navigation::artifact_moved(&app, &space, &moved.old_path, &moved.new_path);
     // The parents the move converted follow like a conversion of their own.
     for converted in &moved.converted_parents {
         crate::navigation::artifact_moved(&app, &space, &converted.old_path, &converted.new_path);

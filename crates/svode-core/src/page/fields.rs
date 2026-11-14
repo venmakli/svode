@@ -59,6 +59,7 @@ where
     let PageWriteOutcome {
         result,
         changed_paths,
+        ..
     } = super::write::on_current_source(path, || async move {
         let current = store::read(space, path)?;
         let batch = prepare_item_field_batch(space, project, path, values, intent)

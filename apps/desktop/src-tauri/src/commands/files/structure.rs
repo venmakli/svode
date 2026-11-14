@@ -106,7 +106,7 @@ pub async fn convert_to_collection(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &path, &result.collection_path);
+    crate::navigation::artifact_moved(&app, &space, &result.old_path, &result.collection_path);
     Ok(result)
 }
 
@@ -143,8 +143,8 @@ pub async fn convert_page_to_leaf(
         .await
     })
     .await?;
-    crate::navigation::artifact_moved(&app, &space, &file_path, &result.path);
-    Ok(result)
+    crate::navigation::artifact_moved(&app, &space, &result.old_path, &result.page.path);
+    Ok(result.page)
 }
 
 #[tauri::command]

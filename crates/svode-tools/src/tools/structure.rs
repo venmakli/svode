@@ -299,7 +299,7 @@ pub(crate) async fn rename_content(
         structure::rename_mutation_paths(handles.runtime.index, &space, Some(project), &from, &to)
             .await?;
     let authorized = authorize(host, &space, planned).await?;
-    let (_, changes) = within_authorized(
+    let (renamed, changes) = within_authorized(
         authorized,
         observe_structural_change(&space, project, async {
             Ok(Box::pin(structure::rename(
@@ -316,8 +316,8 @@ pub(crate) async fn rename_content(
     .map_err(|error| space_relative_busy(&space, error))?;
     Ok(structural_operation_result(
         "Renamed content",
-        &from,
-        &to,
+        &renamed.old_path,
+        &renamed.new_path,
         changes,
     ))
 }
@@ -364,12 +364,13 @@ pub(crate) async fn move_content(
         Path::new(&space),
         &outcome
             .as_ref()
-            .map(|(moved, _)| move_relocations(&from, moved))
+            .map(|(moved, _)| move_relocations(moved))
             .unwrap_or_default(),
     );
     let (moved, mut changes) = outcome.map_err(|error| space_relative_busy(&space, error))?;
     changes.include(&space, project, &moved.removed_paths);
-    let mut result = structural_operation_result("Moved content", &from, &moved.new_path, changes);
+    let mut result =
+        structural_operation_result("Moved content", &moved.old_path, &moved.new_path, changes);
     if let Some(structured_content) = result.structured_content.as_mut() {
         structured_content["convertedParents"] = json!(moved.converted_parents);
     }
@@ -378,7 +379,7 @@ pub(crate) async fn move_content(
 
 /// The paths a move left: a converted target before the moved content, a
 /// folder Page that became a leaf after it.
-fn move_relocations(from: &str, moved: &structure::MovePageOutcome) -> Vec<ContentRelocation> {
+fn move_relocations(moved: &structure::MovePageOutcome) -> Vec<ContentRelocation> {
     let converted = |parent: &structure::ConvertedParent| ContentRelocation {
         from: parent.old_path.clone(),
         to: parent.new_path.clone(),
@@ -395,7 +396,7 @@ fn move_relocations(from: &str, moved: &structure::MovePageOutcome) -> Vec<Conte
         .into_iter()
         .map(converted)
         .chain(std::iter::once(ContentRelocation {
-            from: from.to_string(),
+            from: moved.old_path.clone(),
             to: moved.new_path.clone(),
             converted: false,
         }))
@@ -513,7 +514,7 @@ pub(crate) async fn convert_page_to_leaf(
     let page = converted.page;
     let mut result = structural_operation_result(
         "Converted directory-backed Page to leaf Page",
-        &path,
+        &converted.old_path,
         &page.path,
         changes,
     );

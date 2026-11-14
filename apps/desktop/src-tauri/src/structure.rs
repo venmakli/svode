@@ -8,7 +8,9 @@ use std::pin::Pin;
 
 use svode_core::git::pending::StructuralChange;
 use svode_core::page::store::Page;
-use svode_core::structure::{StructuralCommitSink, StructureRuntime};
+use svode_core::structure::{
+    ConvertToLeafOutcome, RenameOutcome, StructuralCommitSink, StructureRuntime,
+};
 
 use crate::error::AppError;
 use crate::index::{IndexState, update::IndexUpdateState};
@@ -212,7 +214,7 @@ pub async fn convert_to_leaf(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<Page, AppError> {
+) -> Result<ConvertToLeafOutcome, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::convert_to_leaf(
@@ -221,8 +223,7 @@ pub async fn convert_to_leaf(
         project_path,
         runtime(state, updates, cli.as_ref(), sink.as_ref()),
     )
-    .await?
-    .page)
+    .await?)
 }
 
 pub async fn convert_to_collection(
@@ -252,7 +253,7 @@ pub async fn rename(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<Vec<String>, AppError> {
+) -> Result<RenameOutcome, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::rename(

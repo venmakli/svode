@@ -77,6 +77,8 @@ pub struct ConvertToCollectionOutcome {
 /// with its directory.
 #[derive(Debug, Clone)]
 pub struct ConvertToLeafOutcome {
+    /// The README of the folder Page as addressed, in the disk spelling.
+    pub old_path: String,
     pub page: Page,
     pub removed_paths: Vec<PathBuf>,
 }
@@ -1052,6 +1054,7 @@ async fn convert_to_leaf_of<E: GitDateExecutor>(
         ),
     );
     Ok(ConvertToLeafOutcome {
+        old_path: file_path.to_string(),
         page: converted,
         removed_paths,
     })
@@ -1265,17 +1268,33 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
     })
 }
 
+/// A folder renamed by path.
+#[derive(Debug, Clone)]
+pub struct RenameOutcome {
+    /// The renamed folder, in the disk spelling.
+    pub old_path: String,
+    /// Its new path: the parent in the disk spelling, the requested name.
+    pub new_path: String,
+    /// Sources whose links the rename rewrote.
+    pub modified_paths: Vec<String>,
+}
+
 pub async fn rename<E: GitDateExecutor>(
     space: &str,
     from: &str,
     to: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<Vec<String>, PageError> {
+) -> Result<RenameOutcome, PageError> {
     let (from, to) = super::rename_target::ensure_renamable_folder(space, from, to)?;
-    apply_move(space, &from, MoveTo::Rename(&to), project_path, runtime)
-        .await
-        .map(|outcome| outcome.modified_paths)
+    let modified_paths = apply_move(space, &from, MoveTo::Rename(&to), project_path, runtime)
+        .await?
+        .modified_paths;
+    Ok(RenameOutcome {
+        old_path: from,
+        new_path: to,
+        modified_paths,
+    })
 }
 
 /// A Page a move turned into a folder Page or back into a leaf.
@@ -1290,6 +1309,9 @@ pub struct ConvertedParent {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MovePageOutcome {
+    /// The moved source, in the disk spelling.
+    #[serde(skip)]
+    pub old_path: String,
     pub new_path: String,
     /// The leaf Page parent that became a folder Page, then the folder Page
     /// the source left that became a leaf; empty without conversions.
@@ -1319,6 +1341,7 @@ pub async fn move_page<E: GitDateExecutor>(
     apply_move(space, from, MoveTo::Parent(&plan), project_path, runtime)
         .await
         .map(|outcome| MovePageOutcome {
+            old_path: from.to_string(),
             new_path: outcome.new_path,
             converted_parents: outcome.converted_parents,
             removed_paths: outcome.removed_paths,

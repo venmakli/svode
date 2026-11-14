@@ -174,8 +174,8 @@ pub(crate) async fn write_page(
         Err(error) => return failure(error),
     };
     Ok(ToolCallResult::ok(
-        format!("Updated Page {path}."),
-        write_response(&space, &path, outcome),
+        format!("Updated Page {}.", outcome.source_path),
+        write_response(&space, outcome),
     ))
 }
 
@@ -274,7 +274,7 @@ pub(crate) async fn write_space_readme(
     };
     Ok(ToolCallResult::ok(
         "Updated Space README.",
-        write_response(&space, path, outcome),
+        write_response(&space, outcome),
     ))
 }
 
@@ -329,7 +329,7 @@ pub(crate) async fn write_collection_readme(
         Ok(outcome) => outcome,
         Err(error) => return failure(error),
     };
-    let mut response = write_response(&space, &path, outcome);
+    let mut response = write_response(&space, outcome);
     response["collectionPath"] = json!(parent_dir(response["path"].as_str().unwrap_or(&path)));
     Ok(ToolCallResult::ok(
         format!("Updated Collection README for {collection_path}."),
@@ -457,8 +457,8 @@ pub(crate) async fn update_collection_item_body(
         Err(error) => return failure(error),
     };
     Ok(ToolCallResult::ok(
-        format!("Updated body for {path}."),
-        write_response(&space, &path, outcome),
+        format!("Updated body for {}.", outcome.source_path),
+        write_response(&space, outcome),
     ))
 }
 
@@ -515,9 +515,13 @@ async fn patch_metadata(
 }
 
 /// Write result projected from the actual outcome: `path` after the
-/// operation, `newPath` only for a performed rename.
-fn write_response(space: &str, original: &str, outcome: PageWriteOutcome) -> Value {
-    let canonical = outcome.result.new_path.as_deref().unwrap_or(original);
+/// operation in the disk spelling, `newPath` only for a performed rename.
+fn write_response(space: &str, outcome: PageWriteOutcome) -> Value {
+    let canonical = outcome
+        .result
+        .new_path
+        .as_deref()
+        .unwrap_or(&outcome.source_path);
     json!({
         "path": canonical,
         "newPath": outcome.result.new_path,

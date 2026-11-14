@@ -210,6 +210,7 @@ fn apply(space: &str, path: &str, content: &str) -> Result<PageWriteOutcome, Pag
             .ok()
             .map(|version| version.as_str().to_string());
         Ok(PageWriteOutcome {
+            source_path: path.to_string(),
             result: WriteResult {
                 new_path: None,
                 modified_files: Vec::new(),

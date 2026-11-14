@@ -96,6 +96,9 @@ fn requested_title<'a>(request: &'a PageWrite<'_>) -> Option<&'a str> {
 }
 
 pub struct PageWriteOutcome {
+    /// The source the write addressed, in the disk spelling, before any
+    /// rename.
+    pub source_path: String,
     pub result: WriteResult,
     pub changed_paths: Vec<PathBuf>,
 }
@@ -473,6 +476,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                 .map(|source| source.path.clone())
                 .collect();
             Ok(PageWriteOutcome {
+                source_path: request.path.to_string(),
                 result,
                 changed_paths,
             })

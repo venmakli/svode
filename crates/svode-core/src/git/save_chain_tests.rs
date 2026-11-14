@@ -612,7 +612,8 @@ async fn a_scoped_save_after_a_structural_rename_or_move_leaves_a_clean_status()
 
     let modified = structure::rename(root, "Area", "Zone", Some(root), fixture.structure())
         .await
-        .unwrap();
+        .unwrap()
+        .modified_paths;
     assert_eq!(modified, vec!["Link.md".to_string()]);
     fixture
         .save(Some(&["Zone/Tasks/Item.md"]))
