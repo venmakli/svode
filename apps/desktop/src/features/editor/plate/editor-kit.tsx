@@ -51,6 +51,7 @@ import {
   serializeMarkdownWithComments,
 } from "../model/markdown-comments";
 import { isEmptyDocument } from "../model/empty-document";
+import { remarkMdxAutolinks } from "../model/markdown-autolink";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
 import {
   markdownLineBreakRules,
@@ -125,6 +126,8 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
       options: {
         remarkPlugins: [
           ...getOptions().remarkPlugins,
+          // After `remarkMdx`, so its autolinks are tried before JSX.
+          remarkMdxAutolinks,
           remarkMarkdownComments,
           remarkBreakLineEndings,
           remarkInlineImages,

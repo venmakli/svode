@@ -160,6 +160,25 @@ function plateInputFor(
   );
 }
 
+/**
+ * Text MDX rejects is read whole without MDX. Plate's own fallback is meant for
+ * incomplete MDX streamed by AI and drops the text after the first `<` it takes
+ * for an unclosed tag, while the boundary always reads a whole body or segment.
+ * A parse without MDX keeps all of the text; only the MDX elements of such a
+ * document are read as text.
+ */
+function readWithMdxOrWithout<T>(read: (withoutMdx: boolean) => T): T {
+  try {
+    return read(false);
+  } catch {
+    return read(true);
+  }
+}
+
+function rethrow(error: unknown): never {
+  throw error;
+}
+
 function deserializeBoundaryMarkdown(
   editor: PlateEditor,
   markdown: string,
@@ -167,30 +186,30 @@ function deserializeBoundaryMarkdown(
 ): Descendant[] {
   const markdownApi = editor.getApi(MarkdownPlugin).markdown;
   const remarkPlugins = editor.getOptions(MarkdownPlugin).remarkPlugins ?? [];
-  const deserialize = (plateInput: MappedText, onError?: () => void) =>
+  const plateInput = plateInputFor(
+    editor,
+    markdown,
+    escapedOpenerEdits(markdown),
+  );
+
+  const nodes = readWithMdxOrWithout((withoutMdx) =>
     markdownApi.deserialize(plateInput.text, {
-      onError,
+      // An MDX failure leaves `deserialize` before Plate's fallback runs.
+      onError: withoutMdx ? undefined : rethrow,
+      withoutMdx,
       remarkPlugins: [
         // References are links and images before any other plugin runs.
         references.plugin,
         ...remarkPlugins,
-        markdownSourcePlugin(markdown, plateInput, [
-          annotateMarkdownComment,
-          restoreMarkdownLiteral,
-        ]),
+        markdownSourcePlugin(
+          markdown,
+          plateInput,
+          [annotateMarkdownComment, restoreMarkdownLiteral],
+          { withoutMdx },
+        ),
       ],
-    });
-
-  const literalEdits = escapedOpenerEdits(markdown);
-  let fellBack = false;
-  let nodes = deserialize(plateInputFor(editor, markdown, literalEdits), () => {
-    fellBack = true;
-  });
-  // Plate's fallback parse runs no annotators, so it would keep the
-  // replacements of `escapedOpenerEdits` inside code.
-  if (fellBack && literalEdits.length > 0) {
-    nodes = deserialize(plateInputFor(editor, markdown, []));
-  }
+    }),
+  );
 
   return Array.isArray(nodes) ? (nodes as Descendant[]) : [];
 }
@@ -260,26 +279,23 @@ export function fencedCodeRanges(
     lf.text,
     escapedOpenerEdits(lf.text),
   );
-  const parse = (): { tree: MdastNode; parsed: MappedText } => {
-    const jsx = mapHtmlToJsx(plateInput.text);
-    if (jsx) {
-      try {
+  const { tree, parsed } = readWithMdxOrWithout(
+    (withoutMdx): { tree: MdastNode; parsed: MappedText } => {
+      const jsx = withoutMdx ? null : mapHtmlToJsx(plateInput.text);
+      if (jsx) {
         return {
           tree: markdownToAstProcessor(editor, jsx.text) as MdastNode,
           parsed: composeMappedText(lf, plateInput, jsx),
         };
-      } catch {
-        // Plate reads text MDX rejects without MDX as well.
       }
-    }
-    return {
-      tree: markdownToAstProcessor(editor, plateInput.text, {
-        withoutMdx: true,
-      }) as MdastNode,
-      parsed: composeMappedText(lf, plateInput),
-    };
-  };
-  const { tree, parsed } = parse();
+      return {
+        tree: markdownToAstProcessor(editor, plateInput.text, {
+          withoutMdx: true,
+        }) as MdastNode,
+        parsed: composeMappedText(lf, plateInput),
+      };
+    },
+  );
 
   const ranges: MarkdownSourceRange[] = [];
   const visit = (node: MdastNode) => {

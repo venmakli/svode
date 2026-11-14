@@ -293,15 +293,19 @@ function visit(
 
 /**
  * Remark transformer that runs `annotators` over Plate's own parse of the
- * boundary text, with positions resolved against `source`. It does nothing on
- * parses of other text, such as Plate's fallback parses of document parts.
+ * boundary text, with positions resolved against `source`. A parse with MDX
+ * reads the text after `htmlToJsx`, one `withoutMdx` the text as it is. It
+ * does nothing on parses of other text.
  */
 export function markdownSourcePlugin(
   source: string,
   plateInput: MappedText,
   annotators: MarkdownSourceAnnotator[],
+  options?: { withoutMdx?: boolean },
 ): RemarkPlugin {
-  const parsed = mapHtmlToJsx(plateInput.text);
+  const parsed = options?.withoutMdx
+    ? applyTextEdits(plateInput.text, [])
+    : mapHtmlToJsx(plateInput.text);
   const plugin = () => (tree: MdastNode, file: { value?: unknown }) => {
     if (!parsed || String(file.value) !== parsed.text) return;
     const view = createMarkdownSourceView(
