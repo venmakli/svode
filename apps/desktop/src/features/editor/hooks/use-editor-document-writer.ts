@@ -43,7 +43,10 @@ import {
   hasUnresolvedConflicts,
 } from "../conflict/parse-conflicts";
 import { useEditorStore } from "../model";
-import { bodyWithSourceLeadingBlankLines } from "../model/markdown-io";
+import {
+  bodyWithSourceLeadingBlankLines,
+  withSourceLineEndings,
+} from "../model/markdown-io";
 import {
   getDocumentBaseline,
   getDocumentCacheKey,
@@ -220,11 +223,15 @@ export function useEditorDocumentWriter({
         }
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-        const body = bodyWithSourceLeadingBlankLines(
+        const sourceBody =
           merge?.merge.type === "merged"
             ? merge.merge.body
-            : (getDocumentBaseline(baselineKey(path))?.body ?? ""),
-          markdown,
+            : (getDocumentBaseline(baselineKey(path))?.body ?? "");
+        // The body keeps the leading blank lines and the line ending style
+        // of the source it was edited from (DF-201, DF-250).
+        const body = withSourceLineEndings(
+          sourceBody,
+          bodyWithSourceLeadingBlankLines(sourceBody, markdown),
         );
         let content = body;
         if (merge) {

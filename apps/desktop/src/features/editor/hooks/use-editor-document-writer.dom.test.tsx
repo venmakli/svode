@@ -317,6 +317,13 @@ function serialized(editor: PlateEditor) {
   return editor.getApi(MarkdownPlugin).markdown.serialize();
 }
 
+/** `markdown` with the line endings a save of `sourceBody` writes (DF-250 R2). */
+function inSourceStyle(sourceBody: string, markdown: string) {
+  return /\r?\n/.exec(sourceBody)?.[0] === "\r\n"
+    ? markdown.replaceAll("\n", "\r\n")
+    : markdown;
+}
+
 const sources = [
   {
     name: "one LF blank line",
@@ -359,8 +366,10 @@ for (const source of sources) {
       await view.save();
       expect(view.writes.length).toBe(1);
       const first = view.writes[0].content;
+      const saved = (editor: PlateEditor) =>
+        inSourceStyle(source.body, serialized(editor));
       expect(first.slice(0, source.leading.length)).toBe(source.leading);
-      expect(first.slice(source.leading.length)).toBe(serialized(view.editor));
+      expect(first.slice(source.leading.length)).toBe(saved(view.editor));
       expect(first.includes("Middle edited")).toBe(true);
       expect(/^[ \t]*\r?\n/.test(first.slice(source.leading.length))).toBe(
         false,
@@ -371,7 +380,7 @@ for (const source of sources) {
       expect(view.writes.length).toBe(2);
       expect(view.writes[1].sourceVersion).toBe("v2");
       expect(view.writes[1].content).toBe(
-        source.leading + serialized(view.editor),
+        source.leading + saved(view.editor),
       );
 
       // The reread source is the written baseline: nothing to reconcile.
@@ -388,7 +397,7 @@ for (const source of sources) {
       expect(view.writes.length).toBe(3);
       expect(view.writes[2].sourceVersion).toBe("v3-meta");
       expect(view.writes[2].content).toBe(
-        source.leading + serialized(view.editor),
+        source.leading + saved(view.editor),
       );
       expect(view.conflicts.filter(Boolean)).toEqual([]);
     } finally {
@@ -404,6 +413,153 @@ test("save of text typed into an empty body adds no blank line", async () => {
     view.editor.tf.insertText("Typed", { at: view.editor.api.start([0]) });
     await view.save();
     expect(view.writes.map((write) => write.content)).toEqual(["Typed\n"]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+
+/** A CRLF body with the blocks whose text is not split at LF only by Plate. */
+const CRLF_BODY = crlf(
+  [
+    "",
+    "# Plan",
+    "",
+    "line one",
+    "line two",
+    "",
+    "<!-- note",
+    "second line -->",
+    "",
+    "```js",
+    "const a = 1;",
+    "",
+    "const b = 2;",
+    "```",
+    "",
+    "> q1",
+    "> q2",
+    "",
+    "- a",
+    "  b",
+    "",
+    "Middle",
+    "",
+  ].join("\n"),
+);
+
+test("save of a CRLF body writes every line ending as CRLF and changes only the edited line", async () => {
+  const path = "pages/crlf.md";
+  const view = await harness(path, CRLF_BODY);
+  try {
+    appendToBlock(view.editor, "Middle", " edited");
+    await view.save();
+    expect(view.writes.map((write) => write.content)).toEqual([
+      CRLF_BODY.replace("Middle", "Middle edited"),
+    ]);
+
+    // The second save is stable and edits from the written baseline.
+    appendToBlock(view.editor, "Middle edited", " again");
+    await view.save();
+    expect(view.writes[1]).toEqual({
+      content: CRLF_BODY.replace("Middle", "Middle edited again"),
+      sourceVersion: "v2",
+    });
+
+    // The reread source is the written baseline: nothing to reconcile.
+    await view.reconcile();
+    expect(view.writes.length).toBe(2);
+    expect(view.conflicts.filter(Boolean)).toEqual([]);
+
+    // A metadata change under the editor keeps the body: the stale write
+    // rebases onto it instead of opening a conflict.
+    view.disk.version = "v3-meta";
+    appendToBlock(view.editor, "Middle edited again", "!");
+    await view.save();
+    expect(view.writes[2]).toEqual({
+      content: CRLF_BODY.replace("Middle", "Middle edited again!"),
+      sourceVersion: "v3-meta",
+    });
+    expect(view.conflicts.filter(Boolean)).toEqual([]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+const mixedSources = [
+  {
+    name: "CRLF first",
+    body: "Status: ok\r\n\r\nMiddle\n\nMore\n",
+    written: "Status: ok\r\n\r\nMiddle edited\r\n\r\nMore\r\n",
+  },
+  {
+    name: "LF first",
+    body: "Status: ok\n\nMiddle\r\n\r\nMore\r\n",
+    written: "Status: ok\n\nMiddle edited\n\nMore\n",
+  },
+  {
+    name: "LF first blank line before CRLF",
+    body: "\n\r\nStatus: ok\r\n\r\nMiddle\r\n",
+    written: "\n\nStatus: ok\n\nMiddle edited\n",
+  },
+  {
+    name: "no line ending",
+    body: "Middle",
+    written: "Middle edited\n",
+  },
+];
+
+for (const source of mixedSources) {
+  test(`save writes the line endings of the first one of the body: ${source.name}`, async () => {
+    const path = "pages/mixed.md";
+    const view = await harness(path, source.body);
+    try {
+      appendToBlock(view.editor, "Middle", " edited");
+      await view.save();
+      expect(view.writes.map((write) => write.content)).toEqual([
+        source.written,
+      ]);
+
+      // The written body is the baseline: the next save edits from it.
+      appendToBlock(view.editor, "Middle edited", "!");
+      await view.save();
+      expect(view.writes[1]).toEqual({
+        content: source.written.replace("Middle edited", "Middle edited!"),
+        sourceVersion: "v2",
+      });
+      await view.reconcile();
+      expect(view.writes.length).toBe(2);
+      expect(view.conflicts.filter(Boolean)).toEqual([]);
+    } finally {
+      await view.cleanup();
+    }
+  });
+}
+
+test("a draft written over a changed source keeps the CRLF line endings it was edited from", async () => {
+  const path = "pages/crlf-draft.md";
+  const view = await harness(path, "Status: ok\r\n\r\nMiddle\r\n");
+  try {
+    appendToBlock(view.editor, "Middle", " edited");
+    view.holdDraft();
+    view.disk.body = "Status: changed\n";
+    view.disk.version = "v-external";
+    await view.reconcile();
+    const conflict = view.conflicts.at(-1);
+    expect(conflict?.status).toBe("ready");
+
+    await act(async () => {
+      conflict!.writeDraft();
+      for (let turn = 0; turn < 20 && view.writes.length === 0; turn++)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(view.writes).toEqual([
+      {
+        content: "Status: ok\r\n\r\nMiddle edited\r\n",
+        sourceVersion: "v-external",
+      },
+    ]);
   } finally {
     await view.cleanup();
   }
@@ -434,7 +590,7 @@ for (const leading of ["", "\n", "\r\n"]) {
       await view.save();
       expect(view.writes.map((write) => write.content)).toEqual([
         leading,
-        `${leading}Typed\n`,
+        `${leading}Typed${leading === "\r\n" ? "\r\n" : "\n"}`,
         leading,
       ]);
     } finally {
@@ -544,8 +700,9 @@ test("a reloaded CRLF source parses blocks with the marker size of its path and 
       { at: [index] },
     );
     await view.save();
+    // The CRLF source keeps its line endings (DF-250 R2).
     expect(view.writes.map((write) => write.content)).toEqual([
-      "# Plan\n\nStatus: remote edit\n\nFooter\n",
+      "# Plan\r\n\r\nStatus: remote edit\r\n\r\nFooter\r\n",
     ]);
   } finally {
     await view.cleanup();

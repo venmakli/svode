@@ -132,6 +132,22 @@ export function bodyWithSourceLeadingBlankLines(
   );
 }
 
+const LINE_ENDING_RE = /\r?\n/g;
+
+/**
+ * `body` with the line endings of the source body: every line ends with CRLF
+ * when the first line of the source ends with CRLF, and with LF otherwise,
+ * also for a source without line endings. A mixed source takes the style of
+ * its first line ending.
+ */
+export function withSourceLineEndings(
+  sourceBody: string,
+  body: string,
+): string {
+  const crlf = /\r?\n/.exec(sourceBody)?.[0] === "\r\n";
+  return body.replace(LINE_ENDING_RE, crlf ? "\r\n" : "\n");
+}
+
 const CRLF_RE = /\r\n/g;
 
 // CRLF ends a line like LF. Plate splits text and code values at LF only, so
