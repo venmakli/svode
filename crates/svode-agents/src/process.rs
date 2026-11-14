@@ -73,6 +73,33 @@ impl ProcessTree {
         &mut self.child
     }
 
+    /// Resolves once the root has exited, even while a descendant holds its
+    /// pipes (DF-218 R2). It never collects the root's status, so on Unix
+    /// the root stays unreaped and keeps naming its group until `kill`; on
+    /// Windows it holds a duplicate of the root's handle until the root
+    /// exits. A root already collected is never reported.
+    pub(crate) fn root_exit(&self) -> impl Future<Output = ()> + Send + 'static {
+        #[cfg(unix)]
+        let root = self.child.id();
+        #[cfg(windows)]
+        let root = self.child.raw_handle().and_then(|raw| {
+            // SAFETY: the handle stays open while `self.child` lives, which
+            // outlasts this call.
+            unsafe { std::os::windows::io::BorrowedHandle::borrow_raw(raw) }
+                .try_clone_to_owned()
+                .ok()
+        });
+        async move {
+            match root {
+                #[cfg(unix)]
+                Some(pid) => unix::exited(pid).await,
+                #[cfg(windows)]
+                Some(handle) => job::exited(handle).await,
+                None => std::future::pending().await,
+            }
+        }
+    }
+
     /// Kills every process of the tree and waits for the root.
     pub(crate) async fn kill(mut self) {
         self.kill_descendants();
@@ -105,9 +132,57 @@ impl Drop for ProcessTree {
     }
 }
 
+#[cfg(unix)]
+mod unix {
+    use std::io;
+
+    use tokio::signal::unix::{SignalKind, signal};
+
+    /// Waits for child `pid` to exit, looking again on every SIGCHLD.
+    pub(super) async fn exited(pid: u32) {
+        // Subscribed before the first look, so a later exit is heard.
+        let Ok(mut children) = signal(SignalKind::child()) else {
+            return std::future::pending().await;
+        };
+        while !has_exited(pid) {
+            if children.recv().await.is_none() {
+                return std::future::pending().await;
+            }
+        }
+    }
+
+    /// Whether child `pid` has exited, leaving it a zombie to be collected.
+    /// A pid that is no longer a child was collected already.
+    fn has_exited(pid: u32) -> bool {
+        loop {
+            // SAFETY: a zeroed `siginfo_t` is valid, and `waitid` only writes
+            // it; `WNOWAIT` leaves the child waitable.
+            let (result, info) = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                let result = libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                );
+                (result, info)
+            };
+            if result == 0 {
+                // SAFETY: `waitid` filled the child fields or left them zero.
+                return unsafe { info.si_pid() } != 0;
+            }
+            match io::Error::last_os_error().raw_os_error() {
+                Some(libc::EINTR) => continue,
+                error => return error == Some(libc::ECHILD),
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
 mod job {
     use std::io;
+    use std::os::windows::io::{AsRawHandle, OwnedHandle};
 
     use tokio::process::Child;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
@@ -209,6 +284,20 @@ mod job {
                 CloseHandle(self.0);
             }
         }
+    }
+
+    /// Waits for the process of `root` to exit, then closes the handle.
+    pub(super) async fn exited(root: OwnedHandle) {
+        use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
+
+        let _ = tokio::task::spawn_blocking(move || {
+            // SAFETY: `root` keeps the handle open until it drops after the
+            // wait.
+            unsafe {
+                WaitForSingleObject(root.as_raw_handle() as HANDLE, INFINITE);
+            }
+        })
+        .await;
     }
 
     /// Resumes the threads of a process started suspended.
@@ -371,6 +460,85 @@ pub(crate) mod tests {
             assert!(Instant::now() < deadline, "the shell exits after its ping");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    /// A shell that leaves a silent `sleep` holding its stdin and stdout and
+    /// exits, with the pid of the `sleep`; the pipes stay with the root's
+    /// handle, open at both ends.
+    #[cfg(unix)]
+    async fn exiting_root_with_descendant_on_its_pipes() -> (ProcessTree, Vec<u32>) {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let mut command = Command::new("/bin/sh");
+        command
+            // An asynchronous list reads /dev/null unless given fd 3.
+            .args(["-c", "exec 3<&0; sleep 600 <&3 3<&- & echo $!"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        let mut tree = ProcessTree::spawn(&mut command).unwrap();
+        let mut stdout = BufReader::new(tree.child().stdout.take().unwrap());
+        let mut line = String::new();
+        stdout.read_line(&mut line).await.unwrap();
+        tree.child().stdout = Some(stdout.into_inner());
+        (tree, vec![line.trim().parse().unwrap()])
+    }
+
+    /// A shell that starts a `ping` on its pipes and exits, with the pid of
+    /// the `ping` once it is in the Job.
+    #[cfg(windows)]
+    async fn exiting_root_with_descendant_on_its_pipes() -> (ProcessTree, Vec<u32>) {
+        let mut command = Command::new("cmd");
+        command
+            .args(["/d", "/c", "start /b ping -n 600 127.0.0.1"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        let mut tree = ProcessTree::spawn(&mut command).unwrap();
+        let root = tree.child().id().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let descendants: Vec<u32> = tree
+                .job
+                .processes()
+                .into_iter()
+                .filter(|pid| *pid != root)
+                .collect();
+            if !descendants.is_empty() {
+                return (tree, descendants);
+            }
+            assert!(Instant::now() < deadline, "the shell starts its ping");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn the_exit_of_a_root_whose_descendant_holds_its_pipes_is_heard_before_it_is_collected() {
+        let (mut tree, descendants) = exiting_root_with_descendant_on_its_pipes().await;
+        let root = tree.child().id().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), tree.root_exit())
+            .await
+            .expect("the exit of the root is heard");
+        // Still a zombie, so its pid keeps naming its group until the kill.
+        #[cfg(unix)]
+        assert!(exists(root));
+        for pid in &descendants {
+            assert!(exists(*pid), "process {pid} keeps the pipes open");
+        }
+        tree.kill().await;
+        assert!(!exists(root));
+        for pid in descendants {
+            assert!(ends(pid).await, "process {pid} of the tree still runs");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_running_root_is_not_heard_as_exited() {
+        let (tree, _) = tree_with_descendant().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), tree.root_exit())
+                .await
+                .is_err()
+        );
+        tree.kill().await;
     }
 
     #[tokio::test]

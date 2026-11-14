@@ -47,6 +47,10 @@ use crate::writer::{
 /// Kept stderr of a starting agent, shown only when it fails to initialize.
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
 
+/// How long the output an agent's root wrote before it exited is still
+/// read when a descendant keeps that output open (DF-218 R2).
+const ROOT_EXIT_DRAIN: Duration = Duration::from_millis(100);
+
 /// Tunables of the runtime, not part of its contract.
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -492,6 +496,7 @@ impl AgentRuntime {
     {
         let id = ConnectionId(self.inner.next_connection.fetch_add(1, Ordering::Relaxed) + 1);
         let (rpc, incoming) = RpcClient::start(reader, writer);
+        let root_exit = process.as_ref().map(ProcessTree::root_exit);
         let connection = Arc::new(Connection {
             runtime: Arc::downgrade(&self.inner),
             agent: launch.agent.clone(),
@@ -520,7 +525,7 @@ impl AgentRuntime {
             .lock()
             .unwrap()
             .insert(id, connection.clone());
-        tokio::spawn(dispatch(Arc::downgrade(&connection), incoming));
+        tokio::spawn(dispatch(Arc::downgrade(&connection), incoming, root_exit));
         self.start_idle_sweep();
         id
     }
@@ -2453,52 +2458,88 @@ impl Connection {
     }
 }
 
-async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedReceiver<Incoming>) {
-    while let Some(message) = incoming.recv().await {
-        let Some(connection) = connection.upgrade() else {
-            return;
-        };
-        match message {
-            Incoming::Notification { method, params } if method == acp::SESSION_UPDATE => {
-                let Some((acp_id, normalized)) =
-                    normalize::session_update(params, connection.adapter())
-                else {
-                    continue;
-                };
-                if let Some(session) = connection.session(&acp_id) {
-                    let declares = matches!(
-                        normalized,
-                        Normalized::ConfigChange(_) | Normalized::ModeChange(_)
-                    );
-                    apply(&session, normalized);
-                    if let Some(runtime) = connection.runtime.upgrade() {
-                        if declares {
-                            runtime.note_declared(&session);
-                        }
-                        runtime.enforce_detail_bound();
-                    }
-                }
-            }
-            Incoming::Notification { .. } => {}
-            Incoming::Barrier(done) => {
-                let _ = done.send(());
-            }
-            Incoming::Request { id, method, params }
-                if method == acp::SESSION_REQUEST_PERMISSION =>
-            {
-                request_permission(&connection, id, &params);
-            }
-            Incoming::Request { id, method, params } if method == acp::ELICITATION_CREATE => {
-                request_question(&connection, id, &params);
-            }
-            Incoming::Request { id, method, .. } => {
-                connection.rpc.respond_method_not_found(id, &method);
-            }
+/// Handles the agent's messages until its output ends or its root exits,
+/// whichever comes first, then ends what is left of its tree (DF-218 R2).
+async fn dispatch(
+    connection: Weak<Connection>,
+    mut incoming: mpsc::UnboundedReceiver<Incoming>,
+    root_exit: Option<impl Future<Output = ()>>,
+) {
+    let root_exit = async {
+        match root_exit {
+            Some(root_exit) => root_exit.await,
+            None => std::future::pending().await,
         }
+    };
+    tokio::pin!(root_exit);
+    let root_exited = loop {
+        tokio::select! {
+            biased;
+            message = incoming.recv() => {
+                let Some(message) = message else {
+                    break false;
+                };
+                let Some(connection) = connection.upgrade() else {
+                    return;
+                };
+                handle(&connection, message);
+            }
+            () = &mut root_exit => break true,
+        }
+    };
+    if root_exited {
+        // What the root wrote before it exited still arrives; a descendant
+        // that keeps its output open does not keep the connection.
+        let _ = tokio::time::timeout(ROOT_EXIT_DRAIN, async {
+            while let Some(message) = incoming.recv().await {
+                let Some(connection) = connection.upgrade() else {
+                    return;
+                };
+                handle(&connection, message);
+            }
+        })
+        .await;
     }
-    // The agent's output ended: whatever is left of its tree ends too.
     if let Some(connection) = connection.upgrade() {
         connection.terminate().await;
+    }
+}
+
+fn handle(connection: &Connection, message: Incoming) {
+    match message {
+        Incoming::Notification { method, params } if method == acp::SESSION_UPDATE => {
+            let Some((acp_id, normalized)) =
+                normalize::session_update(params, connection.adapter())
+            else {
+                return;
+            };
+            if let Some(session) = connection.session(&acp_id) {
+                let declares = matches!(
+                    normalized,
+                    Normalized::ConfigChange(_) | Normalized::ModeChange(_)
+                );
+                apply(&session, normalized);
+                if let Some(runtime) = connection.runtime.upgrade() {
+                    if declares {
+                        runtime.note_declared(&session);
+                    }
+                    runtime.enforce_detail_bound();
+                }
+            }
+        }
+        Incoming::Notification { .. } => {}
+        Incoming::Barrier(done) => {
+            let _ = done.send(());
+        }
+        Incoming::Request { id, method, params } if method == acp::SESSION_REQUEST_PERMISSION => {
+            request_permission(connection, id, &params);
+        }
+        Incoming::Request { id, method, params } if method == acp::ELICITATION_CREATE => {
+            request_question(connection, id, &params);
+        }
+        Incoming::Request { id, method, .. } => {
+            connection.rpc.respond_method_not_found(id, &method);
+        }
     }
 }
 

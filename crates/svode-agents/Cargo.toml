@@ -15,7 +15,7 @@ serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 tar = "0.4"
 thiserror = "2"
-tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync"] }
+tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync", "signal"] }
 ulid = "1"
 which = "7"
 

@@ -4391,11 +4391,23 @@ async fn an_agent_that_stops_reading_is_ended_with_its_descendants() {
         ..RuntimeConfig::default()
     });
     let lease = runtime
-        .acquire(tree_agent_then(&pids, "exec 0<&-; wait"))
+        .acquire(tree_agent_then(
+            &pids,
+            r#"exec 0<&-; : > "$SVODE_TREE.closed"; wait"#,
+        ))
         .await
         .unwrap();
     let id = lease.connection();
     let tree = tree_pids(&pids).await;
+    // A request written before the agent closes its input would only wait.
+    let input_closed = dir.path().join("pids.closed");
+    for _ in 0..250 {
+        if input_closed.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(input_closed.exists(), "the agent closes its input");
     // Its output stays open; the write into its closed input fails, and the
     // next request finds the connection gone.
     assert_eq!(
@@ -4411,6 +4423,88 @@ async fn an_agent_that_stops_reading_is_ended_with_its_descendants() {
         ConnectionState::Closed
     );
     assert_tree_ended(tree).await;
+}
+
+/// Shell lines that leave a silent `sleep` holding the agent's stdin,
+/// stdout and stderr and end the agent's root (DF-218 R2).
+#[cfg(unix)]
+const ROOT_EXITS_ON_ITS_PIPES: &str = "exec 3<&0; sleep 600 <&3 3<&- & exit 0";
+
+/// `sh_agent` whose root, on a prompt, writes `<agent pid> <sleep pid>` to
+/// `$SVODE_TREE` and runs `ROOT_EXITS_ON_ITS_PIPES` without answering.
+#[cfg(unix)]
+fn root_exit_agent(pids: &Path) -> AcpLaunch {
+    let mut launch = sh_agent(&[("SVODE_TREE", pids.to_str().unwrap())]);
+    launch.args[1] = launch.args[1].replace(
+        "  esac",
+        r#"    *'"method":"session/prompt"'*) exec 3<&0; sleep 600 <&3 3<&- & echo "$$ $!" > "$SVODE_TREE"; exit 0;;
+  esac"#,
+    );
+    launch
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_agent_whose_root_exits_while_a_descendant_holds_its_pipes_closes_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::default();
+    let lease = runtime.acquire(root_exit_agent(&pids)).await.unwrap();
+    let id = lease.connection();
+    let key = runtime
+        .new_session(id, Path::new("/project"), &[])
+        .await
+        .unwrap();
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
+    let tree = tree_pids(&pids).await;
+
+    // No EOF comes and the lease and the turn keep the connection from
+    // idling: only the exit of the root ends the turn.
+    follow(&mut subscription, idle).await;
+    assert_eq!(subscription.snapshot.connection, ConnectionState::Closed);
+    assert_eq!(
+        subscription.snapshot.turn.last_outcome,
+        Some(StopReason::Interrupted)
+    );
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Closed
+    );
+    assert_tree_ended(tree).await;
+    assert_eq!(
+        runtime.prompt(&key, &[PromptPart::text("again")]),
+        Err(AgentRuntimeError::ConnectionClosed)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_root_that_exits_during_initialize_reports_its_stderr_while_a_descendant_holds_its_pipes()
+{
+    let runtime = AgentRuntime::default();
+    let started = Instant::now();
+    let AgentCheck::FailedToStart { message } = runtime
+        .check(AcpLaunch {
+            program: PathBuf::from("/bin/sh"),
+            args: vec![
+                "-c".into(),
+                format!("echo 'adapter crashed' >&2; {ROOT_EXITS_ON_ITS_PIPES}"),
+            ],
+            cwd: std::env::temp_dir(),
+            ..launch()
+        })
+        .await
+    else {
+        panic!("the agent fails to start");
+    };
+    assert!(message.contains("adapter crashed"), "{message}");
+    // Closed by the exit, not by the request timeout.
+    assert!(
+        message.contains(&AgentRuntimeError::ConnectionClosed.to_string()),
+        "{message}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[cfg(unix)]
@@ -4453,6 +4547,16 @@ async fn closed_connections_keep_their_state_but_no_process_tasks_or_pipes() {
             .unwrap();
         ids.push(lease.connection());
         closed(&runtime, lease.connection()).await;
+        // The exit of its root while a descendant holds its pipes.
+        let lease = runtime
+            .acquire(tree_agent_then(
+                &dir.path().join(format!("root-exit-{cycle}")),
+                ROOT_EXITS_ON_ITS_PIPES,
+            ))
+            .await
+            .unwrap();
+        ids.push(lease.connection());
+        closed(&runtime, lease.connection()).await;
         // An explicit close.
         let lease = runtime.acquire(sh_agent(&[])).await.unwrap();
         ids.push(lease.connection());
@@ -4472,7 +4576,7 @@ async fn closed_connections_keep_their_state_but_no_process_tasks_or_pipes() {
         .values()
         .cloned()
         .collect();
-    assert_eq!(connections.len(), 15);
+    assert_eq!(connections.len(), 18);
     for connection in &connections {
         assert!(!connection.is_open());
         assert!(connection.process.lock().await.is_none());
