@@ -28,6 +28,7 @@ use crate::index::state::IndexRuntimeState;
 use crate::index::{IndexError, IndexKey};
 use crate::page::filename::{self, FilenameProjection};
 use crate::page::{PageError, PageSourceError};
+use crate::space_config::{self, SpaceConfig, SpaceConfigError, Unreadable};
 
 /// Failure of a shared Routine definition operation. The categories mirror the
 /// existing Desktop error identities, so transport mapping stays unchanged.
@@ -55,6 +56,10 @@ pub enum RoutineServiceError {
     Index(#[from] IndexError),
     #[error(transparent)]
     Store(#[from] RoutineStoreError),
+    /// The `.svode/config.json` of the owner's Space or project cannot be
+    /// read (DF-235 R3): the reason names neither the path nor the contents.
+    #[error(transparent)]
+    SpaceConfig(SpaceConfigError),
 }
 
 impl From<PageError> for RoutineServiceError {
@@ -227,9 +232,11 @@ pub fn resolve_owner(
     }
     let project = canonical_space_path(project_path)?;
     let space = canonical_space_path(space_path)?;
-    crate::page::registered_spaces(&space)?;
+    read_owner_config(&space)?;
     if project != space {
-        let registered = crate::page::registered_spaces(&project)?
+        let registered = read_owner_config(&project)?
+            .spaces
+            .unwrap_or_default()
             .into_iter()
             .any(|candidate| {
                 candidate.id == space_id
@@ -293,15 +300,78 @@ pub fn resolve_owner(
     })
 }
 
+/// The `.svode/config.json` of an owner's Space or project. A file that is
+/// there but cannot be read refuses with its DF-235 reason.
+fn read_owner_config(dir: &Path) -> Result<SpaceConfig, RoutineServiceError> {
+    space_config::read(dir).map_err(|error| match error {
+        SpaceConfigError::Missing(path) => RoutineServiceError::FileNotFound(path),
+        error => RoutineServiceError::SpaceConfig(error),
+    })
+}
+
+/// The Routine owners of a project a scheduler checks, and the child Spaces
+/// it leaves out until their owner can be determined again.
+#[derive(Debug)]
+pub struct ProjectRoutineOwners {
+    pub owners: Vec<ResolvedRoutineOwner>,
+    pub excluded_spaces: Vec<ExcludedRoutineSpace>,
+}
+
+/// A child Space whose owner cannot be determined. Neither its Routines nor
+/// those of its Collections are checked, so none of them runs or claims a
+/// slot or an event on this device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcludedRoutineSpace {
+    pub space_id: String,
+    pub reason: ExcludedSpaceReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExcludedSpaceReason {
+    /// Its `.svode/config.json` cannot be read (DF-235 R3).
+    Config(Unreadable),
+    /// Its folder or its config is not there.
+    Unavailable,
+}
+
+impl ExcludedSpaceReason {
+    fn of(error: &RoutineServiceError) -> Self {
+        match error {
+            RoutineServiceError::SpaceConfig(SpaceConfigError::Unreadable(reason)) => {
+                Self::Config(reason.clone())
+            }
+            _ => Self::Unavailable,
+        }
+    }
+}
+
+impl std::fmt::Display for ExcludedSpaceReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Config(reason) => write!(f, ".svode/config.json cannot be read: {reason}"),
+            Self::Unavailable => f.write_str("its folder or config is unavailable"),
+        }
+    }
+}
+
 /// Every Routine owner of a project, whether a window has it open or not:
 /// the root and each ready child Space from the portable config, and the
 /// Collection owners the operational store of each already knows. It reads
-/// no index and starts no index runtime.
+/// no index and starts no index runtime. A project whose config cannot be
+/// read has no owners; a child Space whose owner cannot be determined is
+/// left out with its Collections and does not hide the others.
 pub async fn discover_project_owners(
     routine_stores: &RoutineStoreState,
     project_path: &Path,
-) -> Result<Vec<ResolvedRoutineOwner>, RoutineServiceError> {
+) -> Result<ProjectRoutineOwners, RoutineServiceError> {
     let project_path = project_path.to_path_buf();
+    let root = resolve_owner(
+        &project_path,
+        &project_path,
+        "root",
+        ".",
+        RoutineOwnerInputKind::RegisteredSpace,
+    )?;
     let spaces = ProjectSpacesCache::from_project(&project_path)?;
     let mut children = spaces
         .status_by_id
@@ -313,49 +383,79 @@ pub async fn discover_project_owners(
         })
         .collect::<Vec<_>>();
     children.sort();
-    let scopes = std::iter::once((
+    let mut discovered = ProjectRoutineOwners {
+        owners: Vec::new(),
+        excluded_spaces: Vec::new(),
+    };
+    push_space_owners(
+        routine_stores,
+        &mut discovered.owners,
         IndexKey::Root(project_path.clone()),
-        "root".to_string(),
-        project_path.clone(),
-    ))
-    .chain(children.into_iter().map(|(space_id, space_path)| {
-        (
-            IndexKey::Space {
-                project: project_path.clone(),
-                space_id: space_id.clone(),
-            },
-            space_id,
-            space_path,
-        )
-    }));
-    let mut owners = Vec::new();
-    for (key, space_id, space_path) in scopes {
-        let space_id = space_id.as_str();
-        owners.push(resolve_owner(
+        &project_path,
+        &project_path,
+        root,
+    )
+    .await?;
+    for (space_id, space_path) in children {
+        match resolve_owner(
             &project_path,
             &space_path,
-            space_id,
+            &space_id,
             ".",
             RoutineOwnerInputKind::RegisteredSpace,
-        )?);
-        // A Collection removed while no window watched the project stays in
-        // the store until the next full index; it does not hide the others.
-        for owner_path in routine_stores.owner_paths(&key, &space_path).await? {
-            match resolve_owner(
-                &project_path,
-                &space_path,
+        ) {
+            Ok(owner) => {
+                let key = IndexKey::Space {
+                    project: project_path.clone(),
+                    space_id,
+                };
+                push_space_owners(
+                    routine_stores,
+                    &mut discovered.owners,
+                    key,
+                    &project_path,
+                    &space_path,
+                    owner,
+                )
+                .await?;
+            }
+            Err(error) => discovered.excluded_spaces.push(ExcludedRoutineSpace {
+                reason: ExcludedSpaceReason::of(&error),
                 space_id,
-                &owner_path,
-                RoutineOwnerInputKind::CollectionDirectory,
-            ) {
-                Ok(owner) => owners.push(owner),
-                Err(error) => {
-                    tracing::warn!(owner = %owner_path, "routine collection owner is unavailable: {error}")
-                }
+            }),
+        }
+    }
+    Ok(discovered)
+}
+
+/// A Space owner followed by the Collection owners its store knows.
+async fn push_space_owners(
+    routine_stores: &RoutineStoreState,
+    owners: &mut Vec<ResolvedRoutineOwner>,
+    key: IndexKey,
+    project_path: &Path,
+    space_path: &Path,
+    space: ResolvedRoutineOwner,
+) -> Result<(), RoutineServiceError> {
+    let space_id = space.descriptor.space_id.clone();
+    owners.push(space);
+    // A Collection removed while no window watched the project stays in
+    // the store until the next full index; it does not hide the others.
+    for owner_path in routine_stores.owner_paths(&key, space_path).await? {
+        match resolve_owner(
+            project_path,
+            space_path,
+            &space_id,
+            &owner_path,
+            RoutineOwnerInputKind::CollectionDirectory,
+        ) {
+            Ok(owner) => owners.push(owner),
+            Err(error) => {
+                tracing::warn!(owner = %owner_path, "routine collection owner is unavailable: {error}")
             }
         }
     }
-    Ok(owners)
+    Ok(())
 }
 
 /// The Routines that launched sessions, resolved across every Space of an
@@ -2537,18 +2637,11 @@ mod tests {
                 .unwrap();
         }
 
-        let owners = discover_project_owners(&routine_stores, project)
+        let discovered = discover_project_owners(&routine_stores, project)
             .await
-            .unwrap()
-            .into_iter()
-            .map(|owner| {
-                (
-                    owner.descriptor.kind,
-                    owner.descriptor.space_id,
-                    owner.descriptor.owner_path,
-                )
-            })
-            .collect::<Vec<_>>();
+            .unwrap();
+        assert!(discovered.excluded_spaces.is_empty());
+        let owners = owner_keys(&discovered.owners);
 
         assert_eq!(
             owners,
@@ -2558,6 +2651,242 @@ mod tests {
                 (RoutineOwnerKind::Space, "design".into(), ".".into()),
             ]
         );
+    }
+
+    fn owner_keys(owners: &[ResolvedRoutineOwner]) -> Vec<(RoutineOwnerKind, String, String)> {
+        owners
+            .iter()
+            .map(|owner| {
+                (
+                    owner.descriptor.kind,
+                    owner.descriptor.space_id.clone(),
+                    owner.descriptor.owner_path.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// DF-279 R1, R2: a child Space whose config cannot be read is left out
+    /// with its Collections, named with its DF-235 reason, and the root and
+    /// the other Spaces with their Collections stay; once its config reads
+    /// again it is back.
+    #[tokio::test]
+    async fn an_unreadable_space_config_leaves_out_only_that_space() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = &fs::canonicalize(temp.path()).unwrap();
+        let broken = project.join("broken");
+        let design = project.join("design");
+        write_space_config(
+            project,
+            "Project",
+            &[("broken", "broken"), ("design", "design")],
+        );
+        write_space_config(&broken, "Broken", &[]);
+        write_space_config(&design, "Design", &[]);
+        let routine_stores = RoutineStoreState::new();
+        for (key, dir) in [
+            (IndexKey::Root(project.clone()), project.clone()),
+            (
+                IndexKey::Space {
+                    project: project.clone(),
+                    space_id: "broken".into(),
+                },
+                broken.clone(),
+            ),
+            (
+                IndexKey::Space {
+                    project: project.clone(),
+                    space_id: "design".into(),
+                },
+                design.clone(),
+            ),
+        ] {
+            fs::create_dir_all(dir.join("tasks")).unwrap();
+            fs::write(dir.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+            let store = routine_stores.get_or_create(&key, &dir).await.unwrap();
+            sqlx::query("INSERT INTO routine_owner_roots VALUES ('tasks')")
+                .execute(&store)
+                .await
+                .unwrap();
+        }
+        let readable = [
+            (RoutineOwnerKind::Project, "root".into(), ".".into()),
+            (RoutineOwnerKind::Collection, "root".into(), "tasks".into()),
+            (RoutineOwnerKind::Space, "broken".into(), ".".into()),
+            (
+                RoutineOwnerKind::Collection,
+                "broken".into(),
+                "tasks".into(),
+            ),
+            (RoutineOwnerKind::Space, "design".into(), ".".into()),
+            (
+                RoutineOwnerKind::Collection,
+                "design".into(),
+                "tasks".into(),
+            ),
+        ];
+        let discovered = discover_project_owners(&routine_stores, project)
+            .await
+            .unwrap();
+        assert_eq!(owner_keys(&discovered.owners), readable);
+        assert!(discovered.excluded_spaces.is_empty());
+
+        let cases = [
+            (
+                r#"{"description":"","icon":"folder"}"#,
+                Unreadable::Field {
+                    field: "name".into(),
+                },
+            ),
+            (
+                "<<<<<<< ours\n{\"name\":\"A\"}\n=======\n{\"name\":\"B\"}\n>>>>>>> theirs\n",
+                Unreadable::Conflict,
+            ),
+            ("not json", Unreadable::NotJson),
+            (
+                r#"{"name":"Broken","icon":5}"#,
+                Unreadable::Field {
+                    field: "icon".into(),
+                },
+            ),
+        ];
+        for (config, reason) in cases {
+            fs::write(broken.join(".svode/config.json"), config).unwrap();
+
+            let discovered = discover_project_owners(&routine_stores, project)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                owner_keys(&discovered.owners),
+                [
+                    readable[0].clone(),
+                    readable[1].clone(),
+                    readable[4].clone(),
+                    readable[5].clone(),
+                ],
+                "{config}"
+            );
+            assert_eq!(
+                discovered.excluded_spaces,
+                [ExcludedRoutineSpace {
+                    space_id: "broken".into(),
+                    reason: ExcludedSpaceReason::Config(reason),
+                }]
+            );
+        }
+
+        write_space_config(&broken, "Broken", &[]);
+        let discovered = discover_project_owners(&routine_stores, project)
+            .await
+            .unwrap();
+        assert_eq!(owner_keys(&discovered.owners), readable);
+        assert!(discovered.excluded_spaces.is_empty());
+    }
+
+    /// DF-279 R1: a project whose config cannot be read has no owners and
+    /// refuses with its DF-235 reason.
+    #[tokio::test]
+    async fn an_unreadable_project_config_refuses_with_its_reason() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = &fs::canonicalize(temp.path()).unwrap();
+        let design = project.join("design");
+        write_space_config(&design, "Design", &[]);
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::write(
+            project.join(".svode/config.json"),
+            r#"{"name":"Project","spaces":[{"id":"design","path":"design"}],"icon":{"a":1}}"#,
+        )
+        .unwrap();
+        let routine_stores = RoutineStoreState::new();
+
+        let error = discover_project_owners(&routine_stores, project)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RoutineServiceError::SpaceConfig(SpaceConfigError::Unreadable(Unreadable::Field { ref field }))
+                if field == "icon"
+        ));
+    }
+
+    /// DF-279 R4: resolving the owner of a Space or project whose config
+    /// cannot be read refuses with the DF-235 reason, without a path.
+    #[test]
+    fn an_owner_with_an_unreadable_config_refuses_with_its_reason() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = &fs::canonicalize(temp.path()).unwrap();
+        let child = project.join("child");
+        write_space_config(project, "Project", &[("child-id", "child")]);
+        fs::create_dir_all(child.join(".svode")).unwrap();
+        fs::write(child.join(".svode/config.json"), r#"{"description":""}"#).unwrap();
+
+        let error = resolve_owner(
+            project,
+            &child,
+            "child-id",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RoutineServiceError::SpaceConfig(SpaceConfigError::Unreadable(_))
+        ));
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            ".svode/config.json cannot be read: Svode cannot read the field `name`"
+        );
+        assert!(!message.contains(&*project.to_string_lossy()));
+
+        fs::write(child.join(".svode/config.json"), "not json").unwrap();
+        let error = resolve_owner(
+            project,
+            &child,
+            "child-id",
+            "tasks",
+            RoutineOwnerInputKind::CollectionDirectory,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            ".svode/config.json cannot be read: it is not JSON"
+        );
+
+        write_space_config(&child, "Child", &[]);
+        fs::write(
+            project.join(".svode/config.json"),
+            "<<<<<<< ours\n>>>>>>> theirs\n",
+        )
+        .unwrap();
+        let error = resolve_owner(
+            project,
+            project,
+            "root",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            ".svode/config.json cannot be read: it is in a conflict after sync"
+        );
+
+        // A missing config keeps its own refusal.
+        write_space_config(project, "Project", &[("child-id", "child")]);
+        fs::remove_file(child.join(".svode/config.json")).unwrap();
+        assert!(matches!(
+            resolve_owner(
+                project,
+                &child,
+                "child-id",
+                ".",
+                RoutineOwnerInputKind::RegisteredSpace,
+            ),
+            Err(RoutineServiceError::FileNotFound(_))
+        ));
     }
 
     #[tokio::test]

@@ -20,7 +20,7 @@ use svode_core::git::cli::GitCli;
 use svode_core::routines::dispatch::{event_run_key, schedule_candidates, scheduled_run_key};
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
-    RoutineLiveEvidence,
+    RoutineLiveEvidence, RoutineOwnerKind,
 };
 use svode_core::routines::operational::{
     QueuedRoutineEvent, activate_event, claim_local_run, finish_event, latest_remote_claim,
@@ -28,8 +28,12 @@ use svode_core::routines::operational::{
     write_schedule_state,
 };
 use svode_core::routines::schedule;
+use svode_core::routines::service::{
+    ExcludedRoutineSpace, ExcludedSpaceReason, RoutineServiceError,
+};
 use svode_core::routines::store_state::RoutineStoreState as RoutineStores;
 use svode_core::routines::{authority, service};
+use svode_core::space_config::{SpaceConfigError, Unreadable};
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -147,18 +151,96 @@ impl RoutineSchedulerState {
 fn spawn_project(app: AppHandle, project_path: PathBuf) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let host = AppSchedulerHost { app };
+        let mut exclusions = ExclusionLog::default();
         let mut interval = tokio::time::interval(SCHEDULER_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if let Err(error) = tick_project(&host, &project_path).await {
-                tracing::warn!(
-                    project = %project_path.display(),
-                    "routine scheduler tick failed: {error}"
-                );
-            }
+            check_project(&host, &project_path, &mut exclusions).await;
         }
     })
+}
+
+/// One check of a project by its scheduler; an exclusion is logged when it
+/// changes, not on every check (DF-279 R3).
+async fn check_project<H: SchedulerHost>(
+    host: &H,
+    project_path: &Path,
+    exclusions: &mut ExclusionLog,
+) {
+    match tick_project(host, project_path).await {
+        Ok(check) => exclusions.observe(project_path, check),
+        Err(error) => tracing::warn!(
+            project = %project_path.display(),
+            "routine scheduler tick failed: {error}"
+        ),
+    }
+}
+
+/// What one check of a project covered.
+enum ProjectCheck {
+    /// The project folder is unavailable: nothing was checked.
+    Unavailable,
+    /// The project config cannot be read: nothing was checked.
+    UnreadableConfig(Unreadable),
+    /// The owners were checked: the root, the Spaces in `spaces` and their
+    /// Collections; the Spaces in `excluded` were left out.
+    Checked {
+        spaces: Vec<String>,
+        excluded: Vec<ExcludedRoutineSpace>,
+    },
+}
+
+/// The last known exclusion state of a project and its Spaces, kept in
+/// memory by the scheduler of the project.
+#[derive(Default)]
+struct ExclusionLog {
+    project: Option<Unreadable>,
+    spaces: HashMap<String, ExcludedSpaceReason>,
+}
+
+impl ExclusionLog {
+    fn observe(&mut self, project_path: &Path, check: ProjectCheck) {
+        let project = project_path.display();
+        match check {
+            ProjectCheck::Unavailable => {}
+            ProjectCheck::UnreadableConfig(reason) => {
+                if self.project.as_ref() != Some(&reason) {
+                    tracing::warn!(
+                        project = %project,
+                        "routine scheduler skips the project: .svode/config.json cannot be read: {reason}"
+                    );
+                    self.project = Some(reason);
+                }
+            }
+            ProjectCheck::Checked { spaces, excluded } => {
+                if self.project.take().is_some() {
+                    tracing::info!(project = %project, "routine scheduler checks the project again");
+                }
+                let mut next = HashMap::new();
+                for ExcludedRoutineSpace { space_id, reason } in excluded {
+                    if self.spaces.get(&space_id) != Some(&reason) {
+                        tracing::warn!(
+                            project = %project,
+                            space = %space_id,
+                            "routine scheduler leaves out the Space: {reason}"
+                        );
+                    }
+                    next.insert(space_id, reason);
+                }
+                for space_id in self.spaces.keys() {
+                    if !next.contains_key(space_id) && spaces.contains(space_id) {
+                        tracing::info!(
+                            project = %project,
+                            space = %space_id,
+                            "routine scheduler checks the Space again"
+                        );
+                    }
+                }
+                self.spaces = next;
+            }
+        }
+    }
 }
 
 /// Closes the operational stores of a project, opened under its registered
@@ -362,17 +444,33 @@ impl SchedulerHost for AppSchedulerHost {
 
 /// One check of a project, with or without a window: its owners come from
 /// its config and operational stores, never from an index runtime. A
-/// project whose folder is unavailable is skipped until it is back.
-async fn tick_project<H: SchedulerHost>(host: &H, project_path: &Path) -> Result<(), AppError> {
+/// project whose folder is unavailable or whose config cannot be read is
+/// skipped until it is back; a Space whose owner cannot be determined is
+/// left out with its Collections, and the others are checked.
+async fn tick_project<H: SchedulerHost>(
+    host: &H,
+    project_path: &Path,
+) -> Result<ProjectCheck, AppError> {
     if !project_path.join(".svode").join("config.json").is_file() {
         tracing::debug!(
             project = %project_path.display(),
             "routine scheduler skips a project whose folder is unavailable"
         );
-        return Ok(());
+        return Ok(ProjectCheck::Unavailable);
     }
-    let owners = service::discover_project_owners(host.routine_stores(), project_path).await?;
-    for owner in owners {
+    let discovered =
+        match service::discover_project_owners(host.routine_stores(), project_path).await {
+            Ok(discovered) => discovered,
+            Err(RoutineServiceError::SpaceConfig(SpaceConfigError::Unreadable(reason))) => {
+                return Ok(ProjectCheck::UnreadableConfig(reason));
+            }
+            Err(error) => return Err(error.into()),
+        };
+    let mut spaces = Vec::new();
+    for owner in discovered.owners {
+        if owner.descriptor.kind == RoutineOwnerKind::Space {
+            spaces.push(owner.descriptor.space_id.clone());
+        }
         if let Err(error) = tick_owner(host, &owner).await {
             tracing::warn!(
                 owner = %owner.descriptor.owner_path,
@@ -380,7 +478,10 @@ async fn tick_project<H: SchedulerHost>(host: &H, project_path: &Path) -> Result
             );
         }
     }
-    Ok(())
+    Ok(ProjectCheck::Checked {
+        spaces,
+        excluded: discovered.excluded_spaces,
+    })
 }
 
 async fn tick_owner<H: SchedulerHost>(

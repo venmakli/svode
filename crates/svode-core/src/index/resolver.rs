@@ -54,18 +54,13 @@ impl ProjectSpacesCache {
 }
 
 /// Display name of a child Space from its own config. Falls back to
-/// `folder_name`: the name is presentation, not a critical path.
+/// `folder_name` without a log entry: the name is presentation, not a
+/// critical path, and an unreadable config is shown by the Space itself
+/// (DF-235) and by the Routine scheduler when its state changes.
 pub fn child_space_name(space_dir: &Path, folder_name: &str) -> String {
-    match read_project_config(space_dir) {
-        Ok(config) => config.name,
-        Err(error) => {
-            tracing::warn!(
-                "read child space name failed for {}: {error}",
-                space_dir.display()
-            );
-            folder_name.to_string()
-        }
-    }
+    read_project_config(space_dir)
+        .map(|config| config.name)
+        .unwrap_or_else(|_| folder_name.to_string())
 }
 
 pub fn resolve_index_target(
@@ -162,6 +157,12 @@ mod tests {
     #[test]
     fn child_name_falls_back_to_folder() {
         let temp = tempfile::tempdir().unwrap();
+        assert_eq!(child_space_name(temp.path(), "folder"), "folder");
+        // DF-279: a config without `name` falls back to the folder as well.
+        write(
+            &temp.path().join(".svode/config.json"),
+            r#"{"description":""}"#,
+        );
         assert_eq!(child_space_name(temp.path(), "folder"), "folder");
     }
 }

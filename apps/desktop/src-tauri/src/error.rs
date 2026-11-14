@@ -229,6 +229,7 @@ impl From<svode_core::routines::service::RoutineServiceError> for AppError {
             RoutineServiceError::Git(error) => error.into(),
             RoutineServiceError::Index(error) => error.into(),
             RoutineServiceError::Store(error) => error.into(),
+            RoutineServiceError::SpaceConfig(error) => error.into(),
         }
     }
 }

@@ -25,12 +25,18 @@ const ACTOR: &str = "01arz3ndektsv4rrffq69g5fav";
 struct RecordingHost {
     stores: RoutineStores,
     scheduled: Mutex<Vec<String>>,
+    scheduled_spaces: Mutex<Vec<String>>,
     events: Mutex<Vec<QueuedRoutineEvent>>,
 }
 
 impl RecordingHost {
     fn scheduled(&self) -> Vec<String> {
         self.scheduled.lock().unwrap().clone()
+    }
+
+    /// The Space id of the owner of each scheduled dispatch.
+    fn scheduled_spaces(&self) -> Vec<String> {
+        self.scheduled_spaces.lock().unwrap().clone()
     }
 
     fn events(&self) -> Vec<QueuedRoutineEvent> {
@@ -82,10 +88,14 @@ impl SchedulerHost for RecordingHost {
 
     async fn dispatch_scheduled(
         &self,
-        _: ResolvedRoutineOwner,
+        owner: ResolvedRoutineOwner,
         routine_id: String,
     ) -> Result<RoutineDispatchResult, AppError> {
         self.scheduled.lock().unwrap().push(routine_id);
+        self.scheduled_spaces
+            .lock()
+            .unwrap()
+            .push(owner.descriptor.space_id);
         Ok(RoutineDispatchResult::Completed)
     }
 
@@ -125,10 +135,14 @@ fn project(temp: &tempfile::TempDir, name: &str) -> PathBuf {
 }
 
 fn schedule_routine(root: &Path) {
+    schedule_routine_with_id(root, "01arz3ndektsv4rrffq69g5fb0");
+}
+
+fn schedule_routine_with_id(root: &Path, id: &str) {
     write(
         &root.join(".routines/minute.md"),
         &format!(
-            "---\nid: 01arz3ndektsv4rrffq69g5fb0\nname: Every minute\nenabled: true\ntrigger:\n  type: schedule\n  cron: '* * * * *'\n  time_basis:\n    mode: fixed\n    timezone: UTC\n  missed_runs: run_once\naction:\n  type: run_agent\n  executor: agent:{ACTOR}\n---\nCheck.\n"
+            "---\nid: {id}\nname: Every minute\nenabled: true\ntrigger:\n  type: schedule\n  cron: '* * * * *'\n  time_basis:\n    mode: fixed\n    timezone: UTC\n  missed_runs: run_once\naction:\n  type: run_agent\n  executor: agent:{ACTOR}\n---\nCheck.\n"
         ),
     );
 }
@@ -231,6 +245,218 @@ async fn an_unavailable_project_does_not_hold_up_the_others() {
 
     assert!(!missing.exists(), "the check creates nothing in its place");
     assert_eq!(host.scheduled().len(), 1);
+}
+
+const BROKEN_ROUTINE: &str = "01arz3ndektsv4rrffq69g5fb2";
+const OTHER_ROUTINE: &str = "01arz3ndektsv4rrffq69g5fb3";
+
+/// A project with two inline child Spaces, `broken` and `other`, and a
+/// minute schedule with automatic authority in the root and in each Space.
+async fn project_with_spaces(
+    temp: &tempfile::TempDir,
+    host: &RecordingHost,
+) -> (PathBuf, Vec<ResolvedRoutineOwner>) {
+    let root = project(temp, "project");
+    write(
+        &root.join(".svode/config.json"),
+        r#"{"name":"project","spaces":[{"id":"broken","path":"broken"},{"id":"other","path":"other"}]}"#,
+    );
+    schedule_routine(&root);
+    let mut owners = vec![owner(&root, ".", RoutineOwnerInputKind::RegisteredSpace)];
+    for (space_id, routine) in [("broken", BROKEN_ROUTINE), ("other", OTHER_ROUTINE)] {
+        let space = root.join(space_id);
+        write(
+            &space.join(".svode/config.json"),
+            &format!(r#"{{"name":"{space_id}"}}"#),
+        );
+        schedule_routine_with_id(&space, routine);
+        owners.push(
+            service::resolve_owner(
+                &root,
+                &space,
+                space_id,
+                ".",
+                RoutineOwnerInputKind::RegisteredSpace,
+            )
+            .unwrap(),
+        );
+    }
+    for owner in &owners {
+        set_authority(host, owner, true).await;
+    }
+    (root, owners)
+}
+
+async fn schedule_rows(host: &RecordingHost, owner: &ResolvedRoutineOwner) -> i64 {
+    let pool = host
+        .stores
+        .get_or_create(&owner.index_key, &owner.space_path)
+        .await
+        .unwrap();
+    sqlx::query_scalar("SELECT COUNT(*) FROM routine_schedule_state")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+}
+
+/// DF-279 R1, R2: a Space whose config has no `name` is left out, while the
+/// due schedules of the root and of another Space run; it takes no slot,
+/// and once `name` is back the next check covers its Routines again.
+#[tokio::test]
+async fn a_space_with_an_unreadable_config_does_not_hold_up_the_project() {
+    let temp = tempfile::tempdir().unwrap();
+    let host = RecordingHost::default();
+    let (root, owners) = project_with_spaces(&temp, &host).await;
+    let broken_config = root.join("broken/.svode/config.json");
+    fs::write(&broken_config, r#"{"description":""}"#).unwrap();
+
+    tick_project(&host, &root).await.unwrap();
+    backdate_schedule(&host, &owners[0]).await;
+    backdate_schedule(&host, &owners[2]).await;
+    let check = tick_project(&host, &root).await.unwrap();
+
+    let mut scheduled = host.scheduled_spaces();
+    scheduled.sort();
+    assert_eq!(scheduled, ["other", "root"]);
+    assert_eq!(
+        schedule_rows(&host, &owners[1]).await,
+        0,
+        "the left-out Space takes no slot"
+    );
+    let ProjectCheck::Checked { spaces, excluded } = check else {
+        panic!("the project is checked");
+    };
+    assert_eq!(spaces, ["other"]);
+    assert_eq!(
+        excluded,
+        [ExcludedRoutineSpace {
+            space_id: "broken".into(),
+            reason: ExcludedSpaceReason::Config(Unreadable::Field {
+                field: "name".into(),
+            }),
+        }]
+    );
+
+    fs::write(&broken_config, r#"{"name":"broken"}"#).unwrap();
+    tick_project(&host, &root).await.unwrap();
+    backdate_schedule(&host, &owners[1]).await;
+    tick_project(&host, &root).await.unwrap();
+
+    let scheduled = host.scheduled_spaces();
+    assert!(
+        scheduled.iter().any(|space| space == "broken"),
+        "{scheduled:?}"
+    );
+}
+
+/// Log lines a test writes through the default subscriber of its thread.
+#[derive(Clone, Default)]
+struct CapturedLog(std::sync::Arc<Mutex<Vec<u8>>>);
+
+impl CapturedLog {
+    fn take(&self) -> Vec<String> {
+        let bytes = std::mem::take(&mut *self.0.lock().unwrap());
+        String::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .filter(|line| line.contains(" svode_"))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+    type Writer = CapturedLog;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// DF-279 R3: an unchanged exclusion is logged once, not on every check,
+/// and its end once; the folder name of the left-out Space is taken without
+/// a warning. The same holds for a project whose config cannot be read.
+#[tokio::test]
+async fn an_exclusion_is_logged_when_it_changes() {
+    let log = CapturedLog::default();
+    let _subscriber = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(log.clone())
+            .with_ansi(false)
+            .finish(),
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let host = RecordingHost::default();
+    let (root, _) = project_with_spaces(&temp, &host).await;
+    let mut exclusions = ExclusionLog::default();
+    log.take();
+
+    fs::write(
+        root.join("broken/.svode/config.json"),
+        r#"{"description":""}"#,
+    )
+    .unwrap();
+    for _ in 0..3 {
+        check_project(&host, &root, &mut exclusions).await;
+    }
+    let lines = log.take();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(lines[0].contains("WARN"), "{lines:#?}");
+    assert!(
+        lines[0].contains("leaves out the Space")
+            && lines[0].contains("broken")
+            && lines[0].contains("Svode cannot read the field `name`"),
+        "{lines:#?}"
+    );
+
+    fs::write(
+        root.join("broken/.svode/config.json"),
+        r#"{"name":"broken"}"#,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        check_project(&host, &root, &mut exclusions).await;
+    }
+    let lines = log.take();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(
+        lines[0].contains("checks the Space again") && lines[0].contains("broken"),
+        "{lines:#?}"
+    );
+
+    let config = root.join(".svode/config.json");
+    let readable = fs::read_to_string(&config).unwrap();
+    fs::write(&config, "<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n").unwrap();
+    for _ in 0..3 {
+        check_project(&host, &root, &mut exclusions).await;
+    }
+    let lines = log.take();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(
+        lines[0].contains("WARN")
+            && lines[0].contains("skips the project")
+            && lines[0].contains("it is in a conflict after sync"),
+        "{lines:#?}"
+    );
+
+    fs::write(&config, readable).unwrap();
+    for _ in 0..2 {
+        check_project(&host, &root, &mut exclusions).await;
+    }
+    let lines = log.take();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(lines[0].contains("checks the project again"), "{lines:#?}");
 }
 
 /// An event a Svode MCP write records in a project no window has open is

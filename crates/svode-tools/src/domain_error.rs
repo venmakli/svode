@@ -323,6 +323,7 @@ impl From<RoutineServiceError> for ToolError {
             RoutineServiceError::Git(error) => error.into(),
             RoutineServiceError::Index(error) => error.into(),
             RoutineServiceError::Store(error) => error.into(),
+            RoutineServiceError::SpaceConfig(error) => error.into(),
         }
     }
 }
@@ -545,6 +546,23 @@ mod tests {
             (
                 RoutineServiceError::Git(GitError::GitNotFound).into(),
                 "GIT_NOT_FOUND",
+            ),
+            (
+                RoutineServiceError::SpaceConfig(SpaceConfigError::Unreadable(
+                    svode_core::space_config::Unreadable::Field {
+                        field: "name".into(),
+                    },
+                ))
+                .into(),
+                "INVALID_PROJECT_CONFIG",
+            ),
+            (
+                RoutineServiceError::FileNotFound("/p/child/.svode/config.json".into()).into(),
+                "FILE_NOT_FOUND",
+            ),
+            (
+                RoutineServiceError::Serde(serde_json::from_str::<u8>("x").unwrap_err()).into(),
+                SVODE_ERROR,
             ),
             (
                 GitError::ConflictMarkers {

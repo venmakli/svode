@@ -1240,4 +1240,41 @@ mod tests {
         assert_eq!(payload["routines"], json!([]));
         assert_eq!(payload["hasMore"], false);
     }
+
+    /// DF-279 R4: the Routine tools of a Space whose config cannot be read
+    /// refuse like the other tools, with the DF-235 reason and no path.
+    #[test]
+    fn an_unreadable_space_config_refuses_as_an_invalid_project_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        std::fs::create_dir_all(project.join("child/.svode")).unwrap();
+        std::fs::write(
+            project.join(".svode/config.json"),
+            r#"{"name":"Project","spaces":[{"id":"child-id","path":"child"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("child/.svode/config.json"),
+            r#"{"description":""}"#,
+        )
+        .unwrap();
+        let project_path = project.to_string_lossy().to_string();
+        let target = RequestTarget {
+            project_path: project_path.clone(),
+            default_space_id: None,
+            default_space_path: project_path.clone(),
+            routine_caller: None,
+        };
+
+        for collection in [None, Some("tasks")] {
+            let error = resolve_routine_owner(&target, "child-id", collection).unwrap_err();
+            assert_eq!(error.code, "INVALID_PROJECT_CONFIG");
+            assert_eq!(
+                error.message,
+                ".svode/config.json cannot be read: Svode cannot read the field `name`"
+            );
+            assert!(!error.message.contains(&project_path));
+        }
+    }
 }
