@@ -19,9 +19,13 @@ export interface ToolRow {
   permission: InteractionRecord | null;
 }
 
-/** Service records: an error, a mode or settings change, an unknown update. */
+/**
+ * Service records: an error, a warning, a mode or settings change, an
+ * unknown update.
+ */
 export type NoticeItem =
   | ItemOf<"error">
+  | ItemOf<"warning">
   | ItemOf<"generic">
   | ItemOf<"mode_change">
   | ItemOf<"config_change">
@@ -220,6 +224,7 @@ function projectTurn(items: AgentActivityItemDto[]): TimelineEntry[] {
         }
         break;
       case "error":
+      case "warning":
       case "generic":
       case "mode_change":
       case "config_change":

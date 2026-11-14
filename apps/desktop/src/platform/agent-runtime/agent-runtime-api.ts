@@ -165,6 +165,8 @@ export type AgentActivityItemDto =
         durationMs: number | null;
       }
     | { kind: "error" }
+    /** A warning the agent reported; it does not fail the turn. */
+    | { kind: "warning" }
     | { kind: "interrupted"; durationMs: number | null }
     | { kind: "generic"; label: string }
   ) & {

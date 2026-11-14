@@ -1772,11 +1772,11 @@ impl AgentRuntime {
                         Ok(outcome) => outcome,
                         Err(message) => {
                             session.connection.set_state(ConnectionState::Degraded);
-                            (StopReason::Error, Some(message))
+                            (StopReason::Error, Some(message.into()))
                         }
                     },
                     Err(AgentRuntimeError::ConnectionClosed) => (StopReason::Interrupted, None),
-                    Err(error) => (StopReason::Error, Some(error.to_string())),
+                    Err(error) => (StopReason::Error, Some(error.to_string().into())),
                 }
             };
             // Updates the agent sent before its answer belong to this turn;

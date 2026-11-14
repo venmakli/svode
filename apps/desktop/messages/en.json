@@ -2694,6 +2694,7 @@
   "sessions_chat_not_sent": "Not sent: the agent did not get this message",
   "sessions_chat_notice_config": "Session settings changed",
   "sessions_chat_notice_error": "Error",
+  "sessions_chat_notice_warning": "Warning",
   "sessions_chat_notice_generic": "Agent event: {label}",
   "sessions_chat_notice_mode": "Mode: {mode}",
   "sessions_chat_outcome_cancelled": "Stopped",

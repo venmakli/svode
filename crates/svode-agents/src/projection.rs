@@ -13,7 +13,10 @@ use tokio::sync::broadcast;
 
 use crate::acp::mcp;
 use crate::acp::media::{self, MediaPart};
-use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, ToolUpdate};
+use crate::acp::normalize::{
+    self, DeclaredSettings, FailureSeverity, MessageRole, Normalized, SessionFailure, ToolUpdate,
+    TurnError,
+};
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
     InteractionState, ItemKind, ItemStatus, MediaKind, MediaOutcome, MediaSegment, MessageSegment,
@@ -143,6 +146,8 @@ pub(crate) struct Projection {
     /// (Stage 10 `02` C3). Opening, replay and changes outside a turn leave
     /// it as it is.
     turn_at: Option<SystemTime>,
+    /// The revision each shown typed failure has, by item id (DF-226 R2a).
+    failure_revisions: HashMap<String, u64>,
 }
 
 impl Projection {
@@ -198,6 +203,7 @@ impl Projection {
             unstable_models: false,
             turn_started: None,
             turn_at: None,
+            failure_revisions: HashMap::new(),
         }
     }
 
@@ -273,7 +279,12 @@ impl Projection {
     }
 
     /// Ends the active turn once; later calls for the same turn are ignored.
-    pub(crate) fn finish_turn(&mut self, turn_id: &str, reason: StopReason, error: Option<String>) {
+    pub(crate) fn finish_turn(
+        &mut self,
+        turn_id: &str,
+        reason: StopReason,
+        error: Option<TurnError>,
+    ) {
         if !self.turn_active() || self.snapshot.turn.turn_id.as_deref() != Some(turn_id) {
             return;
         }
@@ -281,9 +292,18 @@ impl Projection {
             self.resolve_pending(&pending.id, Self::pending_outcome(reason), None);
         }
         self.open_message = None;
-        if let Some(message) = error {
-            let id = self.local_id(turn_id, "error");
-            self.put_text_item(id, ItemKind::Error, message);
+        if let Some(error) = error {
+            // A typed terminal error takes the place of the item its failure
+            // showed, and later updates of that failure no longer change it.
+            let id = match error.failure_id {
+                Some(failure) => {
+                    let id = failure_item_id(&failure);
+                    self.failure_revisions.insert(id.clone(), u64::MAX);
+                    id
+                }
+                None => self.local_id(turn_id, "error"),
+            };
+            self.put_text_item(id, ItemKind::Error, error.text);
         }
         let duration_ms = self
             .turn_started
@@ -527,10 +547,12 @@ impl Projection {
                     self.emit(Change::Usage(usage));
                 }
             }
-            Normalized::Title(title) => {
-                if self.snapshot.title.as_deref() != Some(title.as_str()) {
-                    self.emit(Change::Title(title));
+            Normalized::Title(title) => self.set_title(title),
+            Normalized::Failure { failure, title } => {
+                if let Some(title) = title {
+                    self.set_title(title);
                 }
+                self.put_failure(failure);
             }
             Normalized::None => {}
             Normalized::Generic(label) => {
@@ -545,6 +567,31 @@ impl Projection {
                 });
             }
         }
+    }
+
+    fn set_title(&mut self, title: String) {
+        if self.snapshot.title.as_deref() != Some(title.as_str()) {
+            self.emit(Change::Title(title));
+        }
+    }
+
+    /// Shows a typed warning or error in place of the item of its failure,
+    /// unless that item already shows the same or a later revision.
+    fn put_failure(&mut self, failure: SessionFailure) {
+        let id = failure_item_id(&failure.id);
+        if self
+            .failure_revisions
+            .get(&id)
+            .is_some_and(|shown| *shown >= failure.revision)
+        {
+            return;
+        }
+        self.failure_revisions.insert(id.clone(), failure.revision);
+        let kind = match failure.severity {
+            FailureSeverity::Warning => ItemKind::Warning,
+            FailureSeverity::Error => ItemKind::Error,
+        };
+        self.put_text_item(id, kind, failure.text);
     }
 
     pub(crate) fn detail(&self, item_id: &str) -> DetailOutcome {
@@ -1095,6 +1142,7 @@ impl Projection {
             self.user_texts.remove(id);
             self.tool_media.remove(id);
             self.tool_paths.remove(id);
+            self.failure_revisions.remove(id);
         }
         if self
             .open_message
@@ -1184,6 +1232,12 @@ impl Projection {
         self.next_local_id += 1;
         format!("{scope}:{kind}:{}", self.next_local_id)
     }
+}
+
+/// The item of a typed failure: its updates and the terminal error of the
+/// same failure share it.
+fn failure_item_id(failure: &str) -> String {
+    format!("failure:{failure}")
 }
 
 fn status_of(

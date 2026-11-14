@@ -352,6 +352,46 @@ test("repeats of a service record in a row collapse into the last with a count",
   ).toEqual(["user:t2", "e3x3", "e4x1"]);
 });
 
+test("a warning is a service record that collapses its repeats, folds and opens only by hand", () => {
+  const [turn] = projectTimeline({
+    turn: running,
+    items: [
+      item("user:t2", "t2", { kind: "user_message" }, "Go"),
+      item("w1", "t2", { kind: "warning" }, "Reconnecting... 1/5"),
+      item("w2", "t2", { kind: "warning" }, "Reconnecting... 1/5"),
+      item("e1", "t2", { kind: "error" }, "Reconnecting... 1/5"),
+    ],
+  });
+  expect(
+    turn.entries.map((entry) =>
+      entry.kind === "notice"
+        ? `${entry.item.kind}:${entry.id}x${entry.count}`
+        : entry.id,
+    ),
+  ).toEqual(["user:t2", "warning:w2x2", "error:e1x1"]);
+  const warning = turn.entries.find((entry) => entry.id === "w2")!;
+  expect(isExpanded({}, turn, warning)).toBe(false);
+
+  const [ended] = projectTimeline({
+    turn: idle,
+    items: [
+      item("user:t1", "t1", { kind: "user_message" }, "Go"),
+      item("w1", "t1", { kind: "warning" }, "Model metadata not found"),
+      item("m1", "t1", { kind: "agent_message" }, "Done"),
+      item("outcome:t1", "t1", {
+        kind: "turn_outcome",
+        reason: "end_turn",
+        durationMs: 10,
+      }),
+    ],
+  });
+  expect(shownEntries({}, ended).map((entry) => entry.id)).toEqual([
+    "user:t1",
+    "m1",
+  ]);
+  expect(ended.summary?.count).toBe(1);
+});
+
 test("a permission outcome joins its tool row and a question stays its own record", () => {
   const [turn] = projectTimeline({
     turn: running,

@@ -15,6 +15,7 @@ import {
   Search,
   SquareTerminal,
   Trash2,
+  TriangleAlert,
   Wrench,
 } from "lucide-react";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -655,6 +656,8 @@ function noticeTitle(item: NoticeItem): string {
   switch (item.kind) {
     case "error":
       return m.sessions_chat_notice_error();
+    case "warning":
+      return m.sessions_chat_notice_warning();
     case "generic":
       return m.sessions_chat_notice_generic({ label: item.label });
     case "mode_change":
@@ -684,13 +687,22 @@ function Notice({
         {m.sessions_chat_repeats({ count })}
       </span>
     ) : null;
-  if (item.kind === "error" && item.summary) {
+  if ((item.kind === "error" || item.kind === "warning") && item.summary) {
+    const error = item.kind === "error";
     return (
       <Disclosure
         open={open}
         onOpenChange={onOpenChange}
-        icon={<AlertCircle className="text-destructive" />}
-        title={<span className="text-destructive">{title}</span>}
+        icon={
+          error ? (
+            <AlertCircle className="text-destructive" />
+          ) : (
+            <TriangleAlert />
+          )
+        }
+        title={
+          error ? <span className="text-destructive">{title}</span> : title
+        }
         meta={repeats}
       >
         <pre className="max-h-60 overflow-auto rounded-md bg-muted/60 px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words">
@@ -702,7 +714,13 @@ function Notice({
   return (
     <Marker>
       <MarkerIcon>
-        {item.kind === "error" ? <AlertCircle /> : <Wrench />}
+        {item.kind === "error" ? (
+          <AlertCircle />
+        ) : item.kind === "warning" ? (
+          <TriangleAlert />
+        ) : (
+          <Wrench />
+        )}
       </MarkerIcon>
       <MarkerContent>{title}</MarkerContent>
       {repeats}

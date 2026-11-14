@@ -154,6 +154,9 @@ pub enum ItemKind {
         duration_ms: Option<u64>,
     },
     Error,
+    /// A warning the agent reported for the session; it does not make the
+    /// turn fail. The summary and detail are its text.
+    Warning,
     Interrupted {
         duration_ms: Option<u64>,
     },

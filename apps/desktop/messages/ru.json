@@ -2694,6 +2694,7 @@
   "sessions_chat_not_sent": "Не отправлено: агент не получил это сообщение",
   "sessions_chat_notice_config": "Настройки сессии изменены",
   "sessions_chat_notice_error": "Ошибка",
+  "sessions_chat_notice_warning": "Предупреждение",
   "sessions_chat_notice_generic": "Событие агента: {label}",
   "sessions_chat_notice_mode": "Режим: {mode}",
   "sessions_chat_outcome_cancelled": "Остановлено",

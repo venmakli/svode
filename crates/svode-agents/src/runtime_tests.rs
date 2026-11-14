@@ -5924,6 +5924,18 @@ async fn a_codex_turn_the_provider_refuses_ends_error_with_its_one_error_item() 
             .any(|item| matches!(item.kind, ItemKind::AgentMessage { .. })),
         "the warning before the error is no agent text: {items:?}"
     );
+    let warnings: Vec<_> = items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Warning)
+        .collect();
+    assert_eq!(warnings.len(), 1, "{items:?}");
+    assert!(
+        warnings[0]
+            .summary
+            .starts_with("Model metadata for `mock-model` not found"),
+        "{}",
+        warnings[0].summary
+    );
     assert!(items.iter().any(|item| matches!(
         item.kind,
         ItemKind::TurnOutcome {
@@ -5992,6 +6004,12 @@ async fn a_typed_warning_or_retry_leaves_the_turn_to_its_stop_reason() {
     assert!(
         items
             .iter()
+            .any(|item| item.kind == ItemKind::Warning && item.summary == "Reconnecting... 1/5"),
+        "a warning shows without failing the turn: {items:?}"
+    );
+    assert!(
+        items
+            .iter()
             .any(|item| matches!(item.kind, ItemKind::AgentMessage { .. }) && item.summary == "hi")
     );
 
@@ -6051,4 +6069,193 @@ async fn the_title_of_a_typed_turn_error_is_bounded_like_agent_text() {
     assert!(error.summary.len() <= 4 * 1024);
     assert!(title.starts_with(&error.summary));
     assert!(error.has_detail);
+}
+
+/// Opens a Codex session and starts a turn; returns the runtime, the
+/// session, the agent, the subscription, the turn and its prompt request.
+async fn codex_turn() -> (
+    AgentRuntime,
+    SessionKey,
+    ScriptedAgent,
+    SessionSubscription,
+    String,
+    Value,
+) {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &codex());
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session()
+    );
+    let subscription = runtime.subscribe(&key).unwrap();
+    let turn = runtime.prompt(&key, &[PromptPart::text("say hi")]).unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    (runtime, key, agent, subscription, turn, prompt)
+}
+
+fn air(failure: Value) -> Value {
+    json!({ "jetbrains": { "air": { "version": 1, "sessionFailure": failure } } })
+}
+
+fn failure_update(failure: Value) -> Value {
+    json!({ "sessionUpdate": "session_info_update", "_meta": air(failure) })
+}
+
+fn failure_items(snapshot: &SessionSnapshot) -> Vec<(ItemKind, String)> {
+    snapshot
+        .items
+        .iter()
+        .filter(|item| matches!(item.kind, ItemKind::Warning | ItemKind::Error))
+        .map(|item| (item.kind.clone(), item.summary.clone()))
+        .collect()
+}
+
+/// DF-226 R2a: retries of one failure update one warning in place, and the
+/// terminal error of that failure takes its place.
+#[tokio::test]
+async fn retries_of_a_failure_update_one_warning_its_terminal_error_replaces() {
+    let (runtime, key, mut agent, mut subscription, turn, prompt) = codex_turn().await;
+    let retry = |revision: u64, attempt: u64| {
+        failure_update(json!({
+            "id": "t1:error", "revision": revision, "category": "service",
+            "severity": "warning", "title": format!("Reconnecting... {attempt}/5"), "actions": []
+        }))
+    };
+    agent.update("s1", retry(1, 1)).await;
+    agent.update("s1", retry(2, 2)).await;
+    agent.update("s1", retry(1, 1)).await;
+    agent.update("s1", retry(2, 3)).await;
+    agent
+        .update(
+            "s1",
+            failure_update(json!({
+                "id": "s1:notice:1", "revision": 1, "severity": "warning", "title": "after"
+            })),
+        )
+        .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot.items.iter().any(|item| item.summary == "after")
+    })
+    .await;
+    assert_eq!(
+        failure_items(&subscription.snapshot),
+        vec![
+            (ItemKind::Warning, "Reconnecting... 2/5".into()),
+            (ItemKind::Warning, "after".into()),
+        ],
+        "a stale or equal revision leaves the warning as it is"
+    );
+    let warning = subscription
+        .snapshot
+        .items
+        .iter()
+        .find(|item| item.kind == ItemKind::Warning)
+        .unwrap()
+        .clone();
+    assert_eq!(warning.turn_id.as_deref(), Some(turn.as_str()));
+    assert_eq!(
+        subscription.snapshot.turn.phase,
+        TurnPhase::Running,
+        "a warning does not end the turn"
+    );
+
+    agent
+        .reply(
+            &prompt,
+            json!({ "stopReason": "end_turn", "_meta": air(json!({
+                "id": "t1:error", "revision": 3, "category": "service",
+                "severity": "error", "title": "stream disconnected", "actions": ["retry"]
+            })) }),
+        )
+        .await;
+    follow(&mut subscription, idle).await;
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(
+        failure_items(&snapshot),
+        vec![
+            (ItemKind::Error, "stream disconnected".into()),
+            (ItemKind::Warning, "after".into()),
+        ],
+        "one error item of the turn instead of the warning"
+    );
+    let position = |id: &str| snapshot.items.iter().position(|item| item.id == id);
+    assert_eq!(
+        position(&warning.id),
+        snapshot
+            .items
+            .iter()
+            .position(|item| item.kind == ItemKind::Error),
+        "the error takes the place of the warning"
+    );
+    assert_eq!(
+        snapshot.turn.status,
+        SessionStatus::runtime(SessionState::Idle {
+            stop_reason: Some(StopReason::Error)
+        })
+    );
+}
+
+/// DF-226 R2a: a typed error of a session info update is an error item
+/// that leaves the turn to its prompt answer; details follow the title;
+/// a failure without an id, a title or a known severity shows nothing; the
+/// title of the update still renames the session.
+#[tokio::test]
+async fn a_typed_error_of_an_update_leaves_the_turn_and_odd_failures_show_nothing() {
+    let (runtime, key, mut agent, mut subscription, _turn, prompt) = codex_turn().await;
+    agent
+        .update(
+            "s1",
+            failure_update(json!({
+                "id": "other:error", "revision": 1, "severity": "error", "title": "earlier turn failed"
+            })),
+        )
+        .await;
+    agent
+        .update(
+            "s1",
+            failure_update(json!({
+                "id": "s1:notice:1", "revision": 1, "severity": "warning",
+                "title": "Config warning", "details": "line 3: unknown key"
+            })),
+        )
+        .await;
+    for dropped in [
+        json!({ "id": "s1:notice:2", "revision": 1, "severity": "info", "title": "note" }),
+        json!({ "id": "s1:notice:3", "revision": 1, "severity": "warning", "title": "" }),
+        json!({ "revision": 1, "severity": "warning", "title": "no id" }),
+    ] {
+        agent.update("s1", failure_update(dropped)).await;
+    }
+    let mut renamed = failure_update(json!({ "severity": "warning", "title": "no id" }));
+    renamed["title"] = json!("Renamed");
+    agent.update("s1", renamed).await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, idle).await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(
+        failure_items(&snapshot),
+        vec![
+            (ItemKind::Error, "earlier turn failed".into()),
+            (
+                ItemKind::Warning,
+                "Config warning\n\nline 3: unknown key".into()
+            ),
+        ]
+    );
+    assert_eq!(
+        snapshot.turn.status,
+        SessionStatus::runtime(SessionState::Idle {
+            stop_reason: Some(StopReason::EndTurn)
+        }),
+        "only the prompt answer ends the turn"
+    );
+    assert_eq!(snapshot.title.as_deref(), Some("Renamed"));
 }

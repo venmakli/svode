@@ -83,6 +83,12 @@ pub(crate) enum Normalized {
     Usage(SessionUsage),
     /// The session title the agent reported.
     Title(String),
+    /// A warning or error the agent typed in a session info update, with
+    /// the session title the same update reported.
+    Failure {
+        failure: SessionFailure,
+        title: Option<String>,
+    },
     /// A known update that carries no activity (a session info update
     /// without a title, a reminder Kimi Code replays as user text).
     None,
@@ -178,12 +184,16 @@ fn normalize(update: wire::SessionUpdate, agent: Option<AgentAdapterKind>) -> No
                     currency: bounded(&cost.currency, CURRENCY_LIMIT),
                 }),
         }),
-        wire::SessionUpdate::SessionInfoUpdate { title: Some(title) }
-            if !title.trim().is_empty() =>
-        {
-            Normalized::Title(bounded(title.trim(), TITLE_LIMIT))
+        wire::SessionUpdate::SessionInfoUpdate { title, meta } => {
+            let title = title
+                .filter(|title| !title.trim().is_empty())
+                .map(|title| bounded(title.trim(), TITLE_LIMIT));
+            match (session_failure(meta.as_ref()), title) {
+                (Some(failure), title) => Normalized::Failure { failure, title },
+                (None, Some(title)) => Normalized::Title(title),
+                (None, None) => Normalized::None,
+            }
         }
-        wire::SessionUpdate::SessionInfoUpdate { .. } => Normalized::None,
     }
 }
 
@@ -569,11 +579,76 @@ fn item_status(status: Option<&str>) -> ItemStatus {
     }
 }
 
-/// How the prompt answer ends the turn, with the error text it shows. A
-/// terminal error the agent typed (JetBrains AIR `sessionFailure` of
-/// severity `error`) ends it `error` with its title, whatever the stop
-/// reason; a warning or retry leaves the stop reason in charge.
-pub(crate) fn prompt_outcome(response: Value) -> Result<(StopReason, Option<String>), String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailureSeverity {
+    Warning,
+    Error,
+}
+
+/// A warning or error the agent typed in the JetBrains AIR extension
+/// (`_meta.jetbrains.air.sessionFailure`, DF-226 R2a). Updates with the same
+/// `id` and a greater `revision` replace it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionFailure {
+    pub id: String,
+    pub revision: u64,
+    pub severity: FailureSeverity,
+    /// The title, and after an empty line the details when there are any.
+    pub text: String,
+}
+
+/// The typed failure of a session info update's `_meta`; none for another
+/// severity, an empty title or a failure without an id.
+fn session_failure(meta: Option<&Value>) -> Option<SessionFailure> {
+    let failure = meta?.pointer("/jetbrains/air/sessionFailure")?;
+    let id = failure.get("id")?.as_str().filter(|id| !id.is_empty())?;
+    let severity = match failure.get("severity")?.as_str()? {
+        "warning" => FailureSeverity::Warning,
+        "error" => FailureSeverity::Error,
+        _ => return None,
+    };
+    let title = failure.get("title")?.as_str()?.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let details = failure
+        .get("details")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|details| !details.is_empty());
+    Some(SessionFailure {
+        id: id.to_string(),
+        revision: failure.get("revision").and_then(Value::as_u64).unwrap_or(0),
+        severity,
+        text: match details {
+            Some(details) => format!("{title}\n\n{details}"),
+            None => title.to_string(),
+        },
+    })
+}
+
+/// The error a turn ends with: its text, and the id of the typed failure
+/// whose item it replaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TurnError {
+    pub failure_id: Option<String>,
+    pub text: String,
+}
+
+impl From<String> for TurnError {
+    fn from(text: String) -> Self {
+        TurnError {
+            failure_id: None,
+            text,
+        }
+    }
+}
+
+/// How the prompt answer ends the turn, with the error it shows. A terminal
+/// error the agent typed (JetBrains AIR `sessionFailure` of severity
+/// `error`) ends it `error` with its title, whatever the stop reason; a
+/// warning leaves the stop reason in charge.
+pub(crate) fn prompt_outcome(response: Value) -> Result<(StopReason, Option<TurnError>), String> {
     let response: wire::PromptResponse =
         serde_json::from_value(response).map_err(|error| error.to_string())?;
     let failure = response
@@ -582,11 +657,17 @@ pub(crate) fn prompt_outcome(response: Value) -> Result<(StopReason, Option<Stri
         .and_then(|meta| meta.pointer("/jetbrains/air/sessionFailure"))
         .filter(|failure| failure["severity"] == "error");
     if let Some(failure) = failure {
-        let title = failure["title"]
+        let error = failure["title"]
             .as_str()
             .filter(|title| !title.trim().is_empty())
-            .map(str::to_string);
-        return Ok((StopReason::Error, title));
+            .map(|title| TurnError {
+                failure_id: failure["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string),
+                text: title.to_string(),
+            });
+        return Ok((StopReason::Error, error));
     }
     Ok((stop_reason(&response.stop_reason)?, None))
 }
@@ -1106,7 +1187,23 @@ mod tests {
             answer(
                 json!({ "severity": "error", "title": "model not supported", "actions": ["retry"] })
             ),
-            Ok((StopReason::Error, Some("model not supported".into())))
+            Ok((
+                StopReason::Error,
+                Some(String::from("model not supported").into())
+            ))
+        );
+        assert_eq!(
+            answer(
+                json!({ "id": "t1:error", "revision": 3, "severity": "error", "title": "boom" })
+            ),
+            Ok((
+                StopReason::Error,
+                Some(TurnError {
+                    failure_id: Some("t1:error".into()),
+                    text: "boom".into()
+                })
+            )),
+            "the id names the failure the error replaces"
         );
         assert_eq!(
             answer(json!({ "severity": "error", "title": " " })),
@@ -1130,6 +1227,70 @@ mod tests {
             Ok((StopReason::Cancelled, None))
         );
         assert!(prompt_outcome(json!({ "stopReason": "later" })).is_err());
+    }
+
+    #[test]
+    fn a_typed_failure_of_a_session_info_update_is_read_with_its_title() {
+        let update = |failure: Value, title: Option<&str>| {
+            let mut update = json!({
+                "sessionUpdate": "session_info_update",
+                "_meta": { "jetbrains": { "air": { "version": 1, "sessionFailure": failure } } }
+            });
+            if let Some(title) = title {
+                update["title"] = json!(title);
+            }
+            session_update(json!({ "sessionId": "s1", "update": update }), None)
+                .unwrap()
+                .1
+        };
+        let failure = |severity, revision, text: &str| SessionFailure {
+            id: "s1:notice:1".into(),
+            revision,
+            severity,
+            text: text.into(),
+        };
+        assert_eq!(
+            update(
+                json!({ "id": "s1:notice:1", "revision": 2, "category": "unknown",
+                    "severity": "warning", "title": " Model metadata not found ", "actions": [] }),
+                None
+            ),
+            Normalized::Failure {
+                failure: failure(FailureSeverity::Warning, 2, "Model metadata not found"),
+                title: None
+            }
+        );
+        assert_eq!(
+            update(
+                json!({ "id": "s1:notice:1", "revision": 1, "severity": "error",
+                    "title": "Config warning", "details": "line 3: unknown key" }),
+                Some("Renamed")
+            ),
+            Normalized::Failure {
+                failure: failure(
+                    FailureSeverity::Error,
+                    1,
+                    "Config warning\n\nline 3: unknown key"
+                ),
+                title: Some("Renamed".into())
+            },
+            "details follow the title and the title of the update stays"
+        );
+        for dropped in [
+            json!({ "id": "s1:notice:1", "severity": "info", "title": "note" }),
+            json!({ "id": "s1:notice:1", "severity": "warning", "title": " " }),
+            json!({ "severity": "warning", "title": "no id" }),
+            json!({ "id": "", "severity": "warning", "title": "empty id" }),
+        ] {
+            assert_eq!(update(dropped.clone(), None), Normalized::None, "{dropped}");
+        }
+        assert_eq!(
+            update(
+                json!({ "severity": "warning", "title": "no id" }),
+                Some("Title")
+            ),
+            Normalized::Title("Title".into())
+        );
     }
 
     #[test]

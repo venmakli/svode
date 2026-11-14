@@ -101,6 +101,18 @@ test("an entry per user's message with its first line, reply start and state", (
   ]);
 });
 
+test("a warning leaves its turn done", () => {
+  const entries = turnRailEntries(
+    timeline([
+      user("u1", "t1", "Hi"),
+      item("w1", "t1", { kind: "warning" }, "Model metadata not found"),
+      reply("m1", "t1", "Hello"),
+      ended("o1", "t1", "end_turn"),
+    ]),
+  );
+  expect(entries.map((entry) => entry.state)).toEqual(["done"]);
+});
+
 test("a replayed last turn that failed by the session status is failed", () => {
   const entries = turnRailEntries(
     projectTimeline(

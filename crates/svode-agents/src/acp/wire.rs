@@ -191,6 +191,8 @@ pub(crate) enum SessionUpdate {
     SessionInfoUpdate {
         #[serde(default)]
         title: Option<String>,
+        #[serde(rename = "_meta", default)]
+        meta: Option<Value>,
     },
     UsageUpdate {
         used: u64,
