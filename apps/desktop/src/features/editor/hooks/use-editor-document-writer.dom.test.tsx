@@ -1395,3 +1395,22 @@ test("an external change of a held Page whose file is gone opens no conflict, an
     await h.cleanup();
   }
 });
+
+test("a restore of a CRLF Page sends its body with the line endings of its source, as a save does", async () => {
+  const h = await harness("pages/crlf.md", "First\r\n\r\nSecond\r\n");
+  try {
+    appendToBlock(h.editor, "Second", " edit");
+    h.disk.held = true;
+    h.holdDraft();
+    let sent: string | null = null;
+    await act(() =>
+      h.writer().restorePendingSource(async (body) => {
+        sent = body;
+        return { writeNonce: "restore", sourceVersion: "restored" };
+      }),
+    );
+    expect(sent as string | null).toBe("First\r\n\r\nSecond edit\r\n");
+  } finally {
+    await h.cleanup();
+  }
+});
