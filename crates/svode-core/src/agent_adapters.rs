@@ -399,13 +399,15 @@ pub struct DeclaredInstructions {
 pub enum SkillPrecedence {
     /// Skills with the same name coexist.
     Coexist,
-    /// A personal skill shadows a project skill of the same name.
-    ClaudePersonalShadowsProject,
     /// The first registered skill wins.
     FirstWins(SkillKey),
     /// A project skill nearer the target wins, in root order within one
     /// directory, before personal roots in their order.
     NearestFirstWins(SkillKey),
+    /// Personal roots in their order win, then project roots nearer the
+    /// target; of the paths to one canonical source the first wins too,
+    /// whatever their keys.
+    PersonalThenNearestFirstWins(SkillKey),
     /// The last registered skill wins.
     LastWins(SkillKey),
 }
@@ -416,8 +418,8 @@ pub enum SkillPrecedence {
 pub enum SkillKey {
     Name,
     NameIgnoringCase,
-    /// The skill directory name, or the file name of a flat skill without
-    /// `.md`.
+    /// The name of the skill's entry: its folder, or a link's own name, or
+    /// the file name of a flat skill without `.md`.
     PathId,
     /// The path of the skill inside its root, under the folder that holds
     /// the root's client folder (`<parent>/.cursor/skills`).
@@ -1074,7 +1076,10 @@ impl AgentAdapterRegistry {
                 &environment.claude_config_dir,
                 InstructionDiscoveryPolicy::ClaudeMemory,
                 SkillDiscoveryCapability {
-                    precedence: SkillPrecedence::ClaudePersonalShadowsProject,
+                    // Claude Code 2.1.325: personal skills, then project ones from the
+                    // target up to the git root; of one root entry name or one file the
+                    // first loaded stays, `name` is only shown.
+                    precedence: SkillPrecedence::PersonalThenNearestFirstWins(SkillKey::PathId),
                     // Claude Code 2.1.312: every field is optional.
                     folder_rule: SkillFrontmatterRule::LENIENT,
                     flat_rule: None,
@@ -2556,7 +2561,7 @@ mod tests {
         );
         assert_eq!(
             snapshots[1].capabilities.skills.precedence,
-            SkillPrecedence::ClaudePersonalShadowsProject
+            SkillPrecedence::PersonalThenNearestFirstWins(SkillKey::PathId)
         );
         assert_eq!(
             serde_json::to_value(snapshots[1].id).unwrap(),

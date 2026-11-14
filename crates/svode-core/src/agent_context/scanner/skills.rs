@@ -107,7 +107,6 @@ struct CanonicalOwnerBoundary {
 /// order.
 struct Registration {
     agent: AgentAdapterKind,
-    scope: SkillScope,
     /// The name the agent knows the skill under.
     name: String,
     canonical: PathBuf,
@@ -219,14 +218,6 @@ pub(super) fn discover(
         ..
     } = scan;
 
-    let personal_shadows_project = adapters
-        .iter()
-        .filter(|adapter| {
-            adapter.capabilities.skills.precedence == SkillPrecedence::ClaudePersonalShadowsProject
-        })
-        .map(|adapter| adapter.id)
-        .collect::<BTreeSet<_>>();
-    apply_personal_shadowing(&mut items, &personal_shadows_project, &registrations);
     apply_registration_precedence(&mut items, adapters, &registrations);
     let mut skills = items.into_values().collect::<Vec<_>>();
     grok::apply_ignore(&mut skills, grok);
@@ -785,7 +776,6 @@ impl Scan<'_> {
         if missing.is_empty() {
             self.registrations.push(Registration {
                 agent: root.adapter.id,
-                scope: root.scope,
                 name,
                 canonical: canonical_entry.clone(),
                 path: alias.path.clone(),
@@ -1356,55 +1346,36 @@ fn valid_skill_name(name: &str) -> bool {
         && !name.contains("--")
 }
 
-/// A personal skill shadows a project skill the agent knows under the same
-/// name.
-fn apply_personal_shadowing(
-    items: &mut BTreeMap<PathBuf, SkillItem>,
-    adapters: &BTreeSet<AgentAdapterKind>,
-    registrations: &[Registration],
-) {
-    let mut personal_names = BTreeMap::new();
-    for registration in registrations {
-        if adapters.contains(&registration.agent) && registration.scope == SkillScope::Personal {
-            personal_names
-                .entry((registration.agent, registration.name.as_str()))
-                .or_insert_with(|| registration.path.clone());
-        }
-    }
-    for registration in registrations {
-        if registration.scope != SkillScope::Project {
-            continue;
-        }
-        let Some(personal) = personal_names.get(&(registration.agent, registration.name.as_str()))
-        else {
-            continue;
-        };
-        let Some(item) = items.get_mut(&registration.canonical) else {
-            continue;
-        };
-        for alias in &mut item.aliases {
-            if alias.adapter_id == registration.agent && alias.path == registration.path {
-                alias.resolution = SourceResolution::Superseded;
-                alias.superseded_by = Some(personal.clone());
-            }
-        }
-    }
-}
-
 /// For agents where one skill of a key wins, every other path the agent
-/// registers with that key is shadowed by the winner's path.
+/// registers with that key, or to the winner's source where the agent takes
+/// one source once, is shadowed by the winner's path.
 fn apply_registration_precedence(
     items: &mut BTreeMap<PathBuf, SkillItem>,
     adapters: &[AgentSourcePolicy],
     registrations: &[Registration],
 ) {
     for adapter in adapters {
-        let (key, last_wins, nearest) = match adapter.capabilities.skills.precedence {
-            SkillPrecedence::FirstWins(key) => (key, false, false),
-            SkillPrecedence::LastWins(key) => (key, true, false),
-            SkillPrecedence::NearestFirstWins(key) => (key, false, true),
-            SkillPrecedence::Coexist | SkillPrecedence::ClaudePersonalShadowsProject => continue,
-        };
+        let (key, last_wins, order, one_source): (_, _, Option<fn(&Registration) -> _>, _) =
+            match adapter.capabilities.skills.precedence {
+                SkillPrecedence::FirstWins(key) => (key, false, None, false),
+                SkillPrecedence::LastWins(key) => (key, true, None, false),
+                SkillPrecedence::NearestFirstWins(key) => (
+                    key,
+                    false,
+                    Some(|registration| registration.nearness),
+                    false,
+                ),
+                SkillPrecedence::PersonalThenNearestFirstWins(key) => (
+                    key,
+                    false,
+                    Some(|registration| {
+                        let (personal, distance, rule) = registration.nearness;
+                        (u8::from(personal == 0), distance, rule)
+                    }),
+                    true,
+                ),
+                SkillPrecedence::Coexist => continue,
+            };
         let mut keyed = registrations
             .iter()
             .filter(|registration| registration.agent == adapter.id)
@@ -1413,8 +1384,31 @@ fn apply_registration_precedence(
                 Some((skill_key(key, item, registration), registration))
             })
             .collect::<Vec<_>>();
-        if nearest {
-            keyed.sort_by_key(|(_, registration)| registration.nearness);
+        if let Some(order) = order {
+            keyed.sort_by_key(|(_, registration)| order(registration));
+        }
+        let mut shadowed = Vec::new();
+        if one_source {
+            // A later path to a source already taken is shadowed by the
+            // first and claims no key.
+            let mut sources = BTreeMap::<&Path, &Registration>::new();
+            keyed.retain(|(_, registration)| {
+                let registration = *registration;
+                match sources.get(registration.canonical.as_path()) {
+                    Some(first) => {
+                        shadowed.push((
+                            registration.canonical.clone(),
+                            registration.path.clone(),
+                            first.path.clone(),
+                        ));
+                        false
+                    }
+                    None => {
+                        sources.insert(&registration.canonical, registration);
+                        true
+                    }
+                }
+            });
         }
         let mut winners = BTreeMap::<&str, &Registration>::new();
         for (key, registration) in &keyed {
@@ -1422,19 +1416,16 @@ fn apply_registration_precedence(
                 winners.insert(key, registration);
             }
         }
-        let shadowed = keyed
-            .iter()
-            .filter_map(|(key, registration)| {
-                let winner = winners.get(key.as_str())?;
-                (!std::ptr::eq(*winner, *registration)).then(|| {
-                    (
-                        registration.canonical.clone(),
-                        registration.path.clone(),
-                        winner.path.clone(),
-                    )
-                })
+        shadowed.extend(keyed.iter().filter_map(|(key, registration)| {
+            let winner = winners.get(key.as_str())?;
+            (!std::ptr::eq(*winner, *registration)).then(|| {
+                (
+                    registration.canonical.clone(),
+                    registration.path.clone(),
+                    winner.path.clone(),
+                )
             })
-            .collect::<Vec<_>>();
+        }));
         for (canonical, path, winner) in shadowed {
             let Some(item) = items.get_mut(&canonical) else {
                 continue;
@@ -2207,6 +2198,73 @@ mod tests {
             found.sort_by(|left, right| left.0.cmp(&right.0));
             found
         }
+
+        /// The paths by which Claude Code finds skills, from `~`, with the
+        /// path that shadows each one.
+        fn claude_shadowing(&self, discovery: &AgentContextDiscovery) -> Vec<(String, Shadow)> {
+            let relative = |path: &str| {
+                Path::new(path)
+                    .strip_prefix(self.home())
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            let mut found = discovery
+                .skills
+                .iter()
+                .flat_map(|item| &item.aliases)
+                .filter(|alias| alias.adapter_id == AgentAdapterKind::ClaudeCode)
+                .map(|alias| {
+                    let shadow = match (&alias.resolution, &alias.superseded_by) {
+                        (SourceResolution::Included, None) => Shadow::Applied,
+                        (SourceResolution::Superseded, Some(winner)) => {
+                            Shadow::By(relative(winner))
+                        }
+                        other => panic!("unexpected resolution {other:?}"),
+                    };
+                    (relative(&alias.path), shadow)
+                })
+                .collect::<Vec<_>>();
+            found.sort_by(|left, right| left.0.cmp(&right.0));
+            found
+        }
+
+        fn link(&self, target: &str, link: &str) {
+            let link = self.home().join(link);
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(self.home().join(target), link).unwrap();
+        }
+
+        /// A skill folder whose `SKILL.md` has no `name`.
+        fn unnamed_skill(&self, relative: &str) {
+            let directory = self.home().join(relative);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("SKILL.md"),
+                "---\ndescription: Unnamed skill\n---\n# Unnamed\n",
+            )
+            .unwrap();
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Shadow {
+        Applied,
+        By(String),
+    }
+
+    fn shadowing(entries: &[(&str, Option<&str>)]) -> Vec<(String, Shadow)> {
+        let mut found = entries
+            .iter()
+            .map(|(path, winner)| {
+                let shadow =
+                    winner.map_or(Shadow::Applied, |winner| Shadow::By(winner.to_string()));
+                ((*path).to_string(), shadow)
+            })
+            .collect::<Vec<_>>();
+        found.sort_by(|left, right| left.0.cmp(&right.0));
+        found
     }
 
     fn found(entries: &[(&str, SourceResolution)]) -> Vec<(String, SourceResolution)> {
@@ -2216,6 +2274,233 @@ mod tests {
             .collect::<Vec<_>>();
         found.sort_by(|left, right| left.0.cmp(&right.0));
         found
+    }
+
+    // DF-263: Claude Code loads its personal skills, then the project ones
+    // from the target up to the repository root; of the skills under one
+    // entry name in their root or of one file the first loaded stays.
+    // opencode reads the same project folders by its own rule.
+
+    #[test]
+    fn a_claude_skill_is_known_by_its_folder_not_by_its_name() {
+        use SourceResolution::Included;
+        let fixture = AgentsFixture::new();
+        fixture.skill(".claude/skills/foo", "bar");
+        fixture.skill("work/repo/.claude/skills/bar", "bar");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (".claude/skills/foo", None),
+                ("work/repo/.claude/skills/bar", None),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            found(&[("work/repo/.claude/skills/bar", Included)])
+        );
+    }
+
+    #[test]
+    fn a_personal_claude_skill_shadows_the_project_one_in_its_folder_whatever_their_names() {
+        use SourceResolution::Included;
+        let fixture = AgentsFixture::new();
+        fixture.skill(".claude/skills/foo", "personal-display");
+        fixture.skill("work/repo/.claude/skills/foo", "project-display");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (".claude/skills/foo", None),
+                ("work/repo/.claude/skills/foo", Some(".claude/skills/foo")),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            found(&[("work/repo/.claude/skills/foo", Included)])
+        );
+    }
+
+    #[test]
+    fn a_personal_claude_skill_shadows_the_project_one_of_its_folder_and_name() {
+        let fixture = AgentsFixture::new();
+        fixture.skill(".claude/skills/review", "review");
+        fixture.skill("work/repo/.claude/skills/review", "review");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (".claude/skills/review", None),
+                (
+                    "work/repo/.claude/skills/review",
+                    Some(".claude/skills/review")
+                ),
+            ])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_project_claude_link_to_a_personal_skill_is_shadowed_by_it_as_one_file() {
+        use SourceResolution::Included;
+        let fixture = AgentsFixture::new();
+        fixture.unnamed_skill(".claude/skills/x");
+        fixture.link(".claude/skills/x", "work/repo/.claude/skills/y");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(discovery.skills.len(), 1);
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (".claude/skills/x", None),
+                ("work/repo/.claude/skills/y", Some(".claude/skills/x")),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            found(&[("work/repo/.claude/skills/y", Included)])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_project_claude_link_is_known_by_its_own_name() {
+        let fixture = AgentsFixture::new();
+        fixture.skill(".claude/skills/bar", "bar");
+        fixture.skill("work/repo/sources/other", "other");
+        fixture.link("work/repo/sources/other", "work/repo/.claude/skills/bar");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (".claude/skills/bar", None),
+                ("work/repo/.claude/skills/bar", Some(".claude/skills/bar")),
+            ])
+        );
+    }
+
+    #[test]
+    fn the_claude_skill_nearest_the_target_shadows_the_ones_above_and_a_personal_one_all() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        fixture.skill("work/repo/.claude/skills/foo", "foo");
+        fixture.skill("work/repo/docs/.claude/skills/foo", "foo");
+        let opencode = found(&[
+            ("work/repo/.claude/skills/foo", Superseded),
+            ("work/repo/docs/.claude/skills/foo", Included),
+        ]);
+
+        let discovery = fixture.discover("docs", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (
+                    "work/repo/.claude/skills/foo",
+                    Some("work/repo/docs/.claude/skills/foo")
+                ),
+                ("work/repo/docs/.claude/skills/foo", None),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            opencode
+        );
+
+        fixture.skill(".claude/skills/foo", "foo");
+        let discovery = fixture.discover("docs", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (".claude/skills/foo", None),
+                ("work/repo/.claude/skills/foo", Some(".claude/skills/foo")),
+                (
+                    "work/repo/docs/.claude/skills/foo",
+                    Some(".claude/skills/foo")
+                ),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            opencode
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_claude_link_at_the_target_shadows_its_source_above_as_one_file() {
+        use SourceResolution::Included;
+        let fixture = AgentsFixture::new();
+        fixture.skill("work/repo/.claude/skills/f", "f");
+        fixture.link(
+            "work/repo/.claude/skills/f",
+            "work/repo/docs/.claude/skills/g",
+        );
+
+        let discovery = fixture.discover("docs", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(discovery.skills.len(), 1);
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (
+                    "work/repo/.claude/skills/f",
+                    Some("work/repo/docs/.claude/skills/g")
+                ),
+                ("work/repo/docs/.claude/skills/g", None),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            found(&[
+                ("work/repo/.claude/skills/f", Included),
+                ("work/repo/docs/.claude/skills/g", Included),
+            ])
+        );
+    }
+
+    #[test]
+    fn claude_project_skills_on_the_chain_are_known_by_their_folders() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        fixture.skill("work/repo/.claude/skills/n", "far-display");
+        fixture.skill("work/repo/docs/.claude/skills/n", "near-display");
+        fixture.skill("work/repo/.claude/skills/q", "same");
+        fixture.skill("work/repo/docs/.claude/skills/p", "same");
+
+        let discovery = fixture.discover("docs", &[AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.claude_shadowing(&discovery),
+            shadowing(&[
+                (
+                    "work/repo/.claude/skills/n",
+                    Some("work/repo/docs/.claude/skills/n")
+                ),
+                ("work/repo/.claude/skills/q", None),
+                ("work/repo/docs/.claude/skills/n", None),
+                ("work/repo/docs/.claude/skills/p", None),
+            ])
+        );
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Opencode),
+            found(&[
+                ("work/repo/.claude/skills/n", Superseded),
+                ("work/repo/.claude/skills/q", Included),
+                ("work/repo/docs/.claude/skills/n", Included),
+                ("work/repo/docs/.claude/skills/p", Included),
+            ])
+        );
     }
 
     #[test]
