@@ -93,6 +93,10 @@ async function harness(path: string, body: string, markerSize = 7) {
     merging: true,
     /** What the next resolutions fail with, as the backend refuses them. */
     resolveError: null as unknown,
+    /** The file is gone: reads fail as the backend reports a missing file. */
+    missing: false,
+    /** The host holds writes, as a Page whose file is gone does. */
+    held: false,
   };
   const resolves: string[][] = [];
   /** Errors the Page was handed to block saving, as `recoverSourceWriteError`. */
@@ -108,6 +112,7 @@ async function harness(path: string, body: string, markerSize = 7) {
     const input = args as Record<string, string>;
     if (command === "read_page") {
       reads += 1;
+      if (disk.missing) throw `File not found: ${path}`;
       if (disk.readFails) throw new Error("Synthetic read failure");
       return page(path, disk.body, disk.version);
     }
@@ -220,6 +225,7 @@ async function harness(path: string, body: string, markerSize = 7) {
         return true;
       },
       saveFailureShown: () => writeBlocks.length > 0,
+      writesHeld: () => disk.held,
     });
     useEffect(() => {
       writerRef.current = writer;
@@ -262,6 +268,7 @@ async function harness(path: string, body: string, markerSize = 7) {
 
   return {
     editor,
+    writer: () => writerRef.current!,
     writes,
     commits,
     resolves,
@@ -1305,5 +1312,86 @@ test("⌘S of a conflicted Page goes the same way: it writes, resolves the path,
   } finally {
     useEditorStore.getState().clearUnsaved(SPACE, path);
     await view.cleanup();
+  }
+});
+
+test("while writes are held a due autosave writes nothing and keeps the draft, and a restore writes the edited body the next save goes on from", async () => {
+  const h = await harness("pages/held.md", "Before\n");
+  try {
+    appendToBlock(h.editor, "Before", " edit");
+    h.disk.held = true;
+    h.holdDraft();
+    expect(h.writer().hasPendingSource()).toBe(true);
+    await h.save();
+    expect(h.writes).toEqual([]);
+    expect(h.writer().pendingSourceText()).toBe("Before edit\n");
+
+    let sent: string | null = null;
+    await act(() =>
+      h.writer().restorePendingSource(async (body) => {
+        sent = body;
+        h.disk.body = body ?? "";
+        h.disk.version = "restored";
+        return { writeNonce: "restore", sourceVersion: "restored" };
+      }),
+    );
+    expect(sent as string | null).toBe("Before edit\n");
+    h.disk.held = false;
+    expect(h.writer().hasPendingSource()).toBe(false);
+
+    appendToBlock(h.editor, "Before edit", " more");
+    await h.save();
+    expect(h.writes).toEqual([
+      { content: "Before edit more\n", sourceVersion: "restored" },
+    ]);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("a held draft is dropped without reading, and a discard of a draft whose file is gone does not fail", async () => {
+  const h = await harness("pages/gone.md", "Before\n");
+  try {
+    appendToBlock(h.editor, "Before", " edit");
+    h.holdDraft();
+    h.disk.held = true;
+    h.disk.missing = true;
+    const reads = h.reads();
+    await act(() => h.writer().dropPendingSource());
+    expect(h.reads()).toBe(reads);
+    expect(h.writer().hasPendingSource()).toBe(false);
+
+    h.disk.held = false;
+    appendToBlock(h.editor, "Before edit", " again");
+    h.holdDraft();
+    await act(() => h.writer().discardPendingSource());
+    expect(h.reads()).toBe(reads + 1);
+    expect(h.writer().hasPendingSource()).toBe(false);
+    expect(h.writes).toEqual([]);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("an external change of a held Page whose file is gone opens no conflict, and its return is reconciled", async () => {
+  const h = await harness("pages/back.md", "Before\n");
+  try {
+    appendToBlock(h.editor, "Before", " edit");
+    h.holdDraft();
+    h.disk.held = true;
+    h.disk.missing = true;
+    await h.reconcile();
+    expect(h.conflicts.filter(Boolean)).toEqual([]);
+
+    // The file is back changed by another writer: the draft is kept for a choice.
+    h.disk.missing = false;
+    h.disk.held = false;
+    h.disk.body = "Changed\n";
+    h.disk.version = "v2";
+    await h.reconcile();
+    expect(h.conflicts.at(-1)?.status).toBe("ready");
+    expect(h.writes).toEqual([]);
+  } finally {
+    await h.cleanup();
   }
 });

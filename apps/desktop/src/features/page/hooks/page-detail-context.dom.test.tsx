@@ -10,6 +10,10 @@ import type { Page } from "../model";
 import { PAGE_FIELD_TEXT_SAVE_DELAY_MS } from "../model/field-save";
 import type { PageDetailContextValue } from "./page-detail-context";
 
+type PageSurfaceSession = ReturnType<
+  typeof import("./page-surface-context").usePageSurfaceSession
+>;
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((yes) => {
@@ -54,10 +58,9 @@ async function harness(
   let deleteContent: (path: string) => Promise<void> = async () => {};
   let schema = options.schema;
   let context!: PageDetailContextValue;
-  let session!: {
-    prepareForNavigation(): Promise<boolean>;
-    retryPersistence(): Promise<void>;
-  };
+  let session!: PageSurfaceSession;
+  const restores: Record<string, unknown>[] = [];
+  let restoreFailure: unknown = null;
   const spacePath = `/repo-df090-${Math.random()}`;
   mockNativeIpc(
     async (command, args) => {
@@ -137,6 +140,19 @@ async function harness(
         await deleteContent(String(input.path));
         return null;
       }
+      if (command === "restore_page_file") {
+        restores.push(input);
+        if (restoreFailure) throw restoreFailure;
+        const content = String(input.content);
+        const body = content.slice(content.indexOf("\n---\n") + 5);
+        pages.set(String(input.path), {
+          path: String(input.path),
+          body,
+          source_version: "restored",
+          meta: { title: "", icon: null, created: "", updated: "", extra: {} },
+        });
+        return { write_nonce: "restore-nonce", source_version: "restored" };
+      }
       if (command === "get_page_schema")
         return schema ? { schema: { columns: schema, views: [] } } : null;
       if (command === "list_content_tree_children") return [];
@@ -204,8 +220,12 @@ async function harness(
     dom,
     pages,
     calls,
+    restores,
     spacePath,
     render,
+    failRestore: (value: unknown) => {
+      restoreFailure = value;
+    },
     context: () => context,
     session: () => session,
     delay: (value: Promise<void>) => {
@@ -987,6 +1007,260 @@ test("a Page deleted by another writer closes with a warning naming it", async (
     ]);
   } finally {
     toasts.restore();
+    await view.cleanup();
+  }
+});
+
+async function typeHeldDraft(view: Awaited<ReturnType<typeof readyHarness>>) {
+  await act(async () => {
+    void view
+      .context()
+      .updateField("description", "Draft")
+      .catch(() => undefined);
+    await turn();
+  });
+}
+
+async function pastFieldSaveDelay() {
+  await act(async () => {
+    await new Promise((resolve) =>
+      setTimeout(resolve, PAGE_FIELD_TEXT_SAVE_DELAY_MS + 50),
+    );
+    for (let step = 0; step < 6; step += 1) await turn();
+  });
+}
+
+function readCount(view: Awaited<ReturnType<typeof readyHarness>>) {
+  return view.calls.filter((call) => call === "read_page").length;
+}
+
+/** A Page whose description draft is pending when its file is taken away. */
+async function goneHarness(onPageGone: () => void = () => {}) {
+  const view = await readyHarness({ target: "page", onPageGone });
+  await typeHeldDraft(view);
+  view.pages.delete(README);
+  await view.fileEvent(README, "file:deleted");
+  return view;
+}
+
+test("leaving a Page whose file is gone drops its blocked draft without failing on the missing file", async () => {
+  const view = await readyHarness({
+    target: "page",
+    fieldError: `File not found: ${README}`,
+  });
+  try {
+    view.failField(true);
+    await typeHeldDraft(view);
+    await pastFieldSaveDelay();
+    expect(view.context().metadataDrafts.get("description")?.value).toBe(
+      "Draft",
+    );
+    // The file disappears before its Page hears of it, and the user leaves.
+    view.pages.delete(README);
+    let discarded = false;
+    await act(async () => {
+      discarded = await view.session().discard();
+    });
+    expect(discarded).toBe(true);
+    expect(view.context().metadataDrafts.size).toBe(0);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+for (const blocked of [false, true]) {
+  test(`a Page whose file another writer took away keeps its ${blocked ? "blocked" : "pending"} draft open, writes nothing there and leaves without reading the file`, async () => {
+    let gone = 0;
+    const toasts = captureToasts();
+    const view = await readyHarness({
+      target: "page",
+      fieldError: `File not found: ${README}`,
+      onPageGone: () => (gone += 1),
+    });
+    try {
+      if (blocked) view.failField(true);
+      await typeHeldDraft(view);
+      if (blocked) await pastFieldSaveDelay();
+      const fieldWrites = view.calls.filter(
+        (call) => call === "update_page_field",
+      ).length;
+      view.pages.delete(README);
+      await view.fileEvent(README, "file:deleted");
+      expect(gone).toBe(0);
+      expect(view.session().goneState).toEqual({ pending: false, error: null });
+      expect(view.context().status).toBe("ready");
+      expect(toasts.shown).toEqual([
+        {
+          kind: "warning",
+          message: m.page_gone_kept_title({ title: "App only" }),
+          description: m.page_gone_kept_description(),
+        },
+      ]);
+      // The draft's save falls due, and nothing is written at the gone path.
+      await pastFieldSaveDelay();
+      expect(
+        view.calls.filter((call) => call === "update_page_field").length,
+      ).toBe(fieldWrites);
+      expect(view.context().metadataDrafts.get("description")?.value).toBe(
+        "Draft",
+      );
+      let ready = true;
+      await act(async () => {
+        ready = await view.session().prepareForNavigation();
+      });
+      expect(ready).toBe(false);
+      // Leaving without saving drops the draft and reads no file.
+      const reads = readCount(view);
+      let discarded = false;
+      await act(async () => {
+        discarded = await view.session().discard();
+      });
+      expect(discarded).toBe(true);
+      expect(readCount(view)).toBe(reads);
+      expect(view.session().goneState).toBeNull();
+      expect(view.context().metadataDrafts.size).toBe(0);
+      expect(toasts.shown.length).toBe(1);
+    } finally {
+      toasts.restore();
+      await view.cleanup();
+    }
+  });
+}
+
+test("restoring a gone Page writes its last source with the draft at the same path and saves again", async () => {
+  const view = await goneHarness();
+  try {
+    // An edit made while the file is gone joins the same held work.
+    await act(async () => {
+      await view
+        .context()
+        .updateField("icon", "🚀")
+        .catch(() => undefined);
+      await turn();
+    });
+    expect(view.calls.includes("update_page_field")).toBe(false);
+    await act(async () => {
+      await view.session().restoreGoneSource();
+      await turn();
+    });
+    expect(view.restores).toHaveLength(1);
+    const restore = view.restores[0]!;
+    expect(restore.path).toBe(README);
+    expect(restore.content).toBe(
+      '---\ntitle: "App only"\nicon: "🚀"\ndescription: "Draft"\nStatus: "Todo"\n---\nLocal body',
+    );
+    expect(view.session().goneState).toBeNull();
+    expect(view.context().metadataDrafts.size).toBe(0);
+    expect(view.context().page?.meta.description).toBe("Draft");
+    let ready = false;
+    await act(async () => {
+      ready = await view.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+    // Saving goes on at the restored path.
+    await act(async () => {
+      await view.context().updateField("icon", "🌱");
+    });
+    expect(view.calls.includes("update_page_field")).toBe(true);
+    expect(view.pages.get(README)?.meta.icon).toBe("🌱");
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a restore refused for a taken name names it and keeps the Page with its draft", async () => {
+  const view = await goneHarness();
+  try {
+    view.failRestore({
+      kind: "file_already_exists",
+      message: `File already exists: ${README}`,
+      path: "app-only/readme.md",
+    });
+    await act(async () => {
+      await view.session().restoreGoneSource();
+    });
+    expect(view.session().goneState).toEqual({
+      pending: false,
+      error: m.page_name_taken({ name: "readme.md", folder: "app-only" }),
+    });
+    expect(view.context().metadataDrafts.get("description")?.value).toBe(
+      "Draft",
+    );
+    view.failRestore(null);
+    await act(async () => {
+      await view.session().restoreGoneSource();
+    });
+    expect(view.restores).toHaveLength(2);
+    expect(view.session().goneState).toBeNull();
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a restore refused by repository access opens the access recovery and keeps the Page", async () => {
+  const view = await goneHarness();
+  try {
+    view.failRestore({
+      kind: "repository_access_denied",
+      reason: "not_checked",
+      repositoryId: "repo-page",
+      status: "unknown",
+    });
+    await act(async () => {
+      await view.session().restoreGoneSource();
+      await turn();
+    });
+    expect(view.session().recovery.open).toBe(true);
+    expect(view.session().goneState).toEqual({ pending: false, error: null });
+    expect(view.context().metadataDrafts.get("description")?.value).toBe(
+      "Draft",
+    );
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("closing a gone Page without saving drops its work and closes it once, reading and writing nothing", async () => {
+  let gone = 0;
+  const toasts = captureToasts();
+  const view = await goneHarness(() => (gone += 1));
+  try {
+    const reads = readCount(view);
+    await act(async () => {
+      await view.session().closeGoneSource();
+    });
+    expect(gone).toBe(1);
+    expect(readCount(view)).toBe(reads);
+    expect(view.restores).toHaveLength(0);
+    expect(view.calls.includes("update_page_field")).toBe(false);
+    expect(view.context().metadataDrafts.size).toBe(0);
+    let ready = false;
+    await act(async () => {
+      ready = await view.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+    expect(toasts.shown.map(({ message }) => message)).toEqual([
+      m.page_gone_kept_title({ title: "App only" }),
+    ]);
+  } finally {
+    toasts.restore();
+    await view.cleanup();
+  }
+});
+
+test("a gone Page file that comes back ends the gone state and saves the held draft against it", async () => {
+  const view = await goneHarness();
+  try {
+    await pastFieldSaveDelay();
+    expect(view.calls.includes("update_page_field")).toBe(false);
+    view.pages.set(README, readmePage());
+    await view.fileEvent(README, "file:created");
+    expect(view.session().goneState).toBeNull();
+    await pastFieldSaveDelay();
+    expect(view.calls.includes("update_page_field")).toBe(true);
+    expect(view.pages.get(README)?.meta.description).toBe("Draft");
+    expect(view.context().metadataDrafts.size).toBe(0);
+  } finally {
     await view.cleanup();
   }
 });

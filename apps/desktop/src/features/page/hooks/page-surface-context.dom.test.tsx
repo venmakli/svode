@@ -808,6 +808,204 @@ domTest("the leave question names a source conflict and a failed write as their 
   }
 });
 
+function goneOwner() {
+  const owner = {
+    closed: 0,
+    restored: [] as (string | null)[],
+    refuse: false,
+    pending: null as Promise<void> | null,
+    restore: async (body: string | null) => {
+      owner.restored.push(body);
+      if (owner.pending) await owner.pending;
+      if (owner.refuse)
+        throw { kind: "file_already_exists", path: "docs/page.md" };
+      return { writeNonce: "restore", sourceVersion: "restored" };
+    },
+    close: () => {
+      owner.closed += 1;
+    },
+    text: () => "",
+    refusal: (error: unknown) =>
+      (error as { kind?: string }).kind === "file_already_exists"
+        ? "“page.md” is already taken in “docs”."
+        : null,
+  };
+  return owner;
+}
+
+const GONE_REASON =
+  "The page file was deleted or moved outside this window. Your edits exist only here.";
+
+domTest(
+  "a gone file names its cause in the Dialog, copies the text, names a refused restore and restores the file",
+  async () => {
+    const page = await renderPage("local", {
+      renderRecovery: true,
+      goneBody: "Draft text\n",
+    });
+    const copied: string[] = [];
+    Object.defineProperty(page.dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => void copied.push(text) },
+    });
+    const owner = goneOwner();
+    try {
+      await act(async () => {
+        page.session().holdGoneSource(owner);
+        await settle();
+      });
+      const indicator = indicatorOf(page.dom)!;
+      expect(indicator.dataset.pageSaveBlock).toBe("gone");
+      expect(indicator.getAttribute("aria-label")).toBe(
+        `Not saved: ${GONE_REASON}`,
+      );
+      let ready = true;
+      await act(async () => {
+        ready = await page.session().prepareForNavigation();
+      });
+      expect(ready).toBe(false);
+      expect(page.events).toEqual([]);
+
+      await openRecovery(page.dom);
+      const dialog = () =>
+        page.dom.window.document.querySelector<HTMLElement>("[role=dialog]");
+      expect(dialog()?.dataset.pageSaveRecovery).toBe("gone");
+      expect(dialog()?.textContent?.includes(GONE_REASON)).toBe(true);
+      expect(page.dom.window.document.activeElement?.textContent).toBe(
+        "Restore file",
+      );
+      for (const label of ["Copy text", "Close", "Close without saving"])
+        expect(buttonsWithText(page.dom, label).length).toBe(1);
+      expect(buttonsWithText(page.dom, "Discard changes").length).toBe(0);
+      expect(buttonsWithText(page.dom, "Retry save").length).toBe(0);
+
+      await act(async () => {
+        buttonWithText(page.dom, "Copy text").click();
+        await settle();
+      });
+      expect(copied).toEqual(["Draft text\n"]);
+      expect(dialog()).not.toBeNull();
+
+      owner.refuse = true;
+      await act(async () => {
+        buttonWithText(page.dom, "Restore file").click();
+        await settle();
+      });
+      expect(textOf(page.dom, "[data-page-gone-error]")).toBe(
+        "“page.md” is already taken in “docs”.",
+      );
+      expect(indicatorOf(page.dom)?.dataset.pageSaveBlock).toBe("gone");
+
+      owner.refuse = false;
+      await act(async () => {
+        buttonWithText(page.dom, "Restore file").click();
+        await settle();
+      });
+      await act(settle);
+      expect(owner.restored).toEqual(["Draft text\n", "Draft text\n"]);
+      expect(page.events).toEqual(["restored:body"]);
+      expect(dialog()).toBeNull();
+      expect(indicatorOf(page.dom)).toBeNull();
+      expect(owner.closed).toBe(0);
+      await act(async () => {
+        ready = await page.session().prepareForNavigation();
+      });
+      expect(ready).toBe(true);
+    } finally {
+      await page.cleanup();
+    }
+  },
+);
+
+domTest(
+  "a restore in flight disables the gone actions, and closing without saving drops the work and closes",
+  async () => {
+    const page = await renderPage("local", {
+      renderRecovery: true,
+      goneBody: "Draft text\n",
+    });
+    const owner = goneOwner();
+    let finish!: () => void;
+    owner.pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    owner.refuse = true;
+    try {
+      await act(async () => {
+        page.session().holdGoneSource(owner);
+        await settle();
+      });
+      await openRecovery(page.dom);
+      await act(async () => {
+        buttonWithText(page.dom, "Restore file").click();
+        await settle();
+      });
+      for (const label of ["Restore file", "Copy text", "Close without saving"])
+        expect(buttonWithText(page.dom, label).disabled).toBe(true);
+      await act(async () => {
+        finish();
+        await settle();
+      });
+      expect(buttonWithText(page.dom, "Close without saving").disabled).toBe(
+        false,
+      );
+
+      await act(async () => {
+        buttonWithText(page.dom, "Close without saving").click();
+        await settle();
+      });
+      expect(owner.closed).toBe(1);
+      expect(page.events).toEqual(["drop:body", "drop:metadata"]);
+      expect(indicatorOf(page.dom)).toBeNull();
+    } finally {
+      await page.cleanup();
+    }
+  },
+);
+
+domTest(
+  "leaving a gone file names it and drops its work without reading it",
+  async () => {
+    const page = await renderPage("local", {
+      renderRecovery: true,
+      goneBody: "Draft text\n",
+    });
+    const owner = goneOwner();
+    try {
+      await act(async () => {
+        page.session().holdGoneSource(owner);
+        await settle();
+      });
+      let leave!: Promise<boolean>;
+      await act(async () => {
+        leave = page.session().prepareToLeave("close");
+        await settle();
+      });
+      expect(textOf(page.dom, "[role=alertdialog] h2")).toBe(
+        "Close “Plan” without saving?",
+      );
+      expect(leaveDescription(page.dom)).toEqual([
+        GONE_REASON,
+        "Unsaved changes will be lost.",
+      ]);
+      await act(async () => {
+        buttonWithText(page.dom, "Close without saving").click();
+        await settle();
+      });
+      expect(await leave).toBe(true);
+      expect(page.events).toEqual(["drop:body", "drop:metadata"]);
+      expect(owner.closed).toBe(0);
+      let ready = false;
+      await act(async () => {
+        ready = await page.session().prepareToLeave();
+      });
+      expect(ready).toBe(true);
+    } finally {
+      await page.cleanup();
+    }
+  },
+);
+
 function leaveDescription(dom: JSDOM) {
   return [
     ...dom.window.document.querySelectorAll(
@@ -837,6 +1035,8 @@ async function renderPage(
     recoveryError?: string;
     bodyFlush?: () => Promise<void>;
     bodyDiscard?: () => Promise<void>;
+    /** The body text with its edits, offered while the file is gone. */
+    goneBody?: string;
   } = {},
 ) {
   const dom = new JSDOM(
@@ -891,6 +1091,19 @@ async function renderPage(
           events.push("discard:body");
           await options.bodyDiscard?.();
         },
+        ...(options.goneBody === undefined
+          ? {}
+          : {
+              hasWork: () => true,
+              drop: () => void events.push("drop:body"),
+              text: () => options.goneBody!,
+              restore: async (
+                write: (body: string | null) => Promise<unknown>,
+              ) => {
+                await write(options.goneBody!);
+                events.push("restored:body");
+              },
+            }),
       });
       const unregisterMetadata = registerPersistence("metadata", {
         flush: async () => {
@@ -899,6 +1112,7 @@ async function renderPage(
         discard: async () => {
           events.push("discard:metadata");
         },
+        drop: () => void events.push("drop:metadata"),
       });
       return () => {
         unregisterBody();

@@ -101,6 +101,21 @@ export function writePage(
   return invokeCommand<WritePageResultDto>("write_page_body", input);
 }
 
+/**
+ * Writes `content`, the complete Markdown source with its frontmatter, as the
+ * Page at `path`, which must not exist; missing folders of the path are
+ * created. A taken path is refused as `file_already_exists` naming the entry
+ * on disk.
+ */
+export function restorePageFile(input: {
+  space: string;
+  path: string;
+  content: string;
+  projectPath: string | null;
+}): Promise<WritePageResultDto> {
+  return invokeCommand<WritePageResultDto>("restore_page_file", { ...input });
+}
+
 export function updatePageField(input: {
   space: string;
   filePath: string;

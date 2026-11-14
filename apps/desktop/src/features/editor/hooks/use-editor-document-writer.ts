@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   composeDecidedPage,
   getPageMergeState,
+  isPageFileMissingError,
   pageMergeDecided,
   pageSourceErrorKind,
   setPageMerge,
@@ -115,7 +116,17 @@ interface UseEditorDocumentWriterInput {
   ) => Promise<boolean>;
   /** The host already shows that saving is blocked. */
   saveFailureShown?: () => boolean;
+  /**
+   * True while nothing may be written at the path, such as a Page whose file
+   * disappeared outside this window: the draft stays unsaved.
+   */
+  writesHeld?: () => boolean;
 }
+
+/** Writes the source of a gone Page with `body` as its text. */
+export type EditorSourceRestoreWrite = (
+  body: string | null,
+) => Promise<WritePageResult>;
 
 interface UseEditorDocumentWriterResult {
   /**
@@ -136,6 +147,14 @@ interface UseEditorDocumentWriterResult {
   flushPendingSource: () => Promise<void>;
   /** Drops the unsaved body and loads the saved source, writing nothing. */
   discardPendingSource: () => Promise<void>;
+  /** Drops the unsaved body without reading the source, whose file is gone. */
+  dropPendingSource: () => Promise<void>;
+  /** Whether a body draft is unsaved, pending, in flight or held. */
+  hasPendingSource: () => boolean;
+  /** The body text with its unsaved edits, as a write would send it. */
+  pendingSourceText: () => string;
+  /** Writes the gone source again through `write` and adopts it as saved. */
+  restorePendingSource: (write: EditorSourceRestoreWrite) => Promise<void>;
   /** Brings the editor in line with a source another writer changed. */
   reconcileExternalChange: (path: string) => Promise<void>;
 }
@@ -167,6 +186,7 @@ export function useEditorDocumentWriter({
   readOnly,
   onWriteAccessError,
   saveFailureShown,
+  writesHeld,
 }: UseEditorDocumentWriterInput): UseEditorDocumentWriterResult {
   const sourceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const resolutionChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -189,6 +209,25 @@ export function useEditorDocumentWriter({
   const baselineKey = useCallback(
     (path: string) => getDocumentCacheKey(spacePath, path),
     [spacePath],
+  );
+
+  /**
+   * The editor text as the body of `path` is written: it keeps the leading
+   * blank lines and the line ending style of the source it was edited from
+   * (DF-201, DF-250), the baseline unless `base` is given.
+   */
+  const bodyOf = useCallback(
+    (path: string, base?: string) => {
+      if (!editor) return "";
+      const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
+      const sourceBody =
+        base ?? getDocumentBaseline(baselineKey(path))?.body ?? "";
+      return withSourceLineEndings(
+        sourceBody,
+        bodyWithSourceLeadingBlankLines(sourceBody, markdown),
+      );
+    },
+    [baselineKey, editor],
   );
 
   /**
@@ -222,16 +261,9 @@ export function useEditorDocumentWriter({
           return null;
         }
 
-        const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-        const sourceBody =
-          merge?.merge.type === "merged"
-            ? merge.merge.body
-            : (getDocumentBaseline(baselineKey(path))?.body ?? "");
-        // The body keeps the leading blank lines and the line ending style
-        // of the source it was edited from (DF-201, DF-250).
-        const body = withSourceLineEndings(
-          sourceBody,
-          bodyWithSourceLeadingBlankLines(sourceBody, markdown),
+        const body = bodyOf(
+          path,
+          merge?.merge.type === "merged" ? merge.merge.body : undefined,
         );
         let content = body;
         if (merge) {
@@ -296,7 +328,7 @@ export function useEditorDocumentWriter({
       );
       return result;
     },
-    [baselineKey, editor, ownNoncesRef, projectPath, spacePath],
+    [baselineKey, bodyOf, editor, ownNoncesRef, projectPath, spacePath],
   );
 
   /**
@@ -402,7 +434,7 @@ export function useEditorDocumentWriter({
       targetPath?: string,
     ): Promise<WritePageResult | null> => {
       const path = targetPath ?? currentPathRef.current;
-      if (!editor || !path || !spacePath) return null;
+      if (!editor || !path || !spacePath || writesHeld?.()) return null;
       for (let attempt = 0; ; attempt += 1) {
         if (sourceSync.isOpen()) return null;
         const baseline = getDocumentBaseline(baselineKey(path));
@@ -419,18 +451,30 @@ export function useEditorDocumentWriter({
         if (outcome !== "rebased") return null;
       }
     },
-    [baselineKey, currentPathRef, editor, sourceSync, spacePath, writeSource],
+    [
+      baselineKey,
+      currentPathRef,
+      editor,
+      sourceSync,
+      spacePath,
+      writeSource,
+      writesHeld,
+    ],
   );
 
   const reconcileExternalChange = useCallback(
     async (path: string) => {
       try {
+        // While the file is gone only its return is news: a failed read of
+        // the gone file is no conflict of the draft.
+        if (writesHeld?.()) await readPage({ spacePath, path });
         await sourceSync.reconcile(path, "external");
       } catch (error) {
+        if (writesHeld?.()) return;
         console.error("Failed to reload document:", error);
       }
     },
-    [sourceSync],
+    [sourceSync, spacePath, writesHeld],
   );
 
   // Any write of the source that went through ends a pause of autosave, also
@@ -544,19 +588,98 @@ export function useEditorDocumentWriter({
     cancelDebounce();
     await sourceWriteChainRef.current;
     const path = currentPathRef.current;
-    if (path && editor && spacePath)
-      await loadSource(path, await readPage({ spacePath, path }));
+    if (path && editor && spacePath) {
+      let page: Page | null = null;
+      try {
+        page = await readPage({ spacePath, path });
+      } catch (error) {
+        // A file gone meanwhile has no saved source to show: the draft is
+        // dropped and leaving goes on.
+        if (!isPageFileMissingError(error, path)) throw error;
+      }
+      if (page) await loadSource(path, page);
+      else clearUnsaved(spacePath, path);
+    }
     // Closes an open source conflict: its draft is what is discarded.
     sourceSync.dispose();
     autoSavePausedRef.current = false;
   }, [
     cancelDebounce,
+    clearUnsaved,
     currentPathRef,
     editor,
     loadSource,
     sourceSync,
     spacePath,
   ]);
+
+  const dropPendingSource = useCallback(async () => {
+    cancelDebounce();
+    await sourceWriteChainRef.current;
+    const path = currentPathRef.current;
+    if (path && spacePath) clearUnsaved(spacePath, path);
+    sourceSync.dispose();
+    autoSavePausedRef.current = false;
+  }, [cancelDebounce, clearUnsaved, currentPathRef, sourceSync, spacePath]);
+
+  const hasPendingSource = useCallback(() => {
+    const path = currentPathRef.current;
+    return (
+      debounceTimerRef.current !== null ||
+      sourceSync.isOpen() ||
+      Boolean(path && useEditorStore.getState().hasUnsaved(spacePath, path))
+    );
+  }, [currentPathRef, debounceTimerRef, sourceSync, spacePath]);
+
+  const pendingSourceText = useCallback(() => {
+    const path = currentPathRef.current;
+    return path ? bodyOf(path) : "";
+  }, [bodyOf, currentPathRef]);
+
+  const restorePendingSource = useCallback(
+    async (write: EditorSourceRestoreWrite) => {
+      cancelDebounce();
+      const restore = async () => {
+        const path = currentPathRef.current;
+        const cacheKey = currentCacheKeyRef.current;
+        if (!editor || !path || !spacePath) {
+          await write(null);
+          return;
+        }
+        const body = bodyOf(path);
+        const result = await write(body);
+        if (result.writeNonce) ownNoncesRef.current.add(result.writeNonce);
+        if (result.sourceVersion)
+          setDocumentBaseline(baselineKey(path), {
+            version: result.sourceVersion,
+            body,
+          });
+        autoSavePausedRef.current = false;
+        // Text typed while the file was written stays a draft for autosave.
+        if (bodyOf(path) === body) applyAutoSaveResult(result, path, cacheKey);
+        else if (!debounceTimerRef.current) scheduleAutoSave();
+      };
+      const result = sourceWriteChainRef.current.then(restore, restore);
+      sourceWriteChainRef.current = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      await result;
+    },
+    [
+      applyAutoSaveResult,
+      baselineKey,
+      bodyOf,
+      cancelDebounce,
+      currentCacheKeyRef,
+      currentPathRef,
+      debounceTimerRef,
+      editor,
+      ownNoncesRef,
+      scheduleAutoSave,
+      spacePath,
+    ],
+  );
 
   /** The commit after a write: its failure is returned, not thrown. */
   const commitWritten = useCallback(
@@ -748,11 +871,15 @@ export function useEditorDocumentWriter({
 
   return {
     discardPendingSource,
+    dropPendingSource,
     flushPendingSource,
     handleSave,
     handleSaveAll,
+    hasPendingSource,
     hasSourceConflict: sourceSync.isOpen,
+    pendingSourceText,
     reconcileExternalChange,
+    restorePendingSource,
     scheduleAutoSave,
   };
 }

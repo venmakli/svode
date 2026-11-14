@@ -21,6 +21,7 @@ import {
   type RepositoryAccessRequest,
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
+import type { PageGoneState } from "../model/source-gone";
 import type { PageSourceConflict } from "../model/source-conflict";
 import {
   PageDiscardDialog,
@@ -29,15 +30,26 @@ import {
 } from "../ui/page-discard-dialog";
 import {
   usePagePersistence,
+  type PageGoneSource,
   type PagePersistenceKind,
   type PagePersistenceParticipant,
 } from "./use-page-persistence";
 
 interface PageSurfaceSessionContextValue {
+  /** Drops the unsaved work of a gone file and closes the surface (DF-269 R4). */
+  closeGoneSource: () => Promise<void>;
   /** Changes each time an explicit commit is refused for this Page's source conflict. */
   commitRefusalRequest: number;
   /** Drops the unsaved drafts and rereads the saved source; false if it failed. */
   discard: () => Promise<boolean>;
+  /** The body text with its unsaved edits while the file is gone. */
+  goneSourceText: () => string;
+  /** Set while the file is gone outside this window and the work is held. */
+  goneState: PageGoneState | null;
+  /** Keeps the session open with its work after its file disappeared. */
+  holdGoneSource: (owner: PageGoneSource) => void;
+  /** Whether the session holds unsaved work of any participant. */
+  holdsUnsavedWork: () => boolean;
   persistenceError: string | null;
   readOnly: boolean;
   recovery: ReturnType<typeof useRepositoryAccessPreflight>;
@@ -65,7 +77,11 @@ interface PageSurfaceSessionContextValue {
   registerRecoveryElement: (element: HTMLElement | null) => void;
   /** The title the questions about this Page's unsaved changes name it by. */
   registerTitle: (title: string) => void;
+  /** The gone file is back: its held work is saved against it. */
+  releaseGoneSource: () => Promise<void>;
   reportSourceConflict: (conflict: PageSourceConflict | null) => void;
+  /** Writes the gone file again with the held work. */
+  restoreGoneSource: () => Promise<void>;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;
   /** Resolves once the saves and mutations queued so far have finished. */
@@ -73,6 +89,8 @@ interface PageSurfaceSessionContextValue {
   /** Opens the source conflict recovery of this Page after a refused commit. */
   showCommitRefusal: () => void;
   sourceConflict: PageSourceConflict | null;
+  /** True while nothing may be written at the Page path. */
+  writesHeld: () => boolean;
 }
 
 const PageSurfaceSessionContext =
@@ -134,17 +152,25 @@ function PageSurfaceSession({
     [displayName, displayPath, onOpenRepositorySettings, spacePath],
   );
   const {
+    closeGoneSource,
     discardChanges,
     flushPersistence,
+    goneSourceText,
+    goneState,
+    holdGoneSource,
+    holdsUnsavedWork,
     persistenceError,
     recoverSourceWriteError,
     recoverWriteError,
     registerPersistence,
+    releaseGoneSource,
     reportSourceConflict,
+    restoreGoneSource,
     retryPersistence,
     runMutation,
     settled,
     sourceConflict,
+    writesHeld,
   } = usePagePersistence({
     makeAccessRequest,
     recovery,
@@ -243,8 +269,13 @@ function PageSurfaceSession({
 
   const value = useMemo<PageSurfaceSessionContextValue>(
     () => ({
+      closeGoneSource,
       commitRefusalRequest,
       discard,
+      goneSourceText,
+      goneState,
+      holdGoneSource,
+      holdsUnsavedWork,
       persistenceError,
       prepareForNavigation,
       prepareToLeave,
@@ -255,16 +286,24 @@ function PageSurfaceSession({
       registerPersistence,
       registerRecoveryElement,
       registerTitle,
+      releaseGoneSource,
       reportSourceConflict,
+      restoreGoneSource,
       retryPersistence,
       runMutation,
       settled,
       showCommitRefusal,
       sourceConflict,
+      writesHeld,
     }),
     [
+      closeGoneSource,
       commitRefusalRequest,
       discard,
+      goneSourceText,
+      goneState,
+      holdGoneSource,
+      holdsUnsavedWork,
       persistenceError,
       prepareForNavigation,
       prepareToLeave,
@@ -275,12 +314,15 @@ function PageSurfaceSession({
       registerPersistence,
       registerRecoveryElement,
       registerTitle,
+      releaseGoneSource,
       reportSourceConflict,
+      restoreGoneSource,
       retryPersistence,
       runMutation,
       settled,
       showCommitRefusal,
       sourceConflict,
+      writesHeld,
     ],
   );
 
@@ -289,6 +331,7 @@ function PageSurfaceSession({
       {children}
       <PageDiscardDialog
         confirmation={confirmation}
+        gone={goneState !== null}
         persistenceError={persistenceError}
         recovery={recovery}
         sourceConflict={sourceConflict}

@@ -7,6 +7,7 @@ import {
   getPageDetailState as getPageDetailStateDto,
   type PageLinkValidationResultDto,
   readPage as readPageDto,
+  restorePageFile as restorePageFileDto,
   updatePageField as updatePageFieldDto,
   validatePageLinks as validatePageLinksDto,
   writePage as writePageDto,
@@ -173,6 +174,28 @@ export async function writePage(
     content: input.content,
     projectPath: input.projectPath,
     sourceVersion: input.sourceVersion,
+  });
+  return writeResultFromDto(result);
+}
+
+export interface RestorePageFileInput {
+  spacePath: string;
+  /** The path the Page file had, which no longer exists. */
+  path: string;
+  /** Complete Markdown source, frontmatter included, written as is. */
+  content: string;
+  projectPath: string | null;
+}
+
+/** Writes the Page file again at the path it disappeared from. */
+export async function restorePageFile(
+  input: RestorePageFileInput,
+): Promise<WritePageResult> {
+  const result = await restorePageFileDto({
+    space: input.spacePath,
+    path: input.path,
+    content: input.content,
+    projectPath: input.projectPath,
   });
   return writeResultFromDto(result);
 }

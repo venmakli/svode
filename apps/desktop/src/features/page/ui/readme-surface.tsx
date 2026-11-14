@@ -20,6 +20,7 @@ export function ReadmeSurface() {
   const pageSurface = usePageSurfaceSession();
   const saveBlocked =
     pageSaveBlock({
+      gone: pageSurface.goneState,
       ownerError: context.writeError,
       persistenceError: pageSurface.persistenceError,
       recovery: pageSurface.recovery,
@@ -69,6 +70,7 @@ export function ReadmeSurface() {
         readOnly={pageSurface.readOnly}
         registerPersistence={pageSurface.registerPersistence}
         onWriteAccessError={pageSurface.recoverSourceWriteError}
+        writesHeld={pageSurface.writesHeld}
         saveFailureShown={saveFailureShown}
         onSourceConflict={pageSurface.reportSourceConflict}
         onCommitRefused={pageSurface.showCommitRefusal}

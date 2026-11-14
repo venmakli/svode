@@ -55,6 +55,7 @@ export function usePageFieldSave({
   onSaved,
   onError,
   recoverFromError,
+  writesHeld,
 }: {
   spacePath: string;
   projectPath?: string | null;
@@ -67,6 +68,8 @@ export function usePageFieldSave({
     context: PageFieldSaveContext,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  /** True while nothing may be written at the Page path; a save then fails. */
+  writesHeld?: () => boolean;
 }): PageFieldSaveController {
   const pendingRef = useRef(new Map<string, PendingFieldSave>());
   const inFlightRef = useRef(new Set<Promise<Page | null>>());
@@ -203,6 +206,7 @@ export function usePageFieldSave({
           if (field === "title" && options.flush) {
             await flushPendingPageFields();
           }
+          if (writesHeld?.()) throw new Error("Page writes are held");
           const queuePath = resolvePageFieldSavePath(
             pathAliasesRef.current,
             page.path,
@@ -342,6 +346,7 @@ export function usePageFieldSave({
       recoverFromError,
       spacePath,
       trackInFlight,
+      writesHeld,
     ],
   );
 

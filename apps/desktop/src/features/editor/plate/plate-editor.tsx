@@ -10,6 +10,7 @@ import {
   type Page,
   type PageMeta,
   type PageSourceConflict,
+  type WritePageResult,
 } from "@/features/page";
 import { cn } from "@/shared/lib/utils";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
@@ -41,6 +42,12 @@ interface PlateDocumentEditorProps {
     participant: {
       flush: () => Promise<void>;
       discard: () => Promise<void>;
+      hasWork: () => boolean;
+      drop: () => Promise<void>;
+      text: () => string;
+      restore: (
+        write: (body: string | null) => Promise<WritePageResult>,
+      ) => Promise<void>;
     },
   ) => () => void;
   onWriteAccessError?: (
@@ -49,6 +56,8 @@ interface PlateDocumentEditorProps {
   ) => Promise<boolean>;
   /** The host already shows that saving is blocked: an explicit save failure stays silent. */
   saveFailureShown?: () => boolean;
+  /** True while nothing may be written at the document path; drafts stay unsaved. */
+  writesHeld?: () => boolean;
   onSourceConflict?: (conflict: PageSourceConflict | null) => void;
   /** Opens the source conflict recovery after an explicit commit was refused. */
   onCommitRefused?: () => void;
@@ -71,6 +80,7 @@ export function PlateDocumentEditor({
   registerPersistence,
   onWriteAccessError,
   saveFailureShown,
+  writesHeld,
   onSourceConflict,
   onCommitRefused,
 }: PlateDocumentEditorProps) {
@@ -90,6 +100,10 @@ export function PlateDocumentEditor({
     spacePath,
     flushPendingSource,
     discardPendingSource,
+    dropPendingSource,
+    hasPendingSource,
+    pendingSourceText,
+    restorePendingSource,
   } = usePlateDocumentSession({
     bodyOnly,
     bodyOnlyMeta,
@@ -105,6 +119,7 @@ export function PlateDocumentEditor({
     readOnly,
     onWriteAccessError,
     saveFailureShown,
+    writesHeld,
     onSourceConflict,
     onCommitRefused,
   });
@@ -119,8 +134,20 @@ export function PlateDocumentEditor({
     return registerPersistence("body", {
       flush: flushPendingSource,
       discard: discardPendingSource,
+      hasWork: hasPendingSource,
+      drop: dropPendingSource,
+      text: pendingSourceText,
+      restore: restorePendingSource,
     });
-  }, [discardPendingSource, flushPendingSource, registerPersistence]);
+  }, [
+    discardPendingSource,
+    dropPendingSource,
+    flushPendingSource,
+    hasPendingSource,
+    pendingSourceText,
+    registerPersistence,
+    restorePendingSource,
+  ]);
 
   return (
     <EditorMediaAdapterProvider

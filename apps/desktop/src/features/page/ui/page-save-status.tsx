@@ -1,10 +1,12 @@
 import { TriangleAlert } from "lucide-react";
 import { flushSync } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import * as m from "@/paraglide/messages.js";
 
+import { copyPageText } from "../api/page-text-clipboard";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { pageSaveBlock, pageSaveBlockReason } from "../lib/save-block";
 import { PageSaveRecoveryDialog } from "./page-save-recovery-dialog";
@@ -30,6 +32,7 @@ export function PageSaveStatus({
   const session = usePageSurfaceSession();
   const {
     commitRefusalRequest,
+    goneState,
     persistenceError,
     recovery,
     registerRecoveryElement,
@@ -38,12 +41,13 @@ export function PageSaveStatus({
   const block = useMemo(
     () =>
       pageSaveBlock({
+        gone: goneState,
         ownerError: error,
         persistenceError,
         recovery,
         sourceConflict,
       }),
-    [error, persistenceError, recovery, sourceConflict],
+    [error, goneState, persistenceError, recovery, sourceConflict],
   );
   const reason = block ? pageSaveBlockReason(block) : null;
   const [open, setOpen] = useState(false);
@@ -132,6 +136,17 @@ export function PageSaveStatus({
           else focusPageContent(resumeRef.current, statusRef.current);
         }}
         onDiscard={session.discard}
+        onRestore={session.restoreGoneSource}
+        onCopyText={() =>
+          copyPageText(session.goneSourceText()).then(
+            () => void toast.success(m.page_gone_copied()),
+            (copyError: unknown) => {
+              console.error("Failed to copy the Page text:", copyError);
+              toast.error(m.page_gone_copy_error());
+            },
+          )
+        }
+        onCloseWithoutSaving={session.closeGoneSource}
         onLeaveForSettings={() => {
           // Git settings return focus to the indicator once they close.
           handoffRef.current = true;

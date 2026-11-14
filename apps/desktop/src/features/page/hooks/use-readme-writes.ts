@@ -29,5 +29,6 @@ export function useReadmeWrites({
     retry: session.retry,
     discard: session.discard,
     holdsError: session.holdsError,
+    hasWork: session.hasWork,
   };
 }

@@ -29,6 +29,7 @@ export {
 } from "./lib/filename-warning";
 export { PageFilenameWarningDialog } from "./ui/page-filename-warning-dialog";
 export { pageNavigationItem } from "./lib/navigation-item";
+export { isReadmeMissingError as isPageFileMissingError } from "./lib/readme-state";
 export {
   acceptPageMerge,
   decidePageMergeProperty,

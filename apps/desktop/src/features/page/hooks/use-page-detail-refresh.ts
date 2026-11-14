@@ -30,9 +30,12 @@ interface PageDetailRefreshOptions {
   settled: () => Promise<void>;
   /**
    * The Page file stopped existing outside this session; `changedHere` when
-   * a deletion, rename or move started in this Desktop left its path.
+   * a deletion, rename or move started in this Desktop left its path. True
+   * keeps the Page open at its path, watching for the file to come back.
    */
-  onGone: (changedHere: boolean) => void;
+  onGone: (changedHere: boolean) => boolean | void;
+  /** The file of a Page kept open after it was gone exists again. */
+  onReturned?: () => void;
   /**
    * Follows a folder above the Page that this Desktop renames or moves: saves
    * the pending work before, and takes the Page to its new path after.
@@ -68,6 +71,8 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
   useEffect(() => {
     if (!path) return;
     let active = true;
+    // The file is gone, but the Page stays open with its unsaved work.
+    let gone = false;
     let lastPageRead = 0;
     let appliedPageRead = 0;
     let lastSchemaRead = 0;
@@ -100,11 +105,12 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
         source = await optionsRef.current.readSource(path);
       } catch (error) {
         if (!isReadmeMissingError(error, path)) throw error;
-        if (!active || read < appliedPageRead) return;
+        if (!active || gone || read < appliedPageRead) return;
         if (confirmingGone) {
           appliedPageRead = read;
-          active = false;
-          optionsRef.current.onGone(ownChange.changedHere());
+          if (optionsRef.current.onGone(ownChange.changedHere()) === true)
+            gone = true;
+          else active = false;
           return;
         }
         // An own rename, move or conversion of the Page or of a folder above
@@ -117,6 +123,10 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
       }
       if (!active || read < appliedPageRead) return;
       appliedPageRead = read;
+      if (gone) {
+        gone = false;
+        optionsRef.current.onReturned?.();
+      }
       for (const field of optionsRef.current.localFields()) local.add(field);
       for (const [field, stamp] of writesRef.current.fields)
         if (stamp > since) local.add(field);

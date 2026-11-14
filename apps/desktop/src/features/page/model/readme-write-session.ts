@@ -145,6 +145,9 @@ export class ReadmeWriteSession {
   };
   /** Whether a failed write is kept to retry, i.e. its draft is not lost. */
   holdsError = () => this.error !== null;
+  /** Whether unsaved drafts, a requested creation or writes in flight remain. */
+  hasWork = () =>
+    this.drafts.size > 0 || this.creationRequested || this.writes.size > 0;
   /** Forgets unsaved drafts and their error; the saved README stays as is. */
   discard = () => {
     this.drafts.clear();

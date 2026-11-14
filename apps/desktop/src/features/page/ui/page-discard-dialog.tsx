@@ -29,6 +29,7 @@ export interface PageDiscardConfirmation {
 
 export function PageDiscardDialog({
   confirmation,
+  gone,
   persistenceError,
   recovery,
   sourceConflict,
@@ -36,6 +37,8 @@ export function PageDiscardDialog({
   onKeepFocus,
 }: {
   confirmation: PageDiscardConfirmation | null;
+  /** The Page file is gone outside this window. */
+  gone: boolean;
   persistenceError: string | null;
   recovery: RepositoryAccessPreflightController;
   sourceConflict: PageSourceConflict | null;
@@ -46,7 +49,12 @@ export function PageDiscardDialog({
   const [shown, setShown] = useState(confirmation);
   if (confirmation && confirmation !== shown) setShown(confirmation);
   const keptRef = useRef(false);
-  const block = pageSaveBlock({ persistenceError, recovery, sourceConflict });
+  const block = pageSaveBlock({
+    gone: gone ? { pending: false, error: null } : null,
+    persistenceError,
+    recovery,
+    sourceConflict,
+  });
 
   return (
     <AlertDialog

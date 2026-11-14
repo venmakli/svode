@@ -46,10 +46,14 @@ interface UsePlateDocumentSessionInput {
     retry: () => Promise<void>,
   ) => Promise<boolean>;
   saveFailureShown?: () => boolean;
+  /** True while nothing may be written at the document path. */
+  writesHeld?: () => boolean;
   onSourceConflict?: (conflict: PageSourceConflict | null) => void;
   /** Opens the source conflict recovery after an explicit commit was refused. */
   onCommitRefused?: () => void;
 }
+
+type EditorDocumentWriter = ReturnType<typeof useEditorDocumentWriter>;
 
 interface UsePlateDocumentSessionResult {
   adoptDocumentPath: (path: string) => void;
@@ -63,6 +67,10 @@ interface UsePlateDocumentSessionResult {
   spacePath: string;
   flushPendingSource: () => Promise<void>;
   discardPendingSource: () => Promise<void>;
+  dropPendingSource: EditorDocumentWriter["dropPendingSource"];
+  hasPendingSource: EditorDocumentWriter["hasPendingSource"];
+  pendingSourceText: EditorDocumentWriter["pendingSourceText"];
+  restorePendingSource: EditorDocumentWriter["restorePendingSource"];
 }
 
 export function usePlateDocumentSession({
@@ -80,6 +88,7 @@ export function usePlateDocumentSession({
   readOnly,
   onWriteAccessError,
   saveFailureShown,
+  writesHeld,
   onSourceConflict,
   onCommitRefused,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
@@ -212,11 +221,15 @@ export function usePlateDocumentSession({
 
   const {
     discardPendingSource,
+    dropPendingSource,
     flushPendingSource,
     handleSave,
     handleSaveAll,
+    hasPendingSource,
     hasSourceConflict,
+    pendingSourceText,
     reconcileExternalChange,
+    restorePendingSource,
     scheduleAutoSave,
   } = useEditorDocumentWriter({
     activeWsId,
@@ -245,6 +258,7 @@ export function usePlateDocumentSession({
     readOnly,
     onWriteAccessError,
     saveFailureShown,
+    writesHeld,
   });
 
   useEffect(() => {
@@ -346,5 +360,9 @@ export function usePlateDocumentSession({
     spacePath,
     flushPendingSource,
     discardPendingSource,
+    dropPendingSource,
+    hasPendingSource,
+    pendingSourceText,
+    restorePendingSource,
   };
 }

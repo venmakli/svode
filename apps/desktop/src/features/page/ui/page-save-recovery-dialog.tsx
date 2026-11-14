@@ -34,6 +34,9 @@ export function PageSaveRecoveryDialog({
   onDiscard,
   onLeaveForSettings,
   onRetryWrite,
+  onRestore,
+  onCopyText,
+  onCloseWithoutSaving,
   title,
 }: {
   block: PageSaveBlock | null;
@@ -47,13 +50,21 @@ export function PageSaveRecoveryDialog({
   /** Closes the Dialog so the Git settings it opens next take over. */
   onLeaveForSettings: () => void;
   onRetryWrite: () => Promise<void>;
+  /** Writes the gone Page file again with the unsaved work. */
+  onRestore: () => Promise<void>;
+  /** Puts the body text with its unsaved edits on the clipboard. */
+  onCopyText: () => Promise<void>;
+  /** Drops the unsaved work of the gone file and closes the Page. */
+  onCloseWithoutSaving: () => Promise<void>;
   title: string;
 }) {
   // Keeps the content of the resolved block during the exit animation.
   const [shown, setShown] = useState(block);
   if (block && block !== shown) setShown(block);
   const [confirming, setConfirming] = useState(false);
-  const [pending, setPending] = useState<"retry" | "discard" | null>(null);
+  const [pending, setPending] = useState<"retry" | "discard" | "close" | null>(
+    null,
+  );
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -64,7 +75,10 @@ export function PageSaveRecoveryDialog({
     setConfirming(false);
     onClose();
   };
-  const run = (kind: "retry" | "discard", action: () => Promise<unknown>) => {
+  const run = (
+    kind: "retry" | "discard" | "close",
+    action: () => Promise<unknown>,
+  ) => {
     setPending(kind);
     void action().finally(() => setPending(null));
   };
@@ -130,6 +144,9 @@ export function PageSaveRecoveryDialog({
               onLeaveForSettings();
             }}
             onRetryWrite={() => run("retry", onRetryWrite)}
+            onRestore={() => void onRestore()}
+            onCopyText={() => void onCopyText()}
+            onCloseWithoutSaving={() => run("close", onCloseWithoutSaving)}
           />
         )}
       </DialogContent>
@@ -145,14 +162,20 @@ function PageSaveRecoveryContent({
   onConfirmDiscard,
   onLeaveForSettings,
   onRetryWrite,
+  onRestore,
+  onCopyText,
+  onCloseWithoutSaving,
 }: {
   block: PageSaveBlock;
   commitRefused: boolean;
-  pending: "retry" | "discard" | null;
+  pending: "retry" | "discard" | "close" | null;
   retryDisabled: boolean;
   onConfirmDiscard: () => void;
   onLeaveForSettings: () => void;
   onRetryWrite: () => void;
+  onRestore: () => void;
+  onCopyText: () => void;
+  onCloseWithoutSaving: () => void;
 }) {
   const discard = (
     <Button type="button" variant="destructive" onClick={onConfirmDiscard}>
@@ -162,6 +185,7 @@ function PageSaveRecoveryContent({
   let description: ReactNode;
   let body: ReactNode = null;
   let destructive: ReactNode = discard;
+  let secondary: ReactNode = null;
   let primary: ReactNode;
 
   if (block.kind === "conflict") {
@@ -258,6 +282,51 @@ function PageSaveRecoveryContent({
         {label}
       </Button>
     ) : null;
+  } else if (block.kind === "gone") {
+    // The file is written again only by an explicit restore (DF-269 R4).
+    const { gone } = block;
+    const busy = gone.pending || pending === "close";
+    description = m.page_save_reason_gone();
+    body = gone.error ? (
+      <p className="text-sm text-destructive" data-page-gone-error>
+        {gone.error}
+      </p>
+    ) : null;
+    destructive = (
+      <Button
+        type="button"
+        variant="destructive"
+        disabled={busy}
+        data-page-gone-close
+        onClick={onCloseWithoutSaving}
+      >
+        <PendingIcon pending={pending === "close"} />
+        {m.page_leave_close_discard()}
+      </Button>
+    );
+    secondary = (
+      <Button
+        type="button"
+        variant="outline"
+        disabled={busy}
+        data-page-gone-copy
+        onClick={onCopyText}
+      >
+        {m.page_gone_copy()}
+      </Button>
+    );
+    primary = (
+      <Button
+        type="button"
+        disabled={busy}
+        data-page-save-default
+        data-page-gone-restore
+        onClick={onRestore}
+      >
+        <PendingIcon pending={gone.pending} />
+        {m.page_gone_restore()}
+      </Button>
+    );
   } else {
     description = block.reason;
     primary = (
@@ -280,9 +349,10 @@ function PageSaveRecoveryContent({
         <DialogDescription>{description}</DialogDescription>
       </DialogHeader>
       {body}
-      <DialogFooter className="sm:justify-between">
+      <DialogFooter className="sm:flex-wrap sm:justify-between">
         <div className="flex flex-col gap-2 sm:flex-row">{destructive}</div>
-        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+        <div className="flex flex-col-reverse gap-2 sm:ml-auto sm:flex-row">
+          {secondary}
           <DialogClose asChild>
             <Button type="button" variant="outline" data-page-save-close>
               {m.page_save_dialog_close()}

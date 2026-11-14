@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,10 +13,10 @@ import { toast } from "sonner";
 import { normalizeSchema, type PageSchemaResult } from "@/features/properties";
 import { getPageSchema } from "@/features/properties/api";
 import { useSignalUserEdit } from "@/features/navigation";
-import { useSpaceTreeSync } from "@/features/space";
+import { useSpaceNames, useSpaceTreeSync } from "@/features/space";
 import { repositoryAccessDenialFromError } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
-import { createPage, readPage } from "../page-api";
+import { createPage, readPage, restorePageFile } from "../page-api";
 import {
   isPageTreeMetaField,
   usePageFieldSave,
@@ -23,6 +24,9 @@ import {
 } from "../field-save";
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import { applyPageTitleOutcome, type Page, type PageCover } from "../model";
+import { patchPageField } from "../model/field-save";
+import { pageRestoreSource } from "../model/restore-source";
+import { takenNameMessage } from "../lib/taken-name-error";
 import { pageSourceErrorKind } from "../model/source-conflict";
 import { pageNameConflictFromError } from "../model/page-name";
 import { propertyFieldSavePolicy } from "../property-field-save";
@@ -134,6 +138,7 @@ export function PageDetailProvider({
   const retargetPage = useRetargetPage();
   const signalUserEdit = useSignalUserEdit();
   const pageSurface = useOptionalPageSurfaceSession();
+  const spaceName = useSpaceNames();
   const pageName = usePageName({ pagePath: readmePath, page, spaceId });
   const {
     patchPageTreeMeta,
@@ -164,6 +169,7 @@ export function PageDetailProvider({
     projectPath,
     applyPageUpdate,
     deferTitlePathAdoption: true,
+    writesHeld: pageSurface?.writesHeld,
     onSaved: (updated, context) => {
       signalUserEdit();
       if (isPageTreeMetaField(context.field)) {
@@ -361,9 +367,70 @@ export function PageDetailProvider({
     retry,
     discard: discardWrites,
     drafts,
+    hasWork: hasMetadataWork,
     holdsError,
     writeError: failedWrite,
   } = writes;
+  // The source a save would write: the last read Page with its unsaved
+  // metadata applied and `body` as its text.
+  const restoreFile = useCallback(
+    async (body: string | null) => {
+      if (!page) throw new Error("Page is not loaded");
+      let restored = page;
+      for (const [field, draft] of drafts)
+        restored = patchPageField(restored, field, draft.value);
+      const text = body ?? restored.body;
+      const result = await restorePageFile({
+        spacePath,
+        path: restored.path,
+        content: pageRestoreSource(restored.meta, text),
+        projectPath,
+      });
+      // The drafts are written: they are saved, not discarded.
+      discardWrites();
+      await discardFields();
+      setPage((current) =>
+        current?.path === restored.path
+          ? {
+              ...restored,
+              body: text,
+              source_version: result.sourceVersion ?? null,
+            }
+          : current,
+      );
+      // The folders the restore created show in the tree with the Page.
+      const segments = restored.path.split("/");
+      const rows = segments.map((_, index) =>
+        segments.slice(0, segments.length - index).join("/"),
+      );
+      void reloadTreePathParents(spaceId, rows).catch(handleError);
+      return result;
+    },
+    [
+      discardFields,
+      discardWrites,
+      drafts,
+      page,
+      projectPath,
+      reloadTreePathParents,
+      spaceId,
+      spacePath,
+    ],
+  );
+  const goneOwnerRef = useRef({
+    restore: restoreFile,
+    close: () => onPageGone?.(),
+    text: () => page?.body ?? "",
+    refusal: (error: unknown) => takenNameMessage(error, spaceName(spacePath)),
+  });
+  useLayoutEffect(() => {
+    goneOwnerRef.current = {
+      restore: restoreFile,
+      close: () => onPageGone?.(),
+      text: () => page?.body ?? "",
+      refusal: (error) => takenNameMessage(error, spaceName(spacePath)),
+    };
+  });
   const { markLocalWrite } = usePageDetailRefresh({
     spacePath,
     path: status === "ready" ? (page?.path ?? null) : null,
@@ -380,15 +447,29 @@ export function PageDetailProvider({
     },
     onGone: (changedHere) => {
       if (target === "page") {
+        const pageTitle = page?.meta.title.trim() || resolvedFallbackTitle;
+        // Unsaved work keeps a Page another writer took away open at its
+        // path until the user restores the file, copies the text or closes
+        // it without saving (DF-269 R3).
+        if (!changedHere && pageSurface?.holdsUnsavedWork()) {
+          // The owner acts on the work as it is when the user asks.
+          pageSurface.holdGoneSource({
+            restore: (body) => goneOwnerRef.current.restore(body),
+            close: () => goneOwnerRef.current.close(),
+            text: () => goneOwnerRef.current.text(),
+            refusal: (error) => goneOwnerRef.current.refusal(error),
+          });
+          toast.warning(m.page_gone_kept_title({ title: pageTitle }), {
+            description: m.page_gone_kept_description(),
+          });
+          return true;
+        }
         // The user deleted, renamed or moved it here; only another writer's
         // change is news.
         if (!changedHere)
-          toast.warning(
-            m.page_deleted_externally_title({
-              title: page?.meta.title.trim() || resolvedFallbackTitle,
-            }),
-            { description: m.page_deleted_externally_description() },
-          );
+          toast.warning(m.page_deleted_externally_title({ title: pageTitle }), {
+            description: m.page_deleted_externally_description(),
+          });
         onPageGone?.();
         return;
       }
@@ -398,6 +479,7 @@ export function PageDetailProvider({
       setSchemaResult(null);
       setStatus("missing");
     },
+    onReturned: () => void pageSurface?.releaseGoneSource(),
     // A Page stays open at its new path when a folder above it moves here,
     // with the work typed before saved into the file that moves; so does the
     // README of an App or Collection home page when the sidebar moves it.
@@ -442,7 +524,13 @@ export function PageDetailProvider({
       options: SavePageFieldOptions = {},
     ) => {
       markLocalWrite(field);
-      if (field === "title" && options.flush && pageSurface) {
+      // While the file is gone a title is one more held draft, not a rename.
+      if (
+        field === "title" &&
+        options.flush &&
+        pageSurface &&
+        !pageSurface.writesHeld()
+      ) {
         await pageSurface.runMutation(() =>
           writeField(field, fieldValue, options),
         );
@@ -483,17 +571,29 @@ export function PageDetailProvider({
     try {
       nextPage = await readPage({ spacePath, path: currentPath });
     } catch (readError) {
-      if (target === "page" || !isReadmeMissingError(readError, currentPath))
-        throw readError;
+      if (!isReadmeMissingError(readError, currentPath)) throw readError;
+      // A Page whose file is gone meanwhile keeps what it shows: discarding
+      // drops the drafts and leaving goes on.
+      if (target === "page") return;
     }
     if (sequence !== reloadSequenceRef.current) return;
     setPage(nextPage);
     setStatus(nextPage ? "ready" : "missing");
   }, [currentPath, discardFields, discardWrites, spacePath, target]);
+  const drop = useCallback(async () => {
+    discardWrites();
+    await discardFields();
+  }, [discardFields, discardWrites]);
   useEffect(
     () =>
-      pageSurface?.registerPersistence("metadata", { flush, retry, discard }),
-    [discard, flush, pageSurface, retry],
+      pageSurface?.registerPersistence("metadata", {
+        flush,
+        retry,
+        discard,
+        drop,
+        hasWork: hasMetadataWork,
+      }),
+    [discard, drop, flush, hasMetadataWork, pageSurface, retry],
   );
   const title =
     (

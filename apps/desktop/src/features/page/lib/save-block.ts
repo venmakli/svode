@@ -4,23 +4,28 @@ import {
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
+import type { PageGoneState } from "../model/source-gone";
 import type { PageSourceConflict } from "../model/source-conflict";
 
 /**
  * Why the Page session holds an unsaved draft, by its leading cause: a source
- * conflict, then a refused repository access, then a busy or failed write.
+ * conflict, then a refused repository access, then a file gone outside this
+ * window, then a busy or failed write.
  */
 export type PageSaveBlock =
   | { kind: "conflict"; conflict: PageSourceConflict }
   | { kind: "access"; recovery: RepositoryAccessPreflightController }
+  | { kind: "gone"; gone: PageGoneState }
   | { kind: "write"; reason: string };
 
 export function pageSaveBlock({
+  gone = null,
   ownerError = null,
   persistenceError,
   recovery,
   sourceConflict,
 }: {
+  gone?: PageGoneState | null;
   /** A failed write of the detail owner the session does not present itself. */
   ownerError?: string | null;
   persistenceError: string | null;
@@ -30,6 +35,7 @@ export function pageSaveBlock({
   if (sourceConflict) return { kind: "conflict", conflict: sourceConflict };
   if (recovery.open && recovery.pending?.placement === "inline")
     return { kind: "access", recovery };
+  if (gone) return { kind: "gone", gone };
   const reason = persistenceError ?? ownerError;
   return reason ? { kind: "write", reason } : null;
 }
@@ -39,6 +45,8 @@ export function pageSaveBlockReason(block: PageSaveBlock) {
   switch (block.kind) {
     case "conflict":
       return m.page_source_conflict_title();
+    case "gone":
+      return m.page_save_reason_gone();
     case "write":
       return block.reason;
     case "access": {
