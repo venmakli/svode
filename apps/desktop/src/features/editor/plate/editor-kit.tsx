@@ -64,7 +64,11 @@ import {
   markdownInlineImageRules,
   remarkInlineImages,
 } from "../model/markdown-inline-image";
-import { markdownLinkRules } from "../model/markdown-link";
+import {
+  checkAutolinkForms,
+  markdownLinkHandlers,
+  markdownLinkRules,
+} from "../model/markdown-link";
 import { markdownParagraphRules } from "../model/markdown-paragraph";
 import { markdownImageReferenceRules } from "../model/markdown-references";
 import {
@@ -119,13 +123,22 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
         );
         if (isEmptyDocument(editor, value)) return "";
         const serialized = withListLineBreaks(editor, value);
+        const stringifyOptions =
+          options?.remarkStringifyOptions ??
+          editor.getOptions(MarkdownPlugin).remarkStringifyOptions;
         return serializeMarkdownWithComments(editor, {
           ...options,
           remarkStringifyOptions: withMinimalTextEscapes(
             editor,
-            options?.remarkStringifyOptions ??
-              editor.getOptions(MarkdownPlugin).remarkStringifyOptions,
+            {
+              ...stringifyOptions,
+              handlers: {
+                ...stringifyOptions?.handlers,
+                ...markdownLinkHandlers,
+              },
+            },
             serialized,
+            [checkAutolinkForms],
           ),
           value: serialized,
         });

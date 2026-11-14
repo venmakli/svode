@@ -82,6 +82,28 @@ type ContainerMode =
   | { kind: "probe" }
   | { kind: "write"; escapes: Set<number> };
 
+/**
+ * An inline container as written, to check against what it should read as.
+ * `key` identifies the text `read` parses: the container in its frame.
+ */
+export interface WrittenContainer {
+  text: string;
+  key: string;
+  /** The Svode reading of the container, with offsets into `text`. */
+  read(): { tree: MdastNode; toWritten(offset: number): number };
+}
+
+/**
+ * A check of an inline container after it is written with its escapes. It
+ * returns true when it changed how the container's nodes are written, and the
+ * container is written again, its escapes decided anew.
+ */
+export type WrittenContainerCheck = (
+  editor: SlateEditor,
+  container: MdastNode,
+  written: WrittenContainer,
+) => boolean;
+
 interface EscapeRun {
   mode: ContainerMode | null;
   ids: Map<TextNode, number>;
@@ -90,6 +112,7 @@ interface EscapeRun {
   definitions: string;
   /** The head paragraph of each list item, by whether the item is a task. */
   listHeads: WeakMap<MdastNode, boolean>;
+  checks: WrittenContainerCheck[];
 }
 
 const decisionCache = new WeakMap<SlateEditor, Map<string, number[]>>();
@@ -568,11 +591,7 @@ function writeText(
   );
 }
 
-/**
- * Writes an inline container (a paragraph, heading, table cell or a root of
- * phrasing content) with the escapes its own reading needs.
- */
-function writeInlineContainer(
+function writeWithEscapes(
   editor: SlateEditor,
   run: EscapeRun,
   container: MdastNode,
@@ -601,6 +620,47 @@ function writeInlineContainer(
   return write();
 }
 
+function writtenContainer(
+  editor: SlateEditor,
+  run: EscapeRun,
+  container: MdastNode,
+  text: string,
+): WrittenContainer {
+  const { prefix, suffix } = containerFrame(container, run);
+  return {
+    text,
+    key: `${prefix}\u0000${text}\u0000${suffix}`,
+    read() {
+      const { tree, toInput } = readMarkdown(editor, prefix + text + suffix);
+      return {
+        tree,
+        toWritten: (offset) => toInput(offset) - prefix.length,
+      };
+    },
+  };
+}
+
+/**
+ * Writes an inline container (a paragraph, heading, table cell or a root of
+ * phrasing content) with the escapes its own reading needs, again after each
+ * check that changed how its nodes are written.
+ */
+function writeInlineContainer(
+  editor: SlateEditor,
+  run: EscapeRun,
+  container: MdastNode,
+  write: () => string,
+): string {
+  for (;;) {
+    const text = writeWithEscapes(editor, run, container, write);
+    const written = writtenContainer(editor, run, container, text);
+    const changed = run.checks.filter((check) =>
+      check(editor, container, written),
+    );
+    if (changed.length === 0) return text;
+  }
+}
+
 /**
  * `remark-stringify` handlers that write text with minimal escaping. The root
  * handler routes every outermost phrasing container of the document through
@@ -610,6 +670,7 @@ function writeInlineContainer(
 function minimalEscapeHandlers(
   editor: SlateEditor,
   definitions: string,
+  checks: WrittenContainerCheck[],
 ): Handlers {
   const run: EscapeRun = {
     mode: null,
@@ -617,6 +678,7 @@ function minimalEscapeHandlers(
     nextId: 0,
     definitions,
     listHeads: new WeakMap(),
+    checks,
   };
   const prepared = new WeakSet<State>();
 
@@ -704,18 +766,20 @@ function definitionsOf(editor: SlateEditor, value: Descendant[]): string {
 
 /**
  * `remarkStringifyOptions` of `editor` with minimal escaping of the text of
- * `value`, the value they write.
+ * `value`, the value they write. `checks` run on every inline container as
+ * written.
  */
 export function withMinimalTextEscapes(
   editor: SlateEditor,
   options: StringifyOptions | null | undefined,
   value: Descendant[],
+  checks: WrittenContainerCheck[] = [],
 ): StringifyOptions {
   return {
     ...options,
     handlers: {
       ...options?.handlers,
-      ...minimalEscapeHandlers(editor, definitionsOf(editor, value)),
+      ...minimalEscapeHandlers(editor, definitionsOf(editor, value), checks),
     },
   };
 }

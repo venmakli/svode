@@ -3,6 +3,7 @@ import { MarkdownPlugin, markdownToAstProcessor } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
 
 import { annotateMarkdownComment } from "./markdown-comments";
+import { annotateAutolinkSource } from "./markdown-link";
 import {
   escapedOpenerEdits,
   restoreMarkdownLiteral,
@@ -232,7 +233,11 @@ function deserializeBoundaryMarkdown(
           markdownSourcePlugin(
             markdown,
             parsed,
-            [annotateMarkdownComment, restoreMarkdownLiteral],
+            [
+              annotateMarkdownComment,
+              restoreMarkdownLiteral,
+              annotateAutolinkSource,
+            ],
             { withoutMdx },
           ),
         ],
