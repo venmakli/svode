@@ -195,19 +195,19 @@ function readMarkdown(
   editor: SlateEditor,
   text: string,
 ): { tree: MdastNode; parsed: string; toInput(offset: number): number } {
-  return readWithMdxOrWithout((withoutMdx) => {
-    const jsx = withoutMdx ? null : mapHtmlToJsx(text);
+  return readWithMdxOrWithout(editor, text, (input, withoutMdx) => {
+    const jsx = withoutMdx ? null : mapHtmlToJsx(input.text);
     if (jsx) {
       return {
         tree: markdownToAstProcessor(editor, jsx.text) as MdastNode,
         parsed: jsx.text,
-        toInput: jsx.toInput,
+        toInput: (offset: number) => input.toInput(jsx.toInput(offset)),
       };
     }
     return {
-      tree: readWithoutMdx(editor, text),
-      parsed: text,
-      toInput: (offset: number) => offset,
+      tree: readWithoutMdx(editor, input.text),
+      parsed: input.text,
+      toInput: input.toInput,
     };
   });
 }

@@ -1,5 +1,4 @@
 import {
-  markdownToAstProcessor,
   serializeMd,
   type DeserializeMdOptions,
   type MdRules,
@@ -15,10 +14,6 @@ import {
 } from "platejs";
 
 import {
-  applyTextEdits,
-  HTML_COMMENT_RE,
-  mapHtmlToJsx,
-  type MappedText,
   type MarkdownSourceAnnotator,
   type MdastNode,
 } from "./markdown-source";
@@ -361,50 +356,4 @@ export function serializeMarkdownWithComments(
     ...options,
     value: withListCommentCarriers(editor, options?.value ?? editor.children),
   });
-}
-
-function placeOf(error: unknown): number | null {
-  const place = (
-    error as { place?: { offset?: number; start?: { offset?: number } } }
-  )?.place;
-  return place?.offset ?? place?.start?.offset ?? null;
-}
-
-/**
- * An unclosed `<!--` is not a comment, but it makes the MDX parse fail and
- * sends the whole document to Plate's lossy fallback. Each unclosed opener the
- * MDX parse stops at is escaped so the rest of the document parses normally.
- */
-export function escapeUnclosedCommentOpeners(
-  editor: SlateEditor,
-  markdown: string,
-): MappedText {
-  if (!markdown.replace(new RegExp(HTML_COMMENT_RE), "").includes("<!--")) {
-    return applyTextEdits(markdown, []);
-  }
-  const escapes: number[] = [];
-  for (;;) {
-    const current = applyTextEdits(
-      markdown,
-      escapes.map((offset) => ({ start: offset, end: offset, text: "\\" })),
-    );
-    const parsed = mapHtmlToJsx(current.text);
-    if (!parsed) return current;
-    try {
-      markdownToAstProcessor(editor, parsed.text);
-      return current;
-    } catch (error) {
-      const place = placeOf(error);
-      if (place === null) return current;
-      const opener = parsed.toInput(place) - 1;
-      const offset = current.toInput(opener);
-      if (
-        !current.text.startsWith("<!--", opener) ||
-        escapes.includes(offset)
-      ) {
-        return current;
-      }
-      escapes.push(offset);
-    }
-  }
 }

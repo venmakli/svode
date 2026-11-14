@@ -1,15 +1,13 @@
-import type { Descendant } from "platejs";
+import type { Descendant, SlateEditor } from "platejs";
 import { MarkdownPlugin, markdownToAstProcessor } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
 
-import {
-  annotateMarkdownComment,
-  escapeUnclosedCommentOpeners,
-} from "./markdown-comments";
+import { annotateMarkdownComment } from "./markdown-comments";
 import {
   escapedOpenerEdits,
   restoreMarkdownLiteral,
 } from "./markdown-literals";
+import { localMdxRejectEdits, mdxRejectEdit } from "./markdown-mdx-rejects";
 import {
   createReferenceResolution,
   type LinkDefinitions,
@@ -162,33 +160,47 @@ export function normalizeMarkdownForPlate(markdown: string): string {
   return applyTextEdits(markdown, bareBreakNormalizationEdits(markdown)).text;
 }
 
-function plateInputFor(
-  editor: PlateEditor,
-  markdown: string,
-  literalEdits: TextEdit[],
-): MappedText {
+function plateInputFor(markdown: string, literalEdits: TextEdit[]): MappedText {
   const literal = applyTextEdits(markdown, literalEdits);
-  const escaped = escapeUnclosedCommentOpeners(editor, literal.text);
   return composeMappedText(
     literal,
-    escaped,
-    applyTextEdits(escaped.text, bareBreakNormalizationEdits(escaped.text)),
+    applyTextEdits(literal.text, bareBreakNormalizationEdits(literal.text)),
   );
 }
 
 /**
- * Text MDX rejects is read whole without MDX. Plate's own fallback is meant for
- * incomplete MDX streamed by AI and drops the text after the first `<` it takes
- * for an unclosed tag, while the boundary always reads a whole body or segment.
- * A parse without MDX keeps all of the text; only the MDX elements of such a
- * document are read as text.
+ * Reads `text` with MDX by `read`, which is given the text to parse mapped to
+ * `text`. The places MDX rejects where CommonMark reads text are neutralized
+ * first: the ones inside lines, found part by part, then each one the parse of
+ * the whole text still stops at, and the read repeated. Text MDX rejects
+ * otherwise is read whole without MDX. Plate's own fallback is meant for
+ * incomplete MDX streamed by AI and drops the text after the first `<` it
+ * takes for an unclosed tag, while the boundary always reads a whole body or
+ * segment; a parse without MDX keeps all of the text, only the MDX elements of
+ * such a document are read as text.
  */
-export function readWithMdxOrWithout<T>(read: (withoutMdx: boolean) => T): T {
-  try {
-    return read(false);
-  } catch {
-    return read(true);
+export function readWithMdxOrWithout<T>(
+  editor: SlateEditor,
+  text: string,
+  read: (input: MappedText, withoutMdx: boolean) => T,
+): T {
+  const edits = new Map(
+    localMdxRejectEdits(editor, text).map((edit) => [edit.start, edit]),
+  );
+  let input = applyTextEdits(text, [...edits.values()]);
+  for (;;) {
+    try {
+      return read(input, false);
+    } catch (error) {
+      const edit = mdxRejectEdit(input.text, error);
+      if (!edit) break;
+      const start = input.toInput(edit.start);
+      if (edits.has(start)) break;
+      edits.set(start, { ...edit, start, end: start + edit.end - edit.start });
+      input = applyTextEdits(text, [...edits.values()]);
+    }
   }
+  return read(applyTextEdits(text, []), true);
 }
 
 function rethrow(error: unknown): never {
@@ -202,29 +214,30 @@ function deserializeBoundaryMarkdown(
 ): Descendant[] {
   const markdownApi = editor.getApi(MarkdownPlugin).markdown;
   const remarkPlugins = editor.getOptions(MarkdownPlugin).remarkPlugins ?? [];
-  const plateInput = plateInputFor(
-    editor,
-    markdown,
-    escapedOpenerEdits(markdown),
-  );
+  const plateInput = plateInputFor(markdown, escapedOpenerEdits(markdown));
 
-  const nodes = readWithMdxOrWithout((withoutMdx) =>
-    markdownApi.deserialize(plateInput.text, {
-      // An MDX failure leaves `deserialize` before Plate's fallback runs.
-      onError: withoutMdx ? undefined : rethrow,
-      withoutMdx,
-      remarkPlugins: [
-        // References are links and images before any other plugin runs.
-        references.plugin,
-        ...remarkPlugins,
-        markdownSourcePlugin(
-          markdown,
-          plateInput,
-          [annotateMarkdownComment, restoreMarkdownLiteral],
-          { withoutMdx },
-        ),
-      ],
-    }),
+  const nodes = readWithMdxOrWithout(
+    editor,
+    plateInput.text,
+    (input, withoutMdx) => {
+      const parsed = composeMappedText(plateInput, input);
+      return markdownApi.deserialize(parsed.text, {
+        // An MDX failure leaves `deserialize` before Plate's fallback runs.
+        onError: withoutMdx ? undefined : rethrow,
+        withoutMdx,
+        remarkPlugins: [
+          // References are links and images before any other plugin runs.
+          references.plugin,
+          ...remarkPlugins,
+          markdownSourcePlugin(
+            markdown,
+            parsed,
+            [annotateMarkdownComment, restoreMarkdownLiteral],
+            { withoutMdx },
+          ),
+        ],
+      });
+    },
   );
 
   return Array.isArray(nodes) ? (nodes as Descendant[]) : [];
@@ -290,25 +303,23 @@ export function fencedCodeRanges(
       text: "",
     })),
   );
-  const plateInput = plateInputFor(
-    editor,
-    lf.text,
-    escapedOpenerEdits(lf.text),
-  );
+  const plateInput = plateInputFor(lf.text, escapedOpenerEdits(lf.text));
   const { tree, parsed } = readWithMdxOrWithout(
-    (withoutMdx): { tree: MdastNode; parsed: MappedText } => {
-      const jsx = withoutMdx ? null : mapHtmlToJsx(plateInput.text);
+    editor,
+    plateInput.text,
+    (input, withoutMdx): { tree: MdastNode; parsed: MappedText } => {
+      const jsx = withoutMdx ? null : mapHtmlToJsx(input.text);
       if (jsx) {
         return {
           tree: markdownToAstProcessor(editor, jsx.text) as MdastNode,
-          parsed: composeMappedText(lf, plateInput, jsx),
+          parsed: composeMappedText(lf, plateInput, input, jsx),
         };
       }
       return {
-        tree: markdownToAstProcessor(editor, plateInput.text, {
+        tree: markdownToAstProcessor(editor, input.text, {
           withoutMdx: true,
         }) as MdastNode,
-        parsed: composeMappedText(lf, plateInput),
+        parsed: composeMappedText(lf, plateInput, input),
       };
     },
   );
