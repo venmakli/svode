@@ -167,7 +167,7 @@ function plateInputFor(
  * A parse without MDX keeps all of the text; only the MDX elements of such a
  * document are read as text.
  */
-function readWithMdxOrWithout<T>(read: (withoutMdx: boolean) => T): T {
+export function readWithMdxOrWithout<T>(read: (withoutMdx: boolean) => T): T {
   try {
     return read(false);
   } catch {

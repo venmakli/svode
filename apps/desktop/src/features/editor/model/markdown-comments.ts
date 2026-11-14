@@ -252,7 +252,8 @@ function unwrapListComments(node: MdastNode) {
   });
 }
 
-function rootHandler(
+/** The root handler of the Svode Markdown boundary. */
+export function markdownRootHandler(
   node: MdastNode,
   _parent: unknown,
   state: {
@@ -304,7 +305,7 @@ export const remarkMarkdownComments = function (this: {
 }) {
   const data = this.data() as { toMarkdownExtensions?: unknown[] };
   (data.toMarkdownExtensions ??= []).push({
-    handlers: { root: rootHandler },
+    handlers: { root: markdownRootHandler },
     // Joins run last to first.
     join: [joinCommentDefinition, joinLinkDefinitions],
   });

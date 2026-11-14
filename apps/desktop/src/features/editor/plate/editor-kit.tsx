@@ -1,6 +1,7 @@
 "use client";
 
 import { LinkPlugin } from "@platejs/link/react";
+import { MarkdownPlugin } from "@platejs/markdown";
 import { MentionInputPlugin, MentionPlugin } from "@platejs/mention/react";
 import { type Value, KEYS, TrailingBlockPlugin } from "platejs";
 import { type TPlateEditor, useEditorRef } from "platejs/react";
@@ -52,6 +53,7 @@ import {
 } from "../model/markdown-comments";
 import { isEmptyDocument } from "../model/empty-document";
 import { remarkMdxAutolinks } from "../model/markdown-autolink";
+import { withMinimalTextEscapes } from "../model/markdown-escapes";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
 import {
   markdownLineBreakRules,
@@ -118,6 +120,11 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
         if (isEmptyDocument(editor, value)) return "";
         return serializeMarkdownWithComments(editor, {
           ...options,
+          remarkStringifyOptions: withMinimalTextEscapes(
+            editor,
+            options?.remarkStringifyOptions ??
+              editor.getOptions(MarkdownPlugin).remarkStringifyOptions,
+          ),
           value: withListLineBreaks(editor, value),
         });
       },
