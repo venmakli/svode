@@ -8,7 +8,7 @@ use crate::index::update::IndexUpdateState;
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, PageWarning};
 use crate::page::write::SourceSnapshot;
-use crate::page::{PageError, ensure_path_in_space};
+use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
 pub struct PageCreate {
     pub space: String,
@@ -261,13 +261,16 @@ where
                         });
                     }
                 };
+                // The rollback removes the folder of the conversion from here
+                // on, whatever fails next.
+                snapshot.track_created(root.join(new_parent).join("README.md"));
+                snapshot.track_created_dir(root.join(new_parent));
+                checkpoint("parent_conversion")?;
                 if converted.path != format!("{new_parent}/README.md") {
                     return Err(PageError::General(
                         "parent Page conversion returned an unexpected path".into(),
                     ));
                 }
-                snapshot.track_created(Path::new(&request.space).join(&converted.path));
-                snapshot.track_created_dir(Path::new(&request.space).join(new_parent));
             }
             let created = store::create_source_with_options(
                 &request.space,
@@ -454,20 +457,24 @@ pub(crate) fn not_a_markdown_parent() -> PageError {
 
 /// Resolve the requested parent of a create or a move: an existing directory
 /// is the parent as is; a leaf Page `X.md`, or `X` when only `X.md` exists,
-/// becomes the folder Page `X`. A leaf whose folder name a sibling takes
-/// portably is refused before any write, and a path that names nothing is
-/// `FileNotFound`.
+/// becomes the folder Page `X`. The parent and the leaf take the spelling
+/// the file system stores them in, so everything derived from them matches
+/// the disk. A leaf whose folder name a sibling takes portably is refused
+/// before any write, and a path that names nothing is `FileNotFound`.
 pub(crate) fn resolve_page_parent(space: &str, requested: &str) -> Result<PageParent, PageError> {
+    if requested.is_empty() {
+        return Ok(PageParent::Directory(String::new()));
+    }
     let root = Path::new(space);
-    let requested_path = Path::new(requested);
-    let direct = root.join(requested_path);
-    if requested.is_empty() || direct.is_dir() {
-        return Ok(PageParent::Directory(requested.to_string()));
+    let spelled = disk_spelling(root, requested);
+    let direct = root.join(&spelled);
+    if direct.is_dir() {
+        return Ok(PageParent::Directory(spelled));
     }
     let leaf = if direct.is_file() {
-        requested.to_string()
-    } else if requested_path.extension().is_none() {
-        let candidate = format!("{requested}.md");
+        spelled
+    } else if Path::new(requested).extension().is_none() {
+        let candidate = disk_spelling(root, &format!("{requested}.md"));
         if root.join(&candidate).is_file() {
             candidate
         } else {
@@ -711,6 +718,49 @@ mod tests {
             original
         );
         assert!(!temp.path().join("Parent").exists());
+    }
+
+    #[tokio::test]
+    async fn failure_right_after_parent_conversion_removes_its_folder_and_allows_a_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        scaffold_space(temp.path(), "Test");
+        let original = "---\ntitle: Parent\n---\nParent body";
+        fs::write(temp.path().join("Parent.md"), original).unwrap();
+        let mut input = request(temp.path());
+        input.parent_path = Some("Parent.md".into());
+        FAILURE.with(|failure| *failure.borrow_mut() = Some("parent_conversion"));
+        let result = create(
+            input,
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
+        )
+        .await;
+        FAILURE.with(|failure| *failure.borrow_mut() = None);
+        assert!(
+            matches!(&result, Err(PageError::General(cause)) if cause.contains("injected parent_conversion failure")),
+            "{:?}",
+            result.err()
+        );
+        assert_eq!(
+            fs::read_to_string(temp.path().join("Parent.md")).unwrap(),
+            original
+        );
+        assert!(!temp.path().join("Parent").exists());
+
+        let mut retry = request(temp.path());
+        retry.parent_path = Some("Parent.md".into());
+        let outcome = create(
+            retry,
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.page.path, "Parent/Budget.md");
     }
 
     #[tokio::test]

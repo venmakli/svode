@@ -967,6 +967,7 @@ const INVENTORY: &[(&str, &str, Guard)] = {
             "ensure_path_in_space",
             NotAWrite("the rule itself"),
         ),
+        ("page/membership.rs", "disk_spelling", READ),
         ("page/metadata.rs", "patch", Direct),
         ("page/metadata.rs", "relative_changed_paths", PURE),
         ("page/naming.rs", "display_name_key", PURE),

@@ -25,7 +25,7 @@ use crate::page::create::{PageParent, not_a_markdown_parent, resolve_page_parent
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, Page};
 use crate::page::write::{SourceSnapshot, mapped_path};
-use crate::page::{PageError, ensure_path_in_space};
+use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
 use super::commit::{StructuralCommitSink, schedule_structural_paths};
 use super::move_parent::MovePlan;
@@ -484,7 +484,8 @@ pub fn create_folder(
     commits: Option<&dyn StructuralCommitSink>,
 ) -> Result<String, PageError> {
     ensure_path_in_space(space, parent_path.unwrap_or_default())?;
-    let folder_path = store::create_folder(space, parent_path, name)?;
+    let parent_path = parent_path.map(|parent| disk_spelling(space, parent));
+    let folder_path = store::create_folder(space, parent_path.as_deref(), name)?;
     schedule_structural_paths(
         commits,
         project_path,

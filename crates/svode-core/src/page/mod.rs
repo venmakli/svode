@@ -1,6 +1,8 @@
 pub mod changes;
 pub mod create;
 pub mod dates;
+#[cfg(test)]
+mod disk_spelling_tests;
 mod error;
 #[cfg(test)]
 mod field_order_tests;
@@ -30,7 +32,7 @@ pub mod write;
 
 pub use error::{PageError, TitledContent};
 
-pub use membership::{ChildSpaceRoots, ensure_path_in_space};
+pub use membership::{ChildSpaceRoots, disk_spelling, ensure_path_in_space};
 
 pub use target::{
     ProjectConfig, ResolvedSpaceTarget, SpaceReadiness, SpaceReference, project_for_directory,

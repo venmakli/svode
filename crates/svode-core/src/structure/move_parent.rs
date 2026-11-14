@@ -9,9 +9,9 @@ use std::path::Path;
 use super::naming::normalize_rel_lossy;
 use crate::collections::traversal::is_registered_child_space_rel;
 use crate::content_tree::child_folder_names;
-use crate::page::PageError;
 use crate::page::create::{PageParent, resolve_page_parent};
 use crate::page::store;
+use crate::page::{PageError, disk_spelling};
 
 /// What a move of a source under a requested parent does, resolved before
 /// its first write.
@@ -67,6 +67,8 @@ pub(crate) fn plan_move(space: &str, from: &str, to_parent: &str) -> Result<Move
     if !source.exists() {
         return Err(PageError::FileNotFound(from.to_string()));
     }
+    // The parent takes the spelling the file system stores it in.
+    let to_parent = &disk_spelling(space, to_parent);
     let unsupported = || PageError::UnsupportedMoveParent {
         path: to_parent.to_string(),
     };
@@ -81,7 +83,7 @@ pub(crate) fn plan_move(space: &str, from: &str, to_parent: &str) -> Result<Move
     // The source cannot hold itself: the resolved parent is neither the
     // source nor inside the moved tree.
     let holder = target_leaf.as_deref().unwrap_or(&parent);
-    if !holder.is_empty() && Path::new(holder).starts_with(from) {
+    if !holder.is_empty() && Path::new(holder).starts_with(disk_spelling(space, from)) {
         return Err(unsupported());
     }
     let name = Path::new(from)

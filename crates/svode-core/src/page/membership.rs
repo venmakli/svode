@@ -2,6 +2,8 @@
 //! child Space belong to that child Space, not to the Space that registers
 //! it. Writes addressed through a Space, the standalone Page read and the
 //! rename by path all refuse a path that another Space owns by this rule.
+//! The same writes spell an existing path as the file system stores it, the
+//! way the Page read does.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -124,6 +126,81 @@ pub fn ensure_path_in_space(space: impl AsRef<Path>, path: &str) -> Result<(), P
         }),
         None => Ok(()),
     }
+}
+
+/// `path`, relative to the Space at `space`, in the spelling the file system
+/// stores it: on a file system that ignores letter case or Unicode
+/// normalization, every component it finds takes the name of its entry in
+/// its directory; a component the directory holds exactly as given stays
+/// as is. The first component the file system does not find and everything
+/// after it stay as given, so a case-sensitive file system accepts no path
+/// it does not hold. Only the spelling changes: separators, empty and `.`
+/// components stay, a symlink component is not resolved, and a path with
+/// `..` or a root is returned unchanged for the operation to refuse as
+/// before. Every write addressed through a Space spells its existing paths
+/// with this before planning.
+pub fn disk_spelling(space: impl AsRef<Path>, path: &str) -> String {
+    let is_separator = |character: char| character == '/' || (cfg!(windows) && character == '\\');
+    if path.starts_with(is_separator)
+        || matches!(
+            Path::new(path).components().next(),
+            Some(Component::RootDir | Component::Prefix(_))
+        )
+    {
+        return path.to_string();
+    }
+    let segments = path.split(is_separator).collect::<Vec<_>>();
+    if segments.contains(&"..") {
+        return path.to_string();
+    }
+    let mut spelled = path.to_string();
+    let mut current = space.as_ref().to_path_buf();
+    // Byte offset of the segment in `spelled`, which only replacements of
+    // earlier segments shift.
+    let mut offset = 0;
+    for segment in segments {
+        let start = offset;
+        offset += segment.len() + 1;
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        let next = current.join(segment);
+        if fs::symlink_metadata(&next).is_err() {
+            break;
+        }
+        if let Some(entry) = stored_entry_name(&current, segment)
+            && entry != segment
+        {
+            spelled.replace_range(start..start + segment.len(), &entry);
+            offset = offset + entry.len() - segment.len();
+            current.push(entry);
+        } else {
+            current = next;
+        }
+    }
+    spelled
+}
+
+/// Name of the entry of `directory` that the file system found for
+/// `segment`: the entry spelled exactly so, else the one equal to it
+/// ignoring letter case and Unicode normalization. `None` when the
+/// directory cannot be listed or holds no such entry.
+fn stored_entry_name(directory: &Path, segment: &str) -> Option<String> {
+    let key = super::filename::portable_component_key(segment);
+    let mut portable = None;
+    for entry in fs::read_dir(directory).ok()?.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name == segment {
+            return Some(segment.to_string());
+        }
+        if portable.is_none() && super::filename::portable_component_key(name) == key {
+            portable = Some(name.to_string());
+        }
+    }
+    portable
 }
 
 /// Path components of `path` without empty and `.` parts, with `..`
@@ -251,6 +328,114 @@ mod tests {
         assert_eq!(roots.owner_of("ENG"), expected);
         assert_eq!(roots.owner_of("Eng/Spec.md"), expected);
         assert_eq!(roots.owner_of("ENG/New.md"), expected);
+    }
+
+    /// Whether the file system at `root` finds a name in another letter
+    /// case and in another Unicode normalization.
+    fn insensitivity(root: &Path) -> (bool, bool) {
+        fs::write(root.join("Probe"), "").unwrap();
+        fs::write(root.join("Nai\u{308}ve"), "").unwrap();
+        let case = root.join("PROBE").exists();
+        let normalization = root.join("Na\u{ef}ve").exists();
+        fs::remove_file(root.join("Probe")).unwrap();
+        fs::remove_file(root.join("Nai\u{308}ve")).unwrap();
+        (case, normalization)
+    }
+
+    #[test]
+    fn the_exact_spelling_stays_as_is() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("Tasks/Sub")).unwrap();
+        fs::write(root.join("Tasks/Beta.md"), "").unwrap();
+
+        for path in [
+            "",
+            ".",
+            "Tasks",
+            "Tasks/",
+            "./Tasks/Beta.md",
+            "Tasks//Sub",
+            "Tasks/Beta.md",
+        ] {
+            assert_eq!(disk_spelling(root, path), path);
+        }
+    }
+
+    #[test]
+    fn another_letter_case_takes_the_disk_spelling_where_the_file_system_finds_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("Tasks/Sub")).unwrap();
+        fs::write(root.join("Tasks/Beta.md"), "").unwrap();
+        let (case_insensitive, _) = insensitivity(root);
+
+        for (path, spelled) in [
+            ("tasks", "Tasks"),
+            ("TASKS/beta.md", "Tasks/Beta.md"),
+            ("./tasks//sub/", "./Tasks//Sub/"),
+            // The first missing component and the rest stay as given.
+            ("tasks/Beta", "Tasks/Beta"),
+            ("tasks/sub/New/page.md", "Tasks/Sub/New/page.md"),
+        ] {
+            let expected = if case_insensitive { spelled } else { path };
+            assert_eq!(disk_spelling(root, path), expected, "{path}");
+        }
+        assert_eq!(disk_spelling(root, "missing/tasks"), "missing/tasks");
+    }
+
+    #[test]
+    fn another_unicode_normalization_takes_the_disk_spelling_where_the_file_system_finds_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let decomposed = "Cafe\u{301}";
+        let composed = "Caf\u{e9}";
+        fs::create_dir_all(root.join(decomposed)).unwrap();
+        fs::write(root.join(decomposed).join("Inner.md"), "").unwrap();
+        let (_, normalization_insensitive) = insensitivity(root);
+
+        let path = format!("{composed}/Inner.md");
+        let expected = if normalization_insensitive {
+            format!("{decomposed}/Inner.md")
+        } else {
+            path.clone()
+        };
+        assert_eq!(disk_spelling(root, &path), expected);
+        assert_eq!(
+            disk_spelling(root, &format!("{decomposed}/Inner.md")),
+            format!("{decomposed}/Inner.md")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_component_is_not_resolved() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("Tasks")).unwrap();
+        fs::write(root.join("Tasks/Beta.md"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("Tasks"), root.join("Link")).unwrap();
+        let (case_insensitive, _) = insensitivity(root);
+
+        assert_eq!(disk_spelling(root, "Link/Beta.md"), "Link/Beta.md");
+        let expected = if case_insensitive {
+            "Link/Beta.md"
+        } else {
+            "link/beta.md"
+        };
+        assert_eq!(disk_spelling(root, "link/beta.md"), expected);
+    }
+
+    #[test]
+    fn a_path_of_another_shape_is_returned_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("Tasks")).unwrap();
+        let absolute = root.join("tasks").to_string_lossy().into_owned();
+
+        for path in ["tasks/../tasks", "../tasks", absolute.as_str()] {
+            assert_eq!(disk_spelling(root, path), path);
+        }
     }
 
     #[test]
