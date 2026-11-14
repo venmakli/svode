@@ -775,7 +775,7 @@ pub fn write_with_relation_plan(
 /// Keeps the fields of the file in place and appends new ones in the order of
 /// the item's collection columns, then by name. An unreadable schema only
 /// leaves new keys in name order.
-fn order_fields_for_write(
+pub(crate) fn order_fields_for_write(
     space: &str,
     path: &str,
     previous: &frontmatter::FrontmatterFields,

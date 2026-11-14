@@ -25,7 +25,6 @@ import {
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import { applyPageTitleOutcome, type Page, type PageCover } from "../model";
 import { patchPageField } from "../model/field-save";
-import { pageRestoreSource } from "../model/restore-source";
 import { takenNameMessage } from "../lib/taken-name-error";
 import { pageSourceErrorKind } from "../model/source-conflict";
 import { pageNameConflictFromError } from "../model/page-name";
@@ -371,8 +370,8 @@ export function PageDetailProvider({
     holdsError,
     writeError: failedWrite,
   } = writes;
-  // The source a save would write: the last read Page with its unsaved
-  // metadata applied and `body` as its text.
+  // Restores the last read Page with its unsaved metadata applied and `body`
+  // as its text; the core writes what a save of it would leave.
   const restoreFile = useCallback(
     async (body: string | null) => {
       if (!page) throw new Error("Page is not loaded");
@@ -382,8 +381,7 @@ export function PageDetailProvider({
       const text = body ?? restored.body;
       const result = await restorePageFile({
         spacePath,
-        path: restored.path,
-        content: pageRestoreSource(restored.meta, text),
+        page: { ...restored, body: text },
         projectPath,
       });
       // The drafts are written: they are saved, not discarded.

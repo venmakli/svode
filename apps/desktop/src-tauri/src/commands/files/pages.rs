@@ -428,20 +428,72 @@ pub(super) async fn write_page_body_shared(
     })
 }
 
+/// The Page an open session holds when its file disappeared: the body and
+/// metadata with the unsaved edits and the version it last read.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePageInput {
+    body: String,
+    meta: RestorePageMetaInput,
+    source_version: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct RestorePageMetaInput {
+    title: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    cover: Option<svode_core::page::Cover>,
+    #[serde(default)]
+    extra: svode_core::page::frontmatter::FrontmatterFields,
+}
+
 /// Writes the source of an open Page whose file disappeared outside this
-/// window back to its path, creating the missing folders. Like a body
-/// write, the change stays pending for autocommit.
+/// window back to its path, creating the missing folders. The source is
+/// `content` as given, or the one a save of `page` would leave. Like a
+/// body write, the change stays pending for autocommit.
 #[tauri::command]
 pub async fn restore_page_file(
     app: AppHandle,
     space: String,
     path: String,
-    content: String,
+    content: Option<String>,
+    page: Option<RestorePageInput>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
 ) -> Result<WriteResult, AppError> {
+    let content = match (content, page) {
+        (Some(content), None) => content,
+        (None, Some(page)) => {
+            let version = page
+                .source_version
+                .map(svode_core::page::SourceVersion::from_token);
+            crate::page::restore_source(svode_core::page::write::PageRestoreSource {
+                space: &space,
+                path: &path,
+                body: &page.body,
+                meta: svode_core::page::write::PageRestoreMeta {
+                    title: page.meta.title,
+                    icon: page.meta.icon,
+                    description: page.meta.description,
+                    cover: page.meta.cover,
+                    extra: page.meta.extra,
+                },
+                source_version: version.as_ref(),
+            })
+            .await?
+        }
+        _ => {
+            return Err(AppError::General(
+                "restore_page_file takes either content or page".into(),
+            ));
+        }
+    };
     let authorization_space = space.clone();
     restore_page_file_shared(
         space,

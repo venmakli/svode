@@ -1048,6 +1048,7 @@ const INVENTORY: &[(&str, &str, Guard)] = {
         ("page/templates.rs", "duplicate", Direct),
         ("page/templates.rs", "instantiate", Direct),
         ("page/write/restore.rs", "restore", Direct),
+        ("page/write/restore_source.rs", "restore_source", READ),
         ("page/write/runtime.rs", "write", Direct),
         (
             "structure/commit.rs",

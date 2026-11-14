@@ -180,21 +180,33 @@ export async function writePage(
 
 export interface RestorePageFileInput {
   spacePath: string;
-  /** The path the Page file had, which no longer exists. */
-  path: string;
-  /** Complete Markdown source, frontmatter included, written as is. */
-  content: string;
+  /** The Page as its session holds it; its path no longer exists. */
+  page: Page;
   projectPath: string | null;
 }
 
-/** Writes the Page file again at the path it disappeared from. */
+/**
+ * Writes the Page file again at the path it disappeared from, with the
+ * source a save of its body and metadata would leave.
+ */
 export async function restorePageFile(
   input: RestorePageFileInput,
 ): Promise<WritePageResult> {
+  const { meta } = input.page;
   const result = await restorePageFileDto({
     space: input.spacePath,
-    path: input.path,
-    content: input.content,
+    path: input.page.path,
+    page: {
+      body: input.page.body,
+      meta: {
+        title: meta.title,
+        icon: meta.icon,
+        description: meta.description ?? null,
+        cover: meta.cover ?? null,
+        extra: meta.extra,
+      },
+      sourceVersion: input.page.source_version ?? null,
+    },
     projectPath: input.projectPath,
   });
   return writeResultFromDto(result);

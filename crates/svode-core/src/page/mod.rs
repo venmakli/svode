@@ -49,4 +49,4 @@ pub use source::{
     filesystem_dates, parse_markdown, read_page_source, read_page_source_with_names,
     resolve_page_target,
 };
-pub(crate) use source::{FrontmatterHead, frontmatter_head};
+pub(crate) use source::{FrontmatterHead, frontmatter_head, source_version_for};

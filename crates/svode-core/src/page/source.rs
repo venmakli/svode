@@ -257,12 +257,28 @@ pub fn current_source_version(space: &Path, path: &str) -> Result<SourceVersion,
     Ok(version_of(&target, &bytes))
 }
 
+/// Version the source of `path` would have with `bytes`, also for a path
+/// whose file does not exist.
+pub(crate) fn source_version_for(
+    space: &Path,
+    path: &str,
+    bytes: &[u8],
+) -> Result<SourceVersion, PageSourceError> {
+    let space = fs::canonicalize(space).map_err(|error| source_error(space, error))?;
+    let path = normalize_page_path(path)?;
+    Ok(digest(&space, &path, bytes))
+}
+
 /// Digest of the canonical target and the full bytes of one read.
 fn version_of(target: &ResolvedPageTarget, bytes: &[u8]) -> SourceVersion {
+    digest(&target.space, &target.path, bytes)
+}
+
+fn digest(space: &Path, path: &str, bytes: &[u8]) -> SourceVersion {
     let mut hasher = Sha256::new();
-    hasher.update(target.space.to_string_lossy().as_bytes());
+    hasher.update(space.to_string_lossy().as_bytes());
     hasher.update([0]);
-    hasher.update(target.path.as_bytes());
+    hasher.update(path.as_bytes());
     hasher.update([0]);
     hasher.update(bytes);
     SourceVersion(format!("{:x}", hasher.finalize()))

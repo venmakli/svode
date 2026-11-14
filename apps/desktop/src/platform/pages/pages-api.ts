@@ -101,16 +101,23 @@ export function writePage(
   return invokeCommand<WritePageResultDto>("write_page_body", input);
 }
 
+/** The Page an open session holds: body and metadata with unsaved edits. */
+export interface RestorePageDto {
+  body: string;
+  meta: Pick<PageMetaDto, "title" | "icon" | "description" | "cover" | "extra">;
+  /** Version of the source the session last read. */
+  sourceVersion: string | null;
+}
+
 /**
- * Writes `content`, the complete Markdown source with its frontmatter, as the
- * Page at `path`, which must not exist; missing folders of the path are
- * created. A taken path is refused as `file_already_exists` naming the entry
- * on disk.
+ * Writes the Page at `path`, which must not exist, with the source a save of
+ * `page` would leave; missing folders of the path are created. A taken path
+ * is refused as `file_already_exists` naming the entry on disk.
  */
 export function restorePageFile(input: {
   space: string;
   path: string;
-  content: string;
+  page: RestorePageDto;
   projectPath: string | null;
 }): Promise<WritePageResultDto> {
   return invokeCommand<WritePageResultDto>("restore_page_file", { ...input });

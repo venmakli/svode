@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use svode_core::page::create::{PageCreate, PageCreateOutcome};
 use svode_core::page::fields::{PageFieldOutcome, PageFieldUpdate};
 use svode_core::page::nonce::WriteNonceRegistry;
-use svode_core::page::write::{PageRestore, PageRuntime, PageWrite, PageWriteOutcome};
+use svode_core::page::write::{
+    PageRestore, PageRestoreSource, PageRuntime, PageWrite, PageWriteOutcome,
+};
 
 use crate::error::AppError;
 use crate::index::{IndexState, update::IndexUpdateState};
@@ -68,6 +70,13 @@ where
         authorize,
     )
     .await
+}
+
+/// The source a restore of `request` writes, with the detected Git CLI as
+/// the reader of the last read bytes.
+pub(crate) async fn restore_source(request: PageRestoreSource<'_>) -> Result<String, AppError> {
+    let cli = crate::git::dates::detected_cli();
+    Ok(svode_core::page::write::restore_source(request, cli.as_ref()).await?)
 }
 
 pub(crate) async fn update_fields<F, Fut>(

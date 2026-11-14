@@ -143,13 +143,12 @@ async function harness(
       if (command === "restore_page_file") {
         restores.push(input);
         if (restoreFailure) throw restoreFailure;
-        const content = String(input.content);
-        const body = content.slice(content.indexOf("\n---\n") + 5);
+        const page = input.page as { body: string; meta: Page["meta"] };
         pages.set(String(input.path), {
           path: String(input.path),
-          body,
+          body: page.body,
           source_version: "restored",
-          meta: { title: "", icon: null, created: "", updated: "", extra: {} },
+          meta: { ...page.meta, created: "", updated: "" },
         });
         return { write_nonce: "restore-nonce", source_version: "restored" };
       }
@@ -1146,9 +1145,18 @@ test("restoring a gone Page writes its last source with the draft at the same pa
     expect(view.restores).toHaveLength(1);
     const restore = view.restores[0]!;
     expect(restore.path).toBe(README);
-    expect(restore.content).toBe(
-      '---\ntitle: "App only"\nicon: "🚀"\ndescription: "Draft"\nStatus: "Todo"\n---\nLocal body',
-    );
+    // The core writes what a save of this Page would leave.
+    expect(restore.page).toEqual({
+      body: "Local body",
+      meta: {
+        title: "App only",
+        icon: "🚀",
+        description: "Draft",
+        cover: null,
+        extra: { Status: "Todo" },
+      },
+      sourceVersion: "v1",
+    });
     expect(view.session().goneState).toBeNull();
     expect(view.context().metadataDrafts.size).toBe(0);
     expect(view.context().page?.meta.description).toBe("Draft");
