@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HEADLESS_TOOLS = 56;
+const HEADLESS_TOOLS = 58;
 const dir = resolve(process.argv[2] ?? "");
 if (!process.argv[2]) {
   console.error("usage: node scripts/smoke-standalone.mjs <dir with svode and svode-mcp>");
