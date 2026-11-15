@@ -8,14 +8,19 @@
       "commit": "c1c38e9ee84323aa6b06d3361ddf374312630c71",
       "sourceRef": "main",
       "runId": 43677817021,
-      "publishedAt": "2026-11-15T05:04:05.014Z",
-      "expiresAt": "2026-11-18T05:04:05.014Z",
+      "publishedAt": "2026-11-15T05:27:18.238Z",
+      "expiresAt": "2026-11-18T05:27:18.238Z",
       "reason": "Dogfood-фиксы stage 11",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/43677817021/artifacts/14147064856",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/43677817021",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/43677817021/artifacts/14148681106",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/43677817021",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     }
