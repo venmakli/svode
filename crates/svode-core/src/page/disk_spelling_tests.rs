@@ -695,13 +695,40 @@ async fn reorder_in_another_letter_case() {
         WhenNotFound::RefusesAsBefore,
     )
     .await;
-    assert_same_as_exact(
-        Write::Reorder(&["beta.md", "ALPHA.md"]),
+
+    // Children in another letter case: what the children as spelled on disk
+    // give where the file system finds them, a refusal as before where not.
+    let other_children = Write::Reorder(&["beta.md", "ALPHA.md"]);
+    let expected = fixture();
+    let exact_result = run(
+        Write::Reorder(&["Beta.md", "Alpha.md"]),
+        expected.path(),
         "Tasks",
-        "Tasks",
-        WhenNotFound::RefusesAsBefore,
     )
-    .await;
+    .await
+    .unwrap_or_else(|error| panic!("reorder of Tasks failed: {error:?}"));
+    let actual = fixture();
+    let before = tree_snapshot(actual.path());
+    let result = run(other_children, actual.path(), "Tasks").await;
+    if actual.path().join("Tasks/beta.md").exists() {
+        let result =
+            result.unwrap_or_else(|error| panic!("{other_children:?} Tasks failed: {error:?}"));
+        assert_eq!(result, exact_result, "{other_children:?}");
+        assert_eq!(
+            tree_snapshot(actual.path()),
+            tree_snapshot(expected.path()),
+            "{other_children:?}"
+        );
+    } else {
+        assert_not_found(
+            other_children,
+            "Tasks",
+            WhenNotFound::RefusesAsBefore,
+            result,
+            &before,
+            actual.path(),
+        );
+    }
 }
 
 #[tokio::test]
