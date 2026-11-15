@@ -8,8 +8,8 @@
       "commit": "c1c38e9ee84323aa6b06d3361ddf374312630c71",
       "sourceRef": "main",
       "runId": 43677817021,
-      "publishedAt": "2026-11-15T05:27:18.238Z",
-      "expiresAt": "2026-11-18T05:27:18.238Z",
+      "publishedAt": "2026-11-15T05:37:34.000Z",
+      "expiresAt": "2026-11-18T05:37:34.000Z",
       "reason": "Dogfood-фиксы stage 11",
       "platforms": {
         "linux": {
@@ -21,6 +21,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/43677817021/artifacts/14148681106",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/43677817021",
           "artifactName": "Svode-windows-nsis"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/43677817021/artifacts/14147909522",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/43677817021",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     }
