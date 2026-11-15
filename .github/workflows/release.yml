@@ -60,15 +60,17 @@ jobs:
           NOTES: ${{ needs.release_notes.outputs.body }}
         run: |
           printf '%s\n' "$NOTES" > notes.md
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --prerelease \
-            --verify-tag \
-            --title "Svode $GITHUB_REF_NAME" \
-            --notes-file notes.md
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --silent
+          # The id comes from the create response: the release list can lag
+          # behind a new draft, which left the build without a release id.
           id="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
-            --jq "[.[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\")][0].id")"
+            --method POST \
+            -f tag_name="$GITHUB_REF_NAME" \
+            -f name="Svode $GITHUB_REF_NAME" \
+            -F draft=true \
+            -F prerelease=true \
+            -F body=@notes.md \
+            --jq .id)"
           test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
