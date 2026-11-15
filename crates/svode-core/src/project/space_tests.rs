@@ -1009,6 +1009,7 @@ async fn without_structural_commits_an_immediate_commit_leaves_a_pending_creatio
     assert!(status.contains("?? notes/README.md"), "{status}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_refused_creation_commit_keeps_the_paths_it_shares_with_an_immediate_commit() {
     let f = Fixture::new(structural_and_system()).await;
