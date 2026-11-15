@@ -470,7 +470,8 @@ export function useEditorDocumentWriter({
         if (writesHeld?.()) await readPage({ spacePath, path });
         await sourceSync.reconcile(path, "external");
       } catch (error) {
-        if (writesHeld?.()) return;
+        // A file gone is told by the Page that shows it, not as a failure.
+        if (writesHeld?.() || isPageFileMissingError(error, path)) return;
         console.error("Failed to reload document:", error);
       }
     },

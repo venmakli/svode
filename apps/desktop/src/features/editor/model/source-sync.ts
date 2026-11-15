@@ -1,4 +1,5 @@
 import {
+  isPageFileMissingError,
   pageSourceErrorKind,
   type Page,
   type PageSourceConflict,
@@ -170,6 +171,9 @@ export function createSourceSync(host: SourceSyncHost) {
       page = await host.readSource(path);
     } catch (error) {
       if (open) return "conflict";
+      // A file gone is no change to choose against: the draft stays, and the
+      // Page that shows it tells the disappearance (DF-269 R1, R3).
+      if (isPageFileMissingError(error, path)) throw error;
       if (reason === "external" && !host.hasDraft(path)) throw error;
       openConflict(path, null);
       return "conflict";

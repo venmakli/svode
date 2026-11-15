@@ -1396,6 +1396,25 @@ test("an external change of a held Page whose file is gone opens no conflict, an
   }
 });
 
+test("a draft whose file another writer took away opens no conflict before its Page holds it, and its blocked write stays blocked", async () => {
+  const h = await harness("pages/taken.md", "Before\n");
+  try {
+    appendToBlock(h.editor, "Before", " edit");
+    // Its write is refused first, as a locked file refuses it.
+    h.disk.writeError = "Permission denied (os error 1)";
+    await h.save();
+    expect(h.writeBlocks.length).toBe(1);
+    h.disk.missing = true;
+    h.holdDraft();
+    await h.reconcile();
+    expect(h.conflicts.filter(Boolean)).toEqual([]);
+    expect(h.writer().hasPendingSource()).toBe(true);
+    expect(h.writer().pendingSourceText()).toBe("Before edit\n");
+  } finally {
+    await h.cleanup();
+  }
+});
+
 test("a restore of a CRLF Page sends its body with the line endings of its source, as a save does", async () => {
   const h = await harness("pages/crlf.md", "First\r\n\r\nSecond\r\n");
   try {

@@ -40,6 +40,8 @@ function harness({
     draft,
     disk: page("Loaded\n", "v1"),
     readFails: false,
+    /** The file is gone: reads fail as the backend reports a missing file. */
+    missing: false,
     paused: false,
     conflict: null as PageSourceConflict | null,
     loaded: [] as Page[],
@@ -60,6 +62,7 @@ function harness({
     hasDraft: () => state.draft,
     whenWritesSettled: async () => {},
     readSource: async () => {
+      if (state.missing) throw `File not found: ${PATH}`;
       if (state.readFails) throw new Error("unreadable");
       return state.disk;
     },
@@ -235,6 +238,22 @@ test("a failed read keeps the draft in recovery until a read succeeds", async ()
   state.conflict!.retryRead();
   await settle();
   expect(state.conflict?.status).toBe("ready");
+});
+
+test("a draft whose file is gone opens no recovery: the Page tells its disappearance", async () => {
+  const { state, sync } = harness();
+  state.missing = true;
+
+  for (const reason of ["external", "stale"] as const) {
+    let thrown: unknown = null;
+    await sync.reconcile(PATH, reason).catch((error: unknown) => {
+      thrown = error;
+    });
+    expect(thrown).toBe(`File not found: ${PATH}`);
+    expect(state.conflict).toBeNull();
+    expect(sync.isOpen()).toBe(false);
+    expect(state.paused).toBe(false);
+  }
 });
 
 test("a failed write keeps the draft and the choice", async () => {
