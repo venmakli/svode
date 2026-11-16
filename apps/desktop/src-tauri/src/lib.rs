@@ -205,7 +205,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(terminal::commands::ordered_input_handler![
             attachments::commands::attachments_list,
             attachments::commands::attachments_inspect_import_source,
             attachments::commands::attachments_import_file,
@@ -501,7 +501,6 @@ pub fn run() {
             storage::lfs::repair_lfs,
             storage::lfs::get_lfs_state,
             terminal::commands::terminal_spawn,
-            terminal::commands::terminal_write,
             terminal::commands::terminal_resize,
             terminal::commands::terminal_kill,
             terminal::commands::terminal_list,

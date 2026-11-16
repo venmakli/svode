@@ -2,9 +2,11 @@ pub mod commands;
 mod process_tree;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
@@ -72,7 +74,77 @@ struct TerminalProcess {
     shell_kind: TerminalShellKind,
     child: Box<dyn PtyChild + Send>,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    input: TerminalInput,
+}
+
+/// The result of one write to a terminal, given to whoever queued it.
+type WriteDone = Box<dyn FnOnce(Result<(), AppError>) + Send>;
+
+/// One queued write of input to a terminal.
+struct InputWrite {
+    data: String,
+    done: WriteDone,
+}
+
+/// The input side of a terminal: writes go in queue order to a thread that
+/// owns the PTY writer, so a PTY that does not read holds that thread alone,
+/// never the caller or the `sessions` lock (DF-365 R2).
+struct TerminalInput {
+    queue: mpsc::Sender<InputWrite>,
+    open: Arc<AtomicBool>,
+}
+
+impl TerminalInput {
+    fn start(
+        pty_id: &str,
+        mut writer: Box<dyn Write + Send>,
+        agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
+    ) -> Result<Self, AppError> {
+        let (queue, writes) = mpsc::channel::<InputWrite>();
+        let open = Arc::new(AtomicBool::new(true));
+        let still_open = open.clone();
+        let pty_id = pty_id.to_string();
+        thread::Builder::new()
+            .name(format!("terminal-writer-{pty_id}"))
+            .spawn(move || {
+                // Ends once the terminal is gone and its queue is drained;
+                // the writer drops here too, off the caller's thread.
+                for write in writes {
+                    let result = if still_open.load(Ordering::Acquire) {
+                        writer
+                            .write_all(write.data.as_bytes())
+                            .and_then(|()| writer.flush())
+                            .map_err(AppError::from)
+                            .map(|()| record_input(&agent_surfaces, &pty_id))
+                    } else {
+                        Err(session_not_found(&pty_id))
+                    };
+                    (write.done)(result);
+                }
+            })
+            .map_err(|e| {
+                AppError::General(format!("Failed to spawn terminal writer thread: {e}"))
+            })?;
+        Ok(Self { queue, open })
+    }
+
+    /// Queues `data` behind the earlier writes; `done` gets its result.
+    fn send(&self, pty_id: &str, data: String, done: WriteDone) -> Result<(), AppError> {
+        self.queue
+            .send(InputWrite { data, done })
+            .map_err(|_| session_not_found(pty_id))
+    }
+
+    /// The writes still queued fail as for a terminal that is gone.
+    fn close(&self) {
+        self.open.store(false, Ordering::Release);
+    }
+}
+
+impl Drop for TerminalInput {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,6 +375,14 @@ impl TerminalManager {
             .map_err(|e| AppError::General(format!("Failed to create terminal writer: {e}")))?;
 
         let pty_id = ulid::Ulid::new().to_string().to_lowercase();
+        let input = match TerminalInput::start(&pty_id, writer, self.agent_surfaces.clone()) {
+            Ok(input) => input,
+            Err(error) => {
+                let mut child = child;
+                let _ = child.kill();
+                return Err(error);
+            }
+        };
         let session = TerminalSession {
             pty_id: pty_id.clone(),
             cwd: cwd_display,
@@ -317,7 +397,7 @@ impl TerminalManager {
             shell_kind: shell.kind,
             child,
             master: pair.master,
-            writer,
+            input,
         };
 
         self.sessions
@@ -468,27 +548,54 @@ impl TerminalManager {
         Ok(())
     }
 
-    pub fn write(&self, pty_id: &str, data: &str) -> Result<(), AppError> {
-        let mut sessions = self
+    /// Queues `data` for the PTY of `pty_id` behind the earlier writes and
+    /// returns at once; `done` gets the result of the write. The `sessions`
+    /// lock is held only to queue it (DF-365 R2).
+    fn queue_write(
+        &self,
+        pty_id: &str,
+        data: String,
+        done: impl FnOnce(Result<(), AppError>) + Send + 'static,
+    ) -> Result<(), AppError> {
+        let sessions = self
             .sessions
             .lock()
             .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
         let process = sessions
-            .get_mut(pty_id)
-            .ok_or_else(|| AppError::General(format!("Terminal session not found: {pty_id}")))?;
+            .get(pty_id)
+            .ok_or_else(|| session_not_found(pty_id))?;
+        process.input.send(pty_id, data, Box::new(done))
+    }
 
-        process.writer.write_all(data.as_bytes())?;
-        process.writer.flush()?;
-        if let Some(surface) = self
-            .agent_surfaces
-            .lock()
-            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
-            .get_mut(pty_id)
-        {
-            surface.last_input_at = Some(now_rfc3339());
-            clear_waiting_status_after_input(surface);
-        }
-        Ok(())
+    /// Queues `data` in call order and gives the result of its write as a
+    /// future, which waits without holding a thread; for `terminal_write`.
+    pub(crate) fn write_queued(
+        &self,
+        pty_id: &str,
+        data: String,
+    ) -> Result<impl Future<Output = Result<(), AppError>> + Send + use<>, AppError> {
+        let (done, written) = tokio::sync::oneshot::channel();
+        self.queue_write(pty_id, data, move |result| {
+            let _ = done.send(result);
+        })?;
+        let pty_id = pty_id.to_string();
+        Ok(async move {
+            written
+                .await
+                .unwrap_or_else(|_| Err(session_not_found(&pty_id)))
+        })
+    }
+
+    /// Writes `data` and waits for its result, for a caller off the main
+    /// thread that goes on only after its input is in the PTY.
+    pub fn write(&self, pty_id: &str, data: &str) -> Result<(), AppError> {
+        let (done, written) = mpsc::sync_channel(1);
+        self.queue_write(pty_id, data.to_string(), move |result| {
+            let _ = done.send(result);
+        })?;
+        written
+            .recv()
+            .unwrap_or_else(|_| Err(session_not_found(pty_id)))
     }
 
     pub fn resize(&self, pty_id: &str, cols: u16, rows: u16) -> Result<(), AppError> {
@@ -518,6 +625,7 @@ impl TerminalManager {
             .remove(pty_id);
 
         let kill_result = if let Some(mut process) = process {
+            process.input.close();
             let result = process
                 .child
                 .kill()
@@ -830,7 +938,13 @@ impl TerminalManager {
     /// project at `cwd`, without the app-bound environment and output reader.
     #[cfg(test)]
     pub(crate) fn insert_shell_for_test(&self, pty_id: &str, cwd: &Path) {
-        let shell = default_shell();
+        self.insert_program_for_test(pty_id, cwd, default_shell());
+    }
+
+    /// The terminal `pty_id` running `shell` in a PTY, without the app-bound
+    /// environment and output reader.
+    #[cfg(test)]
+    fn insert_program_for_test(&self, pty_id: &str, cwd: &Path, shell: ShellCommand) {
         let size = pty_size(80, 24);
         let pair = native_pty_system().openpty(size).expect("open PTY");
         let mut cmd = CommandBuilder::new(shell.program.clone());
@@ -840,6 +954,8 @@ impl TerminalManager {
         cmd.cwd(cwd);
         let child = pair.slave.spawn_command(cmd).expect("spawn shell");
         let writer = pair.master.take_writer().expect("PTY writer");
+        let input = TerminalInput::start(pty_id, writer, self.agent_surfaces.clone())
+            .expect("terminal writer");
         let process = TerminalProcess {
             session: TerminalSession {
                 pty_id: pty_id.to_string(),
@@ -852,7 +968,7 @@ impl TerminalManager {
             shell_kind: shell.kind,
             child,
             master: pair.master,
-            writer,
+            input,
         };
         self.sessions
             .lock()
@@ -935,6 +1051,22 @@ fn lock_within<T>(mutex: &Mutex<T>, wait: Duration) -> Option<MutexGuard<'_, T>>
             }
             Err(TryLockError::WouldBlock) => return None,
         }
+    }
+}
+
+fn session_not_found(pty_id: &str) -> AppError {
+    AppError::General(format!("Terminal session not found: {pty_id}"))
+}
+
+/// Input reached the PTY of `pty_id`: an agent waiting for it goes on.
+fn record_input(agent_surfaces: &Arc<Mutex<HashMap<String, AgentTerminalSurface>>>, pty_id: &str) {
+    let Ok(mut surfaces) = agent_surfaces.lock() else {
+        tracing::warn!("Failed to record terminal input: state lock poisoned");
+        return;
+    };
+    if let Some(surface) = surfaces.get_mut(pty_id) {
+        surface.last_input_at = Some(now_rfc3339());
+        clear_waiting_status_after_input(surface);
     }
 }
 
@@ -2193,6 +2325,219 @@ mod tests {
         release_tx.send(()).unwrap();
         holder.join().unwrap();
         returned.expect("the forced stop returns instead of waiting for the lock");
+    }
+
+    /// Runs `body` on its own thread and fails if it does not return within
+    /// `limit`, so a call that waits for a PTY fails the test, not hangs it.
+    fn within<T: Send + 'static>(limit: Duration, body: impl FnOnce() -> T + Send + 'static) -> T {
+        let (done, result) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = done.send(body());
+        });
+        result
+            .recv_timeout(limit)
+            .expect("the call returns instead of waiting for the PTY")
+    }
+
+    /// The terminal `pty_id` running `script` under `sh` with its PTY in raw
+    /// mode without echo, once the script has started (`ready` exists).
+    #[cfg(unix)]
+    fn insert_raw_script(manager: &TerminalManager, pty_id: &str, cwd: &Path, script: &str) {
+        let ready = cwd.join(format!("{pty_id}.ready"));
+        manager.insert_program_for_test(
+            pty_id,
+            cwd,
+            ShellCommand {
+                program: "/bin/sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    format!("stty raw -echo && touch '{}' && {script}", ready.display()),
+                ],
+                kind: TerminalShellKind::Posix,
+            },
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(Instant::now() < deadline, "the script of {pty_id} starts");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_a_program_does_not_read_holds_no_caller_and_no_other_terminal_command() {
+        // DF-365 acceptance 3(a): the write waits only in the terminal's
+        // writer; the old write under the `sessions` lock fails here by time.
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let manager = TerminalManager::new(WriterRegistry::default());
+        // Programs that print nothing: no reader drains these PTYs, and a
+        // process whose output stays undrained cannot finish exiting.
+        insert_raw_script(&manager, "pty-stuck", cwd.path(), "exec sleep 600");
+        insert_raw_script(&manager, "pty-other", cwd.path(), "exec sleep 600");
+
+        within(Duration::from_secs(10), move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime");
+            runtime.block_on(async move {
+                let write = tokio::spawn(
+                    manager
+                        .write_queued("pty-stuck", "x".repeat(1 << 20))
+                        .expect("the write is queued"),
+                );
+                // Another task of the only runtime thread goes on meanwhile.
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                assert!(!write.is_finished(), "the PTY takes no more input");
+
+                for pty_id in ["pty-stuck", "pty-other"] {
+                    manager.resize(pty_id, 100, 40).expect("resize");
+                }
+                assert_eq!(manager.list().expect("list").len(), 2);
+                manager.kill("pty-other").expect("kill the other terminal");
+                manager
+                    .kill("pty-stuck")
+                    .expect("kill the terminal of the write");
+                assert!(manager.list().expect("list").is_empty());
+                // Its call still gets its result: the stop ends the write.
+                let written = tokio::time::timeout(Duration::from_secs(5), write)
+                    .await
+                    .expect("the stop ends the write")
+                    .expect("write task");
+                assert!(written.is_err(), "the write into the stopped PTY fails");
+            })
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_queued_without_waiting_reach_the_program_in_call_order() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let out = cwd.path().join("out");
+        let manager = TerminalManager::new(WriterRegistry::default());
+        insert_raw_script(
+            &manager,
+            "pty-cat",
+            cwd.path(),
+            &format!("exec cat > '{}'", out.display()),
+        );
+        let expected = (0..500).map(|n| format!("{n:04}\n")).collect::<String>();
+
+        let writes = (0..500)
+            .map(|n| {
+                manager
+                    .write_queued("pty-cat", format!("{n:04}\n"))
+                    .expect("the write is queued")
+            })
+            .collect::<Vec<_>>();
+        let results = within(Duration::from_secs(10), move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("current-thread runtime")
+                .block_on(async move {
+                    let mut results = Vec::new();
+                    for write in writes {
+                        results.push(write.await);
+                    }
+                    results
+                })
+        });
+        assert!(
+            results.iter().all(Result::is_ok),
+            "every write gets its result"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut received = String::new();
+        while Instant::now() < deadline {
+            received = std::fs::read_to_string(&out).unwrap_or_default();
+            if received.len() >= expected.len() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(received, expected);
+        manager.kill("pty-cat").expect("kill");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_to_a_closed_terminal_returns_its_error() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let manager = TerminalManager::new(WriterRegistry::default());
+        insert_raw_script(&manager, "pty-closed", cwd.path(), "exec cat > /dev/null");
+        manager
+            .write("pty-closed", "true\n")
+            .expect("a live terminal takes input");
+        manager.kill("pty-closed").expect("kill");
+
+        let not_found = "Terminal session not found: pty-closed";
+        let error = manager.write("pty-closed", "x").expect_err("closed");
+        assert!(error.to_string().contains(not_found), "{error}");
+        let error = manager
+            .write_queued("pty-closed", "x".to_string())
+            .err()
+            .expect("closed");
+        assert!(error.to_string().contains(not_found), "{error}");
+    }
+
+    #[test]
+    fn writes_still_queued_when_the_terminal_closes_fail_as_for_a_closed_terminal() {
+        let manager = TerminalManager::new(WriterRegistry::default());
+        let (started, start) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let writer = HeldWriter {
+            started,
+            released: Some(released),
+        };
+        let input =
+            TerminalInput::start("pty-held", Box::new(writer), manager.agent_surfaces.clone())
+                .expect("terminal writer");
+        let (done, results) = std::sync::mpsc::channel();
+        for data in ["first", "second"] {
+            let done = done.clone();
+            input
+                .send(
+                    "pty-held",
+                    data.to_string(),
+                    Box::new(move |result| {
+                        let _ = done.send(result);
+                    }),
+                )
+                .expect("queued");
+        }
+        start.recv().expect("the first write starts");
+
+        drop(input);
+        release.send(()).expect("release the first write");
+
+        assert!(results.recv().expect("first result").is_ok());
+        let error = results.recv().expect("second result").expect_err("closed");
+        assert!(
+            error
+                .to_string()
+                .contains("Terminal session not found: pty-held")
+        );
+    }
+
+    /// A PTY writer whose first write waits for the test.
+    struct HeldWriter {
+        started: std::sync::mpsc::Sender<()>,
+        released: Option<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl Write for HeldWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            if let Some(released) = self.released.take() {
+                let _ = self.started.send(());
+                let _ = released.recv();
+            }
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
