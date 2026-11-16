@@ -1,5 +1,6 @@
 pub mod commands;
 mod process_tree;
+mod pty_ready;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -28,6 +29,7 @@ use svode_agents::writer::{
 use svode_core::system_path;
 
 pub(crate) use process_tree::PtyProcess;
+use pty_ready::PtyReady;
 
 const OUTPUT_EVENT: &str = "terminal:output";
 const EXIT_EVENT: &str = "terminal:exit";
@@ -36,6 +38,9 @@ const DEFAULT_AGENT_TERMINAL_COLS: u16 = 120;
 const DEFAULT_AGENT_TERMINAL_ROWS: u16 = 30;
 /// How long a forced stop at exit waits for the terminal state lock.
 const FORCED_STOP_LOCK_WAIT: Duration = Duration::from_millis(100);
+/// How long a write into a PTY that takes no input waits before it checks
+/// again that its terminal is still open.
+const INPUT_WAIT_SLICE: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,9 +100,12 @@ struct TerminalInput {
 }
 
 impl TerminalInput {
+    /// `ready` waits on the PTY whose master does not block (Unix); without
+    /// it `writer` blocks until the PTY takes the input.
     fn start(
         pty_id: &str,
         mut writer: Box<dyn Write + Send>,
+        ready: Option<PtyReady>,
         agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
     ) -> Result<Self, AppError> {
         let (queue, writes) = mpsc::channel::<InputWrite>();
@@ -111,11 +119,14 @@ impl TerminalInput {
                 // the writer drops here too, off the caller's thread.
                 for write in writes {
                     let result = if still_open.load(Ordering::Acquire) {
-                        writer
-                            .write_all(write.data.as_bytes())
-                            .and_then(|()| writer.flush())
-                            .map_err(AppError::from)
-                            .map(|()| record_input(&agent_surfaces, &pty_id))
+                        write_input(
+                            &mut *writer,
+                            write.data.as_bytes(),
+                            ready.as_ref(),
+                            &still_open,
+                        )
+                        .map_err(|error| error.unwrap_or_else(|| session_not_found(&pty_id)))
+                        .map(|()| record_input(&agent_surfaces, &pty_id))
                     } else {
                         Err(session_not_found(&pty_id))
                     };
@@ -145,6 +156,42 @@ impl Drop for TerminalInput {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+/// Writes all of `data` into the PTY. While a PTY that does not block takes
+/// no more input, it waits on `ready` in slices and stops once `open` is
+/// cleared (`Err(None)`) or no program can read the PTY any more. The error
+/// of the write itself comes as `Err(Some(_))`.
+fn write_input(
+    writer: &mut dyn Write,
+    mut data: &[u8],
+    ready: Option<&PtyReady>,
+    open: &AtomicBool,
+) -> Result<(), Option<AppError>> {
+    while !data.is_empty() {
+        match writer.write(data) {
+            Ok(0) => {
+                return Err(Some(
+                    std::io::Error::from(std::io::ErrorKind::WriteZero).into(),
+                ));
+            }
+            Ok(written) => data = &data[written..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let Some(ready) = ready else {
+                    return Err(Some(error.into()));
+                };
+                if !open.load(Ordering::Acquire) {
+                    return Err(None);
+                }
+                ready
+                    .wait_writable(INPUT_WAIT_SLICE)
+                    .map_err(|error| Some(error.into()))?;
+            }
+            Err(error) => return Err(Some(error.into())),
+        }
+    }
+    writer.flush().map_err(|error| Some(error.into()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -375,7 +422,12 @@ impl TerminalManager {
             .map_err(|e| AppError::General(format!("Failed to create terminal writer: {e}")))?;
 
         let pty_id = ulid::Ulid::new().to_string().to_lowercase();
-        let input = match TerminalInput::start(&pty_id, writer, self.agent_surfaces.clone()) {
+        let input = master_ready(&*pair.master).and_then(|(read_ready, write_ready)| {
+            let input =
+                TerminalInput::start(&pty_id, writer, write_ready, self.agent_surfaces.clone())?;
+            Ok((input, read_ready))
+        });
+        let (input, read_ready) = match input {
             Ok(input) => input,
             Err(error) => {
                 let mut child = child;
@@ -419,6 +471,7 @@ impl TerminalManager {
             self.writer_claims.clone(),
             pty_id.clone(),
             reader,
+            read_ready,
         ) {
             if let Some(mut process) = self
                 .sessions
@@ -954,7 +1007,8 @@ impl TerminalManager {
         cmd.cwd(cwd);
         let child = pair.slave.spawn_command(cmd).expect("spawn shell");
         let writer = pair.master.take_writer().expect("PTY writer");
-        let input = TerminalInput::start(pty_id, writer, self.agent_surfaces.clone())
+        let (_, write_ready) = master_ready(&*pair.master).expect("PTY readiness");
+        let input = TerminalInput::start(pty_id, writer, write_ready, self.agent_surfaces.clone())
             .expect("terminal writer");
         let process = TerminalProcess {
             session: TerminalSession {
@@ -984,6 +1038,7 @@ fn spawn_reader_loop(
     writer_claims: WriterClaims,
     pty_id: String,
     mut reader: Box<dyn Read + Send>,
+    ready: Option<PtyReady>,
 ) -> Result<(), AppError> {
     let thread_name = format!("terminal-reader-{pty_id}");
     thread::Builder::new()
@@ -1007,6 +1062,16 @@ fn spawn_reader_loop(
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) => {
+                        // A master that does not block has no output yet.
+                        let e = match &ready {
+                            Some(ready) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                match ready.wait_readable() {
+                                    Ok(()) => continue,
+                                    Err(e) => e,
+                                }
+                            }
+                            _ => e,
+                        };
                         let payload = TerminalErrorEvent {
                             pty_id: pty_id.clone(),
                             message: e.to_string(),
@@ -1037,6 +1102,19 @@ fn spawn_reader_loop(
         })
         .map(|_| ())
         .map_err(|e| AppError::General(format!("Failed to spawn terminal reader thread: {e}")))
+}
+
+/// Makes the master of a new terminal non-blocking where its reader and
+/// writer must wait on it (Unix) and gives one waiter to each of them.
+#[cfg(unix)]
+fn master_ready(master: &dyn MasterPty) -> Result<(Option<PtyReady>, Option<PtyReady>), AppError> {
+    Ok((Some(PtyReady::of(master)?), Some(PtyReady::of(master)?)))
+}
+
+/// The ConPTY pipes stay blocking: nothing to wait on.
+#[cfg(not(unix))]
+fn master_ready(_master: &dyn MasterPty) -> Result<(Option<PtyReady>, Option<PtyReady>), AppError> {
+    Ok((None, None))
 }
 
 /// Takes `mutex` if it frees up within `wait`; a poisoned lock is taken too.
@@ -2490,9 +2568,13 @@ mod tests {
             started,
             released: Some(released),
         };
-        let input =
-            TerminalInput::start("pty-held", Box::new(writer), manager.agent_surfaces.clone())
-                .expect("terminal writer");
+        let input = TerminalInput::start(
+            "pty-held",
+            Box::new(writer),
+            None,
+            manager.agent_surfaces.clone(),
+        )
+        .expect("terminal writer");
         let (done, results) = std::sync::mpsc::channel();
         for data in ["first", "second"] {
             let done = done.clone();
