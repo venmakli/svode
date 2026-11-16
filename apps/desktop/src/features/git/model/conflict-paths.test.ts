@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  conflictEditedSide,
   conflictPartners,
   conflictResolvedByEditorWrite,
   gitPathConflictKind,
@@ -54,4 +55,9 @@ test("the kind of a path is the kind of the conflict that holds it, at its entry
     "rename_rename",
   );
   expect(gitPathConflictKind(conflicts, "notes.md")).toBeNull();
+});
+
+test("the file stays with the side whose version the index holds against a deletion", () => {
+  expect(conflictEditedSide({ ours: true })).toBe("ours");
+  expect(conflictEditedSide({ ours: false })).toBe("theirs");
 });

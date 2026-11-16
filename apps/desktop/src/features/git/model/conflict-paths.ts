@@ -1,5 +1,9 @@
 import { normalizeGitStatusPath } from "./git-paths";
-import type { GitConflictKind, GitPathConflict } from "./types";
+import type {
+  GitConflictFile,
+  GitConflictKind,
+  GitPathConflict,
+} from "./types";
 
 /** Whether a conflict of `kind` at `path` is resolved in the Page editor. */
 export function conflictInPageEditor(
@@ -28,6 +32,17 @@ export function conflictResolvedByEditorWrite(kind: GitConflictKind): boolean {
     kind === "text" ||
     kind === "add_add"
   );
+}
+
+/**
+ * The side whose file stays in a conflict against a deletion — modify/delete
+ * or rename/delete: the side that edited or renamed it, whose version the
+ * index holds; the other side deleted it.
+ */
+export function conflictEditedSide(
+  file: Pick<GitConflictFile, "ours">,
+): "ours" | "theirs" {
+  return file.ours ? "ours" : "theirs";
 }
 
 /**

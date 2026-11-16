@@ -5,6 +5,7 @@ import {
   resolveGitConflictFile as resolvePlatformGitConflictFile,
 } from "@/platform/git/git-api";
 import {
+  conflictEditedSide,
   gitPathConflictKind,
   type GitConflictFile,
   type GitConflictKind,
@@ -71,6 +72,26 @@ export function resolveGitConflictFile(
 ): Promise<GitSyncOutcome> {
   return runSync(spacePath, () =>
     resolvePlatformGitConflictFile({ spacePath, path, resolution }),
+  );
+}
+
+/**
+ * The choice in a conflict of an edit against a deletion as "Changes" make
+ * it: «Оставить с правками» takes the version of the side that edited the
+ * file, «Удалить» removes the path.
+ */
+export function resolveGitDeletionConflict(
+  spacePath: string,
+  path: string,
+  file: Pick<GitConflictFile, "ours">,
+  choice: "keep" | "delete",
+): Promise<GitSyncOutcome> {
+  return resolveGitConflictFile(
+    spacePath,
+    path,
+    choice === "delete"
+      ? { type: "delete" }
+      : { type: "side", side: conflictEditedSide(file) },
   );
 }
 

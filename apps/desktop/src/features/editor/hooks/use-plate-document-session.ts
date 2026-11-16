@@ -71,6 +71,7 @@ interface UsePlateDocumentSessionResult {
   hasPendingSource: EditorDocumentWriter["hasPendingSource"];
   pendingSourceText: EditorDocumentWriter["pendingSourceText"];
   restorePendingSource: EditorDocumentWriter["restorePendingSource"];
+  settlePendingSource: EditorDocumentWriter["settlePendingSource"];
 }
 
 export function usePlateDocumentSession({
@@ -231,6 +232,7 @@ export function usePlateDocumentSession({
     reconcileExternalChange,
     restorePendingSource,
     scheduleAutoSave,
+    settlePendingSource,
   } = useEditorDocumentWriter({
     activeWsId,
     bufferTimerRef,
@@ -364,5 +366,6 @@ export function usePlateDocumentSession({
     hasPendingSource,
     pendingSourceText,
     restorePendingSource,
+    settlePendingSource,
   };
 }

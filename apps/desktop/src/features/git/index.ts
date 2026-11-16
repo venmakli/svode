@@ -31,7 +31,11 @@ export {
   type GitConflictKinds,
 } from "./hooks/use-git-conflict-kinds";
 export { gitConflictKindLabel } from "./ui/git-sync-stop-copy";
-export { conflictInPageEditor, conflictPartners } from "./model/conflict-paths";
+export {
+  conflictEditedSide,
+  conflictInPageEditor,
+  conflictPartners,
+} from "./model/conflict-paths";
 export { conflictPageOpener } from "./model/conflict-navigation";
 export {
   agentRequests,

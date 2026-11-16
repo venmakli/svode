@@ -113,6 +113,18 @@ export function notifyGitResolveOutcome(
   notifyGitSyncOutcome(outcome);
 }
 
+/**
+ * The outcome of a choice made for the Page `page` at its editor: a choice
+ * that did not resolve it is named as a refused resolution of a save is.
+ */
+export function notifyGitPageChoiceOutcome(
+  outcome: GitSyncOutcome,
+  page: string,
+): void {
+  if (outcome.type === "Unresolved") notifyGitResolveFailed(page);
+  else notifyGitResolveOutcome(outcome, page);
+}
+
 /** The saved Page `page` stays in conflict: names it and why. */
 export function notifyGitResolveFailed(page: string, reason?: string): void {
   toast.error(m.git_resolve_page_failed({ page }), { description: reason });

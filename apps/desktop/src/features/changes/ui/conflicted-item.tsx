@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  conflictEditedSide,
   conflictInPageEditor,
   conflictPageOpener,
   type GitConflictFile,
@@ -236,7 +237,7 @@ function WholeFile({
 }) {
   const disabled = conflict.pending;
   // The side that still has the file in an edit or rename against a deletion.
-  const kept = file.ours ? "ours" : "theirs";
+  const kept = conflictEditedSide(file);
   const remove = (
     <ConflictResolveButton
       label={m.changes_conflict_delete()}

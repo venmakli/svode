@@ -27,6 +27,11 @@ import {
 
 export type { GitCommitResult } from "./api/git-actions";
 export {
+  useGitPageDeletionConflict,
+  type GitDeletionChoice,
+  type GitPageDeletionConflict,
+} from "./hooks/use-git-page-deletion-conflict";
+export {
   explicitCommitRefusal,
   registerPageSaveOwner,
   type GitCommitRefusal,

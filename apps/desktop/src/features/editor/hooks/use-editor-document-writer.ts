@@ -145,6 +145,11 @@ interface UseEditorDocumentWriterResult {
   hasSourceConflict: () => boolean;
   scheduleAutoSave: () => void;
   flushPendingSource: () => Promise<void>;
+  /**
+   * Writes the draft and waits for the merge resolution of what it wrote;
+   * false when the draft stays unsaved.
+   */
+  settlePendingSource: () => Promise<boolean>;
   /** Drops the unsaved body and loads the saved source, writing nothing. */
   discardPendingSource: () => Promise<void>;
   /** Drops the unsaved body without reading the source, whose file is gone. */
@@ -643,6 +648,17 @@ export function useEditorDocumentWriter({
     );
   }, [currentPathRef, debounceTimerRef, sourceSync, spacePath]);
 
+  /**
+   * Writes the pending draft and waits for the merge resolution of what it
+   * wrote, before an explicit choice for the conflict of the path; false
+   * when the draft stays unsaved (DF-354 R3).
+   */
+  const settlePendingSource = useCallback(async () => {
+    await flushPendingSource();
+    await resolutionChainRef.current;
+    return !hasPendingSource();
+  }, [flushPendingSource, hasPendingSource]);
+
   const pendingSourceText = useCallback(() => {
     const path = currentPathRef.current;
     return path ? bodyOf(path) : "";
@@ -896,6 +912,7 @@ export function useEditorDocumentWriter({
     reconcileExternalChange,
     restorePendingSource,
     scheduleAutoSave,
+    settlePendingSource,
   };
 }
 

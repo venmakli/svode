@@ -17,6 +17,7 @@ import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 
 import { usePlateDocumentSession } from "../hooks/use-plate-document-session";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
+import { PageDeletionConflictDialog } from "../ui/page-deletion-conflict-dialog";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorKit } from "./editor-kit";
 import * as m from "@/paraglide/messages.js";
@@ -104,6 +105,7 @@ export function PlateDocumentEditor({
     hasPendingSource,
     pendingSourceText,
     restorePendingSource,
+    settlePendingSource,
   } = usePlateDocumentSession({
     bodyOnly,
     bodyOnlyMeta,
@@ -202,6 +204,13 @@ export function PlateDocumentEditor({
           </div>
         </div>
       </Plate>
+      <PageDeletionConflictDialog
+        spacePath={spacePath || null}
+        path={currentDocument}
+        title={bodyOnlyMeta?.title.trim() || currentDocument || ""}
+        enabled={!readOnly}
+        settlePendingSource={settlePendingSource}
+      />
     </EditorMediaAdapterProvider>
   );
 }
