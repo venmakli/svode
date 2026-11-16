@@ -2807,7 +2807,7 @@ mod tests {
         );
         order.insert("source".to_string(), vec!["child".to_string()]);
         order.insert("source/child".to_string(), vec!["note.md".to_string()]);
-        content_tree::replace_order(ws, order).unwrap();
+        content_tree::replace_order_sections(ws, order).unwrap();
 
         let moved = move_page_with_project(ws, "source", "target", None, None).unwrap();
 

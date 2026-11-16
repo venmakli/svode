@@ -4,7 +4,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 
-use super::{replace_order, update_order};
+use super::{ContentTreeError, replace_order_sections, update_order};
 
 fn order_path(space: &Path) -> std::path::PathBuf {
     space.join(".svode/order.json")
@@ -120,7 +120,7 @@ fn a_new_file_is_sorted_by_key_and_independent_runs_give_the_same_bytes() {
     let mut results = Vec::new();
     for _ in 0..2 {
         let space = TempDir::new().unwrap();
-        assert!(replace_order(space.path(), content.clone()).unwrap());
+        assert!(replace_order_sections(space.path(), content.clone()).unwrap());
         assert_eq!(section_keys(space.path()), [".", "a", "a/b", "z"]);
         results.push(read_raw(space.path()));
     }
@@ -164,7 +164,51 @@ fn renamed_sections_take_the_place_of_the_old_keys() {
 }
 
 #[test]
-fn replacing_with_the_same_content_in_another_section_order_does_not_write() {
+fn replacing_one_section_keeps_the_other_sections_and_their_place() {
+    let space = TempDir::new().unwrap();
+    write_raw(space.path(), UNSORTED);
+
+    let one = BTreeMap::from([("a".to_string(), children(&["a2.md", "a1.md"]))]);
+    assert!(replace_order_sections(space.path(), one).unwrap());
+
+    assert_eq!(
+        read_raw(space.path()),
+        r#"{
+  "b": [
+    "b1.md"
+  ],
+  ".": [
+    "b",
+    "a"
+  ],
+  "a": [
+    "a2.md",
+    "a1.md"
+  ]
+}"#
+    );
+}
+
+#[test]
+fn a_replaced_new_section_goes_in_by_its_key_and_the_others_stay() {
+    let space = TempDir::new().unwrap();
+    write_raw(space.path(), UNSORTED);
+
+    let new = BTreeMap::from([
+        ("a/x".to_string(), children(&["x.md"])),
+        ("c".to_string(), children(&["c.md"])),
+    ]);
+    assert!(replace_order_sections(space.path(), new).unwrap());
+
+    assert_eq!(section_keys(space.path()), ["a/x", "b", ".", "a", "c"]);
+    let order = super::read_order(space.path());
+    assert_eq!(order["a"], children(&["a1.md"]));
+    assert_eq!(order["b"], children(&["b1.md"]));
+    assert_eq!(order["."], children(&["b", "a"]));
+}
+
+#[test]
+fn replacing_sections_that_match_the_file_does_not_write() {
     let space = TempDir::new().unwrap();
     write_raw(space.path(), UNSORTED);
     let same = BTreeMap::from([
@@ -173,14 +217,17 @@ fn replacing_with_the_same_content_in_another_section_order_does_not_write() {
         ("b".to_string(), children(&["b1.md"])),
     ]);
 
-    assert!(!replace_order(space.path(), same.clone()).unwrap());
+    assert!(!replace_order_sections(space.path(), same.clone()).unwrap());
+    let one = BTreeMap::from([("a".to_string(), children(&["a1.md"]))]);
+    assert!(!replace_order_sections(space.path(), one).unwrap());
+    assert!(!replace_order_sections(space.path(), BTreeMap::new()).unwrap());
     assert_eq!(read_raw(space.path()), UNSORTED);
 
     let mut changed = same;
     changed.insert(".".to_string(), children(&["a", "b"]));
     changed.remove("a");
     changed.insert("c".to_string(), children(&["c.md"]));
-    assert!(replace_order(space.path(), changed).unwrap());
+    assert!(replace_order_sections(space.path(), changed).unwrap());
     assert_eq!(
         read_raw(space.path()),
         r#"{
@@ -191,11 +238,29 @@ fn replacing_with_the_same_content_in_another_section_order_does_not_write() {
     "a",
     "b"
   ],
+  "a": [
+    "a1.md"
+  ],
   "c": [
     "c.md"
   ]
 }"#
     );
+}
+
+#[test]
+fn replacing_sections_of_an_unreadable_file_is_refused_without_a_write() {
+    let space = TempDir::new().unwrap();
+    let conflicted = "{\n<<<<<<< HEAD\n  \".\": [\"a.md\"]\n=======\n>>>>>>> theirs\n}\n";
+    write_raw(space.path(), conflicted);
+
+    let one = BTreeMap::from([(".".to_string(), children(&["a.md"]))]);
+    let error = replace_order_sections(space.path(), one).unwrap_err();
+
+    assert!(
+        matches!(&error, ContentTreeError::UnreadableOrder(path) if path == &order_path(space.path()))
+    );
+    assert_eq!(read_raw(space.path()), conflicted);
 }
 
 #[test]

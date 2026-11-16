@@ -452,11 +452,10 @@ impl SpaceOrder {
         true
     }
 
-    fn has_content(&self, content: &BTreeMap<String, Vec<String>>) -> bool {
-        self.sections.len() == content.len()
-            && content
-                .iter()
-                .all(|(key, children)| self.sections.get(key) == Some(children))
+    fn has_sections(&self, sections: &BTreeMap<String, Vec<String>>) -> bool {
+        sections
+            .iter()
+            .all(|(key, children)| self.sections.get(key) == Some(children))
     }
 }
 
@@ -512,20 +511,20 @@ pub fn update_order(
     Ok(())
 }
 
-/// Replace the whole order of a Space with `content`. Sections keep their
-/// place in the file whatever the order of `content`; the same content is a
-/// no-op without a write. Returns whether the file changed. An unreadable
-/// order file is refused.
-pub fn replace_order(
+/// Replace the children of each of `sections` in the order of a Space. A
+/// section keeps its place in the file, a new one goes in by the insertion
+/// rule, and sections not passed stay as they are. When every passed section
+/// already matches the file nothing is written. Returns whether the file
+/// changed. An unreadable order file is refused.
+pub fn replace_order_sections(
     space: &Path,
-    content: BTreeMap<String, Vec<String>>,
+    sections: BTreeMap<String, Vec<String>>,
 ) -> Result<bool, ContentTreeError> {
     let mut order = load_order(space)?;
-    if order.has_content(&content) {
+    if order.has_sections(&sections) {
         return Ok(false);
     }
-    order.retain(|key| content.contains_key(key));
-    for (key, children) in content {
+    for (key, children) in sections {
         *order.children_mut(&key) = children;
     }
     write_order(space, &order)?;

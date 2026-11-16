@@ -22,8 +22,13 @@ pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
     svode_core::content_tree::read_order(space)
 }
 
-pub fn replace_order(space: &Path, order: BTreeMap<String, Vec<String>>) -> Result<bool, AppError> {
-    Ok(svode_core::content_tree::replace_order(space, order)?)
+pub fn replace_order_sections(
+    space: &Path,
+    sections: BTreeMap<String, Vec<String>>,
+) -> Result<bool, AppError> {
+    Ok(svode_core::content_tree::replace_order_sections(
+        space, sections,
+    )?)
 }
 
 pub fn list_child_spaces(project_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {

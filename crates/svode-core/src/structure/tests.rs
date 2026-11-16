@@ -1898,7 +1898,7 @@ async fn collection_create_takes_a_suffix_when_a_neighbor_has_its_portable_name(
         if root.join(neighbor).is_dir() {
             order.insert(neighbor.to_string(), vec!["Ship.md".to_string()]);
         }
-        crate::content_tree::replace_order(root, order).unwrap();
+        crate::content_tree::replace_order_sections(root, order).unwrap();
         let neighbor_before = subtree_snapshot(root, neighbor);
         let neighbor_order = crate::content_tree::read_order(root).get(neighbor).cloned();
 

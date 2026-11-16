@@ -7,6 +7,8 @@ pub async fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String
     blocking(move || Ok(crate::space::content_tree::read_order(Path::new(&space)))).await
 }
 
+/// Replace the passed order sections of a Space (folder key -> child names);
+/// other sections of its order.json stay as they are.
 #[tauri::command]
 pub async fn save_tree_order(
     app: AppHandle,
@@ -16,17 +18,28 @@ pub async fn save_tree_order(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let changed = scope_authorized_mutation_paths(vec![PathBuf::from(&space)], async {
-        crate::space::content_tree::replace_order(Path::new(&space), order)
+    save_order_sections(&space, order, project_path.as_deref(), &autocommit).await
+}
+
+/// The authorized part of [`save_tree_order`]: write the sections and record
+/// an automatic version only when the file changed.
+pub(super) async fn save_order_sections(
+    space: &str,
+    sections: BTreeMap<String, Vec<String>>,
+    project_path: Option<&str>,
+    autocommit: &AutocommitService,
+) -> Result<(), AppError> {
+    let changed = scope_authorized_mutation_paths(vec![PathBuf::from(space)], async {
+        crate::space::content_tree::replace_order_sections(Path::new(space), sections)
     })
     .await?;
     if changed {
         maybe_autocommit_structural_paths(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
+            autocommit,
+            project_path,
+            space,
             StructuralChange::new(StructuralOp::Reorder),
-            vec![order_path(&space)],
+            vec![order_path(space)],
         );
     }
     Ok(())

@@ -1152,7 +1152,7 @@ fn shared_reorder_pages_handles_semantic_paths_and_preserves_other_keys() {
         "folder".to_string(),
         vec!["a.md".to_string(), "b.md".to_string()],
     );
-    svode_core::content_tree::replace_order(space, order).unwrap();
+    svode_core::content_tree::replace_order_sections(space, order).unwrap();
 
     let result = reorder_content(
         space.to_str().unwrap(),
@@ -1214,7 +1214,7 @@ fn shared_reorder_pages_rejects_invalid_permutation_without_writing() {
         ".".to_string(),
         vec!["a.md".to_string(), "b.md".to_string()],
     );
-    svode_core::content_tree::replace_order(space, order).unwrap();
+    svode_core::content_tree::replace_order_sections(space, order).unwrap();
     let before = std::fs::read(space.join(".svode/order.json")).unwrap();
 
     for invalid in [
@@ -1242,7 +1242,7 @@ fn tree_order_save_refuses_an_unreadable_order_file() {
     std::fs::write(&order_path, conflicted).unwrap();
 
     let order = std::collections::BTreeMap::from([(".".to_string(), vec!["a.md".to_string()])]);
-    let error = crate::space::content_tree::replace_order(space, order).unwrap_err();
+    let error = crate::space::content_tree::replace_order_sections(space, order).unwrap_err();
 
     let value = serde_json::to_value(&error).unwrap();
     assert_eq!(value["kind"], "tree_order_unreadable");
@@ -1269,16 +1269,75 @@ fn tree_order_save_keeps_the_place_of_file_sections() {
         ])
     };
 
-    let unchanged = crate::space::content_tree::replace_order(space, order(&["a1.md", "a2.md"]));
+    let unchanged =
+        crate::space::content_tree::replace_order_sections(space, order(&["a1.md", "a2.md"]));
     assert!(!unchanged.unwrap());
     assert_eq!(std::fs::read_to_string(&order_path).unwrap(), written);
 
-    let changed = crate::space::content_tree::replace_order(space, order(&["a2.md", "a1.md"]));
+    let changed =
+        crate::space::content_tree::replace_order_sections(space, order(&["a2.md", "a1.md"]));
     assert!(changed.unwrap());
     assert_eq!(
         std::fs::read_to_string(&order_path).unwrap(),
         written.replace("\"a1.md\",\n    \"a2.md\"", "\"a2.md\",\n    \"a1.md\"")
     );
+}
+
+#[tokio::test]
+async fn tree_order_save_of_one_section_keeps_the_others_and_versions_only_a_change() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    std::fs::create_dir(space.join(".git")).unwrap();
+    std::fs::create_dir_all(space.join(".svode")).unwrap();
+    let order_path = space.join(".svode/order.json");
+    let written = "{\n  \".\": [\n    \"ideas\",\n    \"notes\"\n  ],\n  \"ideas\": [\n    \"z.md\",\n    \"a.md\"\n  ],\n  \"notes\": [\n    \"n2.md\",\n    \"n1.md\"\n  ]\n}";
+    std::fs::write(&order_path, written).unwrap();
+    let runtime = Arc::new(svode_core::git::state::GitRuntime::new());
+    let autocommit = AutocommitService::new(
+        runtime.clone(),
+        Arc::new(crate::git::auto_versions::QuietHost),
+    );
+    let space_str = space.to_str().unwrap();
+    let root = |names: &[&str]| {
+        BTreeMap::from([(
+            ".".to_string(),
+            names.iter().map(|name| name.to_string()).collect(),
+        )])
+    };
+
+    tree_links::save_order_sections(
+        space_str,
+        root(&["ideas", "notes"]),
+        Some(space_str),
+        &autocommit,
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&order_path).unwrap(), written);
+    assert!(runtime.pending().peek_under(space).is_empty());
+
+    tree_links::save_order_sections(
+        space_str,
+        root(&["notes", "ideas"]),
+        Some(space_str),
+        &autocommit,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&order_path).unwrap(),
+        written.replace(
+            "\"ideas\",\n    \"notes\"\n  ],\n  \"ideas\"",
+            "\"notes\",\n    \"ideas\"\n  ],\n  \"ideas\""
+        )
+    );
+    let pending = runtime.pending().peek_under(space);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending[0].change.as_ref().map(|change| change.op.clone()),
+        Some(StructuralOp::Reorder)
+    );
+    assert_eq!(pending[0].paths, vec![order_path.clone()]);
 }
 
 #[tokio::test]
@@ -1290,7 +1349,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     }
     let mut order = std::collections::BTreeMap::new();
     order.insert(".".to_string(), vec!["a".to_string(), "b".to_string()]);
-    svode_core::content_tree::replace_order(space, order).unwrap();
+    svode_core::content_tree::replace_order_sections(space, order).unwrap();
     let index_state = IndexState::new();
 
     let invalid = crate::structure::rename(
