@@ -10,6 +10,7 @@ mod attachments;
 mod commands;
 mod document;
 mod error;
+mod exit_sequence;
 mod external_apps;
 mod files;
 mod git;
@@ -546,34 +547,87 @@ pub fn run() {
         });
 }
 
+/// The exit sequence of DF-365 R3. The main thread runs it inside `Exit`
+/// and never waits for the tokio runtime: the waiting steps run on the exit
+/// thread for at most `exit_sequence::WAIT_DEADLINE`.
 fn shutdown_desktop(app_handle: &tauri::AppHandle) {
     tracing::info!("running desktop shutdown sequence");
+    exit_sequence::run(
+        || stop_before_exit_waits(app_handle),
+        exit_waiting_steps(app_handle),
+        exit_sequence::WAIT_DEADLINE,
+        || {
+            force_stop_managed_processes(app_handle);
+            if let Err(error) = native_file_drop::clear_materialized_file_drops(app_handle) {
+                tracing::warn!("failed to clear dropped-file cache during exit: {error}");
+            }
+        },
+    );
+}
+
+/// What stops without any wait before the exit waits (DF-365 R3 step 1):
+/// the Routine scheduler and the App processes, which get their signal.
+fn stop_before_exit_waits(app_handle: &tauri::AppHandle) {
     app_handle
         .state::<routines::RoutineSchedulerState>()
         .stop_all();
-    let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
-    tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
-    let speech = app_handle.state::<speech::SpeechState>();
-    tauri::async_runtime::block_on(speech.shutdown());
+    app_handle.state::<apps::AppProcessState>().kill_all();
+}
+
+/// The waiting steps of the exit in their order, each with its own timeouts
+/// (DF-365 R3 step 2).
+fn exit_waiting_steps(app_handle: &tauri::AppHandle) -> Vec<exit_sequence::WaitingStep> {
+    let step = |name, run: fn(&tauri::AppHandle)| {
+        let app_handle = app_handle.clone();
+        exit_sequence::WaitingStep::new(name, move || run(&app_handle))
+    };
+    vec![
+        step("agent sessions", |app| {
+            on_exit_thread(
+                app.state::<agent_runtime::AgentRuntimeState>()
+                    .runtime()
+                    .shutdown(),
+            );
+        }),
+        step("speech recognition", |app| {
+            on_exit_thread(app.state::<speech::SpeechState>().shutdown());
+        }),
+        step("routine outcomes", |app| {
+            app.state::<routines::RoutineAcpLaunches>().record_exit();
+        }),
+        step("terminals", |app| {
+            app.state::<terminal::TerminalManager>().kill_all();
+        }),
+        step("automatic versions", |app| {
+            on_exit_thread(git::auto_versions::close_on_quit(app));
+        }),
+        step("autocommit flush", |app| {
+            on_exit_thread(
+                app.state::<Arc<svode_core::git::autocommit::AutocommitService>>()
+                    .flush_all(),
+            );
+        }),
+        step("project MCP sessions", |app| {
+            on_exit_thread(app.state::<project_sessions::ProjectSessions>().close_all());
+        }),
+    ]
+}
+
+/// Waits for `future` on the exit thread, never on the main thread.
+fn on_exit_thread<F: std::future::Future>(future: F) -> F::Output {
+    tauri::async_runtime::block_on(future)
+}
+
+/// Stops the agent process trees and terminal processes still running
+/// without waiting for them (DF-365 R3 step 3, R4).
+fn force_stop_managed_processes(app_handle: &tauri::AppHandle) {
     app_handle
-        .state::<routines::RoutineAcpLaunches>()
-        .record_exit();
-    let terminal_manager = app_handle.state::<terminal::TerminalManager>();
-    terminal_manager.kill_all();
-    let app_processes = app_handle.state::<apps::AppProcessState>();
-    app_processes.kill_all();
-
-    if let Err(error) = native_file_drop::clear_materialized_file_drops(app_handle) {
-        tracing::warn!("failed to clear dropped-file cache during exit: {error}");
-    }
-
-    let autocommit = app_handle.state::<Arc<svode_core::git::autocommit::AutocommitService>>();
-    let project_sessions = app_handle.state::<project_sessions::ProjectSessions>();
-    tauri::async_runtime::block_on(async {
-        git::auto_versions::close_on_quit(app_handle).await;
-        autocommit.flush_all().await;
-        project_sessions.close_all().await;
-    });
+        .state::<agent_runtime::AgentRuntimeState>()
+        .runtime()
+        .kill_process_trees();
+    app_handle
+        .state::<terminal::TerminalManager>()
+        .force_stop_all();
 }
 
 #[cfg(test)]

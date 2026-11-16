@@ -4,8 +4,9 @@ mod process_tree;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::thread;
+use std::time::{Duration, Instant};
 use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
 
 use chrono::{SecondsFormat, Utc};
@@ -31,6 +32,8 @@ const EXIT_EVENT: &str = "terminal:exit";
 const ERROR_EVENT: &str = "terminal:error";
 const DEFAULT_AGENT_TERMINAL_COLS: u16 = 120;
 const DEFAULT_AGENT_TERMINAL_ROWS: u16 = 30;
+/// How long a forced stop at exit waits for the terminal state lock.
+const FORCED_STOP_LOCK_WAIT: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -571,6 +574,28 @@ impl TerminalManager {
         }
     }
 
+    /// Signals every terminal process still here to stop and returns at
+    /// once, for a host that exits without waiting for `kill_all` (DF-365 R3
+    /// step 3, R4). It sends the signal `kill` starts with (SIGHUP to the
+    /// shell, which hangs up its jobs; termination on Windows) without the
+    /// grace sleep, `wait` or recorded outcome, and leaves the terminals
+    /// listed. It waits for the state lock only a bounded moment, so a PTY
+    /// write that does not progress under that lock cannot hold the exit.
+    pub(crate) fn force_stop_all(&self) {
+        let Some(sessions) = lock_within(&self.sessions, FORCED_STOP_LOCK_WAIT) else {
+            tracing::warn!("terminals were not signalled at exit: their state stayed locked");
+            return;
+        };
+        for process in sessions.values() {
+            if let Err(error) = process.child.clone_killer().kill() {
+                tracing::warn!(
+                    "Failed to signal terminal {}: {error}",
+                    process.session.pty_id
+                );
+            }
+        }
+    }
+
     pub fn list(&self) -> Result<Vec<TerminalSession>, AppError> {
         let sessions = self
             .sessions
@@ -896,6 +921,21 @@ fn spawn_reader_loop(
         })
         .map(|_| ())
         .map_err(|e| AppError::General(format!("Failed to spawn terminal reader thread: {e}")))
+}
+
+/// Takes `mutex` if it frees up within `wait`; a poisoned lock is taken too.
+fn lock_within<T>(mutex: &Mutex<T>, wait: Duration) -> Option<MutexGuard<'_, T>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(TryLockError::WouldBlock) => return None,
+        }
+    }
 }
 
 /// The terminal is gone, and with it the writer of its session.
@@ -2091,6 +2131,68 @@ mod tests {
             agent_exit_outcome(0).0,
             SessionState::Idle { stop_reason: None }
         );
+    }
+
+    /// Whether the shell of `pty_id` exits within a few seconds; the
+    /// terminal stays listed, so nothing else reaps it meanwhile.
+    fn shell_exits(manager: &TerminalManager, pty_id: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let exited = manager
+                .sessions
+                .lock()
+                .unwrap()
+                .get_mut(pty_id)
+                .expect("the terminal stays listed")
+                .child
+                .try_wait()
+                .expect("try_wait")
+                .is_some();
+            if exited {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn a_forced_stop_signals_every_terminal_and_then_its_shell_exits() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let manager = TerminalManager::new(WriterRegistry::default());
+        manager.insert_shell_for_test("pty-a", cwd.path());
+        manager.insert_shell_for_test("pty-b", cwd.path());
+
+        manager.force_stop_all();
+
+        assert!(shell_exits(&manager, "pty-a"));
+        assert!(shell_exits(&manager, "pty-b"));
+    }
+
+    #[test]
+    fn a_forced_stop_returns_while_a_stuck_write_holds_the_terminal_state() {
+        let manager = TerminalManager::new(WriterRegistry::default());
+        let held = manager.sessions.clone();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = thread::spawn(move || {
+            let _sessions = held.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        locked_rx.recv().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let stopping = manager.clone();
+        thread::spawn(move || {
+            stopping.force_stop_all();
+            let _ = done_tx.send(());
+        });
+
+        let returned = done_rx.recv_timeout(Duration::from_secs(5));
+
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+        returned.expect("the forced stop returns instead of waiting for the lock");
     }
 
     #[test]
