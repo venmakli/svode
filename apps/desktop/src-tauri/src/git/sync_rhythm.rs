@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Instant, SystemTime};
 
+use svode_core::git::GitError;
 use svode_core::git::flow;
 use svode_core::git::operations::SharedError;
 use svode_core::git::ops::GitStatus;
@@ -198,7 +199,7 @@ async fn run(app: &AppHandle, repo: PathBuf, work: Work) {
         flow::sync(&runtime, &host(app), &repo, true).await
     };
     if let Err(error) = &result {
-        tracing::warn!(kind = error.kind(), "background sync failed");
+        warn_sync_failed("background", error);
     }
     let after = match &cli {
         Some(cli) => rhythm::incoming_revision(cli, &repo, work).await,
@@ -211,6 +212,20 @@ async fn run(app: &AppHandle, repo: PathBuf, work: Work) {
         return;
     };
     apply(app, repo, step);
+}
+
+/// Logs a failed `what` sync. A publication refusal also names its
+/// repository and reason: every blocked Space with its path and class.
+pub(crate) fn warn_sync_failed(what: &str, error: &GitError) {
+    match error {
+        GitError::PublicationBlocked { repository, reason } => tracing::warn!(
+            kind = error.kind(),
+            repository = repository.as_str(),
+            reason = %serde_json::to_string(reason).unwrap_or_default(),
+            "{what} sync failed"
+        ),
+        _ => tracing::warn!(kind = error.kind(), "{what} sync failed"),
+    }
 }
 
 /// Records a successful sync of `repository` on this device and returns
@@ -236,4 +251,80 @@ fn last_sync_store(app: &AppHandle) -> Option<PathBuf> {
         .app_config_dir()
         .ok()
         .map(|dir| dir.join(svode_core::git::last_sync::LAST_SYNC_FILE))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    use svode_core::git::publication::{BlockedSpace, PublicationBlockReason, SpaceBlockClass};
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_publication_refusal_names_its_repository_and_every_blocked_space_with_its_class() {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let error = GitError::PublicationBlocked {
+            repository: "/projects/bigquest".into(),
+            reason: PublicationBlockReason::Spaces {
+                spaces: vec![
+                    BlockedSpace {
+                        path: "marketing".into(),
+                        class: SpaceBlockClass::Unverified,
+                    },
+                    BlockedSpace {
+                        path: "sales".into(),
+                        class: SpaceBlockClass::LocalCommits,
+                    },
+                ],
+            },
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            warn_sync_failed("background", &error);
+            warn_sync_failed("explicit", &GitError::NoRemote);
+        });
+
+        let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        let mut lines = logs.lines();
+        let refusal = lines.next().unwrap();
+        assert!(refusal.contains("background sync failed"), "{logs}");
+        assert!(
+            refusal.contains("kind=\"git_publication_blocked\""),
+            "{logs}"
+        );
+        assert!(
+            refusal.contains("repository=\"/projects/bigquest\""),
+            "{logs}"
+        );
+        assert!(
+            refusal.contains(
+                r#"{"reason":"spaces","spaces":[{"path":"marketing","class":"unverified"},{"path":"sales","class":"local_commits"}]}"#
+            ),
+            "{logs}"
+        );
+        let other = lines.next().unwrap();
+        assert!(other.contains("explicit sync failed"), "{logs}");
+        assert!(other.contains("kind=\"git_no_remote\""), "{logs}");
+    }
 }

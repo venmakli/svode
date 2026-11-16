@@ -525,6 +525,10 @@ pub async fn git_sync(
         background,
     )
     .await;
+    if let Err(error) = &result {
+        let what = if background { "background" } else { "explicit" };
+        super::sync_rhythm::warn_sync_failed(what, error);
+    }
     if !background {
         super::sync_rhythm::explicit(&app, Path::new(&space_path)).await;
     }

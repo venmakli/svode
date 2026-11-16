@@ -84,9 +84,26 @@ fn block_space(
     *entry = (*entry).max(class);
 }
 
+/// The proof step `step` gave the Space at `path` of `repo` the class
+/// `class`. Only the log learns what Git answered, without URL credentials;
+/// the refusal keeps its transport shape.
+fn warn_space_step(repo: &Path, path: &str, step: &str, class: SpaceBlockClass, out: &GitOutput) {
+    tracing::warn!(
+        repository = %repo.display(),
+        space = path,
+        step,
+        class = ?class,
+        exit_code = out.exit_code,
+        stderr = %super::auth::redact_url_credentials(out.stderr.trim()),
+        "publication proof blocked a Space"
+    );
+}
+
 /// Classify a revision its source does not advertise, from the local Space copy only.
 async fn unpublished_class(
     cli: &GitCli,
+    repo: &Path,
+    path: &str,
     child: &Path,
     oid: &str,
 ) -> Result<SpaceBlockClass, GitError> {
@@ -106,7 +123,11 @@ async fn unpublished_class(
     Ok(match contained.exit_code {
         0 => SpaceBlockClass::LocalCommits,
         1 => SpaceBlockClass::OutsideBranch,
-        _ => SpaceBlockClass::Unverified,
+        _ => {
+            let class = SpaceBlockClass::Unverified;
+            warn_space_step(repo, path, "classify", class, &contained);
+            class
+        }
     })
 }
 
@@ -486,6 +507,14 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                 })
                 .collect();
             if names.len() != 1 {
+                tracing::warn!(
+                    repository = %repo.display(),
+                    space = path,
+                    step = "gitmodules",
+                    class = ?SpaceBlockClass::Configuration,
+                    declarations = names.len(),
+                    "publication proof blocked a Space"
+                );
                 block_space(&mut blockers, path, SpaceBlockClass::Configuration);
                 continue;
             }
@@ -525,8 +554,10 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                 )
                 .await?;
                 if cloned.exit_code != 0 {
-                    unreadable.insert(source, SpaceBlockClass::Unverified);
-                    block_space(&mut blockers, path, SpaceBlockClass::Unverified);
+                    let class = SpaceBlockClass::Unverified;
+                    warn_space_step(repo, path, "clone Space copy", class, &cloned);
+                    unreadable.insert(source, class);
+                    block_space(&mut blockers, path, class);
                     continue;
                 }
                 let out = sensitive(
@@ -545,8 +576,10 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                 )
                 .await?;
                 if out.exit_code != 0 {
-                    unreadable.insert(source, SpaceBlockClass::SourceUnavailable);
-                    block_space(&mut blockers, path, SpaceBlockClass::SourceUnavailable);
+                    let class = SpaceBlockClass::SourceUnavailable;
+                    warn_space_step(repo, path, "fetch source", class, &out);
+                    unreadable.insert(source, class);
+                    block_space(&mut blockers, path, class);
                     continue;
                 }
                 let refs = checked(
@@ -579,7 +612,7 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                 )
                 .await?;
             if reachable.exit_code != 0 || reachable.stdout.trim().is_empty() {
-                let class = unpublished_class(cli, &child, oid).await?;
+                let class = unpublished_class(cli, repo, path, &child, oid).await?;
                 block_space(&mut blockers, path, class);
                 continue;
             }
@@ -609,7 +642,9 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                     )
                     .await?;
                 if fetched.exit_code != 0 {
-                    block_space(&mut blockers, path, SpaceBlockClass::Unverified);
+                    let class = SpaceBlockClass::Unverified;
+                    warn_space_step(repo, path, "fetch object", class, &fetched);
+                    block_space(&mut blockers, path, class);
                     continue;
                 }
             }
