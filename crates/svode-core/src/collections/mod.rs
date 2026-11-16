@@ -48,6 +48,11 @@ pub enum CollectionError {
     DocumentNameConflict(crate::page::naming::DocumentNameConflict),
     #[error("Page write recovery failed after {cause}; unrestored paths: {paths:?}")]
     Recovery { cause: String, paths: Vec<String> },
+    /// A path addressed through one Space that a registered child Space
+    /// owns, refused by the Space membership rule of `page` before the
+    /// first write.
+    #[error("{path} belongs to Space {space_id}; run the operation in that Space")]
+    PathInOtherSpace { path: String, space_id: String },
 }
 
 impl From<crate::page::frontmatter::FrontmatterError> for CollectionError {

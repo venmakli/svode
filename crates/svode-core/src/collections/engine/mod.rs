@@ -123,6 +123,25 @@ fn schema_error(message: impl Into<String>) -> CollectionError {
     CollectionError::Schema(message.into())
 }
 
+/// Refuse a Collection or item path of a prepared schema mutation,
+/// addressed through the Space at `space`, that a registered child Space
+/// owns, by the Space membership rule of `page`. Every prepared mutation
+/// calls this for its paths before it plans or writes anything.
+fn ensure_paths_in_space(space: &str, paths: &[&str]) -> Result<(), CollectionError> {
+    use crate::page::PageError;
+    for path in paths {
+        crate::page::ensure_path_in_space(space, path).map_err(|error| match error {
+            PageError::PathInOtherSpace { path, space_id } => {
+                CollectionError::PathInOtherSpace { path, space_id }
+            }
+            PageError::Io(error) => CollectionError::Io(error),
+            PageError::Serde(error) => CollectionError::SerdeJson(error),
+            other => CollectionError::General(other.to_string()),
+        })?;
+    }
+    Ok(())
+}
+
 /// Sensitivity of the column for decisions about personal data. A value set
 /// by a newer Svode version, or a newer property without `sensitivity: none`,
 /// counts as `pii`.

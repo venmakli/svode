@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    CollectionError, CollectionSchema, PreparedCollectionMutation, read_collection_schema,
-    reorder_templates, schema_mutation_paths, set_default_template,
+    CollectionError, CollectionSchema, PreparedCollectionMutation, ensure_paths_in_space,
+    read_collection_schema, reorder_templates, schema_mutation_paths, set_default_template,
 };
 use crate::page::frontmatter;
 
@@ -136,6 +136,7 @@ pub fn prepare_set_default_template(
     collection_path: &str,
     template_slug: Option<String>,
 ) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
+    ensure_paths_in_space(space, &[collection_path])?;
     if let Some(template_slug) = template_slug.as_deref() {
         ensure_template_exists(space, collection_path, template_slug)?;
     }
@@ -152,6 +153,7 @@ pub fn prepare_reorder_templates(
     collection_path: &str,
     new_order: Vec<String>,
 ) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
+    ensure_paths_in_space(space, &[collection_path])?;
     validate_template_order(space, collection_path, &new_order)?;
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();

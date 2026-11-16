@@ -140,3 +140,16 @@ fn command_reference_matches_the_catalog_the_grammar_and_the_standalone_host() {
     documented.extend(BRIDGE_ONLY.map(String::from));
     assert_eq!(documented, catalog_tools());
 }
+
+#[test]
+fn the_reference_names_the_refusal_of_writes_into_a_child_space() {
+    let reference = include_str!("../COMMANDS.md");
+    for phrase in [
+        "fails with `PATH_IN_OTHER_SPACE` (exit 1, `path` and `spaceId` in the error)",
+        "including `collection column` and `collection view`",
+        "for `collection column add|update|delete` and `collection view add|update|delete`",
+        "`PATH_IN_OTHER_SPACE` with the `path` and the owning `spaceId`",
+    ] {
+        assert!(reference.contains(phrase), "{phrase}");
+    }
+}

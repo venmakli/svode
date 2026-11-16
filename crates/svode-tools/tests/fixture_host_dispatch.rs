@@ -2808,6 +2808,84 @@ async fn writes_through_the_root_space_refuse_paths_of_a_child_space() {
     assert!(project.join("child/.svode/config.json").is_file());
 }
 
+/// A schema change of a Collection of the registered child Space,
+/// addressed through the root Space, is refused with PATH_IN_OTHER_SPACE
+/// before any write; through the child Space it applies.
+#[tokio::test]
+async fn schema_changes_through_the_root_space_refuse_a_collection_of_a_child_space() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    write(
+        &project.join("child/board/schema.yaml"),
+        "columns:\n  - { name: Status, type: text }\nviews:\n  - { type: table, name: Table }\n",
+    );
+    write(
+        &project.join("child/board/README.md"),
+        "---\ntitle: Board\n---\n",
+    );
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let calls = |collection: &str| {
+        [
+            (
+                "add_collection_column",
+                json!({ "collectionPath": collection, "column": { "name": "Extra", "type": "text" } }),
+            ),
+            (
+                "update_collection_column",
+                json!({ "collectionPath": collection, "columnName": "Status", "patch": { "color": "red" } }),
+            ),
+            (
+                "add_collection_view",
+                json!({ "collectionPath": collection, "view": { "type": "table", "name": "Other" } }),
+            ),
+            (
+                "update_collection_view",
+                json!({ "collectionPath": collection, "viewName": "Other", "patch": { "name": "Grid" } }),
+            ),
+            (
+                "delete_collection_view",
+                json!({ "collectionPath": collection, "viewName": "Grid" }),
+            ),
+            (
+                "delete_collection_column",
+                json!({ "collectionPath": collection, "columnName": "Extra", "deleteValues": true }),
+            ),
+        ]
+    };
+    let before = source_snapshot(project);
+
+    for (name, args) in calls("child/board") {
+        let result = call_tool(&host, Some(&target), name, args.clone()).await;
+        assert_eq!(error_code(&result), "PATH_IN_OTHER_SPACE", "{name} {args}");
+        let message = format!("{result:?}");
+        assert!(message.contains("Space child"), "{name}: {message}");
+    }
+    let after = source_snapshot(project);
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|entry| !before.contains(entry))
+        .chain(before.iter().filter(|entry| !after.contains(entry)))
+        .map(|(path, _)| path.clone())
+        // The repository write lock is a local runtime file, not content.
+        .filter(|path| !path.ends_with(".svode/write.lock"))
+        .collect();
+    assert!(changed.is_empty(), "{changed:?}");
+
+    // The same schema changes through the child Space apply.
+    for (name, mut args) in calls("board") {
+        args["spaceId"] = json!("child");
+        let result = call_tool(&host, Some(&target), name, args.clone()).await;
+        assert!(!result.is_error, "{name}: {:?}", result.structured_content);
+    }
+    let schema = fs::read_to_string(project.join("child/board/schema.yaml")).unwrap();
+    assert!(schema.contains("color: red"), "{schema}");
+    assert!(
+        !schema.contains("Extra") && !schema.contains("Grid"),
+        "{schema}"
+    );
+}
+
 #[tokio::test]
 async fn structural_actions_in_a_submodule_space_need_the_parent_gitlink_repository() {
     let fixture = structure_fixture();

@@ -1765,6 +1765,131 @@ async fn delete_content_through_the_root_space_refuses_a_child_space_path() {
     }
 }
 
+/// The schema, property, view and template commands prepare their change
+/// through the shared core mutation: a Collection or item of a child Space
+/// addressed through the root Space is refused with `PathInOtherSpace`
+/// before access is requested or anything is written, and the same change
+/// through the child Space applies.
+#[test]
+fn schema_and_view_commands_through_the_root_space_refuse_a_child_space_collection() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    for (path, content) in [
+        (
+            ".svode/config.json",
+            r#"{"name":"Root","spaces":[{"id":"eng","path":"eng"}]}"#,
+        ),
+        ("README.md", "---\ntitle: Root\n---\n"),
+        ("eng/.svode/config.json", r#"{"name":"Eng"}"#),
+        ("eng/.git/HEAD", "ref: refs/heads/main\n"),
+        ("eng/README.md", "---\ntitle: Eng\n---\n"),
+        (
+            "eng/Tasks/schema.yaml",
+            "columns:\n  - name: Priority\n    type: select\n    options:\n      - { name: High }\n  - { name: Key, type: unique_id, prefix: T, next: 1 }\nviews:\n  - { type: table, name: Table }\n",
+        ),
+        ("eng/Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        ("eng/Tasks/Item.md", "---\ntitle: Item\nExtra: x\n---\n"),
+        ("eng/Tasks/.templates/basic.md", "---\ntitle: Basic\n---\n"),
+    ] {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    let space = root.to_str().unwrap();
+    let eng = root.join("eng");
+    let snapshot = || {
+        ["schema.yaml", "Item.md", "README.md"]
+            .map(|name| fs::read(eng.join("Tasks").join(name)).unwrap())
+    };
+    let before = snapshot();
+    let column: Column = serde_norway::from_str("{ name: Extra, type: text }").unwrap();
+    let option: PropertyOption = serde_norway::from_str("{ name: Low }").unwrap();
+    let view: View = serde_norway::from_str("{ type: table, name: Board }").unwrap();
+    let patch = || serde_norway::from_str::<serde_norway::Value>("{ name: Grid }").unwrap();
+
+    let refusals: Vec<(&str, Result<(), svode_core::collections::CollectionError>)> = vec![
+        (
+            "add_schema_column",
+            engine::prepare_add_schema_column(space, "eng/Tasks", column.clone(), Some(space))
+                .map(drop),
+        ),
+        (
+            "change_schema_type",
+            engine::prepare_change_schema_type(
+                space,
+                "eng/Tasks",
+                "Priority",
+                PropertyType::Text,
+                None,
+                Some(space),
+            )
+            .map(drop),
+        ),
+        (
+            "assign_unique_id",
+            engine::prepare_assign_unique_id(space, "eng/Tasks/Item.md").map(drop),
+        ),
+        (
+            "add_option",
+            engine::prepare_add_option(space, "eng/Tasks", "Priority".into(), option.clone())
+                .map(drop),
+        ),
+        (
+            "promote_orphan",
+            engine::prepare_promote_orphan(
+                space,
+                "eng/Tasks",
+                "eng/Tasks/Item.md".into(),
+                "Extra".into(),
+            )
+            .map(drop),
+        ),
+        (
+            "add_view",
+            engine::prepare_add_view(space, "eng/Tasks", view.clone(), None).map(drop),
+        ),
+        (
+            "update_view",
+            engine::prepare_update_view(space, "eng/Tasks", "Table", patch()).map(drop),
+        ),
+        (
+            "set_default_template",
+            templates::prepare_set_default(space, "eng/Tasks", Some("basic".into())).map(drop),
+        ),
+        (
+            "reorder_templates",
+            templates::prepare_reorder(space, "eng/Tasks", vec!["basic".into()]).map(drop),
+        ),
+    ];
+    for (command, result) in refusals {
+        let error = result.map_err(AppError::from).expect_err(command);
+        assert!(
+            matches!(&error, AppError::PathInOtherSpace { space_id, .. } if space_id == "eng"),
+            "{command}: {error:?}"
+        );
+    }
+    assert_eq!(snapshot(), before);
+
+    // Through the child Space the same changes apply.
+    let eng_space = eng.to_str().unwrap();
+    engine::prepare_add_schema_column(eng_space, "Tasks", column, Some(space))
+        .unwrap()
+        .apply()
+        .unwrap();
+    engine::prepare_add_view(eng_space, "Tasks", view, None)
+        .unwrap()
+        .apply()
+        .unwrap();
+    engine::prepare_update_view(eng_space, "Tasks", "Table", patch())
+        .unwrap()
+        .apply()
+        .unwrap();
+    let schema = fs::read_to_string(eng.join("Tasks/schema.yaml")).unwrap();
+    for name in ["name: Extra", "name: Board", "name: Grid"] {
+        assert!(schema.contains(name), "{name}: {schema}");
+    }
+}
+
 #[tokio::test]
 async fn structural_outcomes_name_the_source_in_the_disk_spelling() {
     let tmp = TempDir::new().unwrap();

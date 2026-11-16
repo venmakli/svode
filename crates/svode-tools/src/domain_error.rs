@@ -472,6 +472,9 @@ impl From<CollectionError> for ToolError {
             CollectionError::PageSource(error) => error.into(),
             CollectionError::DocumentNameConflict(_) => name_conflict(),
             CollectionError::Recovery { cause, paths } => recovery(cause, paths),
+            CollectionError::PathInOtherSpace { path, space_id } => {
+                path_in_other_space(path, space_id)
+            }
         }
     }
 }
@@ -539,6 +542,14 @@ mod tests {
             ),
             (CollectionError::Index("stale".into()).into(), "INDEX_ERROR"),
             (CollectionError::Schema("bad".into()).into(), SVODE_ERROR),
+            (
+                CollectionError::PathInOtherSpace {
+                    path: "eng/Tasks".into(),
+                    space_id: "eng".into(),
+                }
+                .into(),
+                "PATH_IN_OTHER_SPACE",
+            ),
             (
                 RoutineServiceError::PathNotAccessible("tasks".into()).into(),
                 "PATH_NOT_ACCESSIBLE",

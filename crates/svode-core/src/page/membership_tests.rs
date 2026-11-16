@@ -1,12 +1,15 @@
 //! Writes addressed through a Space never reach into a registered child
 //! Space: every write operation of `page`, `structure` and `attachments`
-//! refuses a source, parent or destination that the child owns, before its
-//! first write, and the inventory keeps new write operations under the rule.
+//! and every prepared schema mutation of `collections::engine` refuses a
+//! source, parent, destination, Collection or item path that the child
+//! owns, before its first write, and the inventory keeps new write
+//! operations under the rule.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::collections::CollectionError;
 use crate::collections::engine::{self, ItemFieldBatchIntent};
 use crate::index::IndexKey;
 use crate::index::resolver::SpaceStatus;
@@ -179,6 +182,30 @@ fn assert_refused<T>(operation: &str, result: Result<T, PageError>) {
         Err(error) => panic!("{operation}: expected PathInOtherSpace of eng, got {error:?}"),
         Ok(_) => panic!("{operation}: expected PathInOtherSpace of eng, but it succeeded"),
     }
+}
+
+fn assert_schema_refused<T>(operation: &str, result: Result<T, CollectionError>) {
+    match result {
+        Err(CollectionError::PathInOtherSpace { space_id, .. }) if space_id == "eng" => {}
+        Err(error) => panic!("{operation}: expected PathInOtherSpace of eng, got {error:?}"),
+        Ok(_) => panic!("{operation}: expected PathInOtherSpace of eng, but it succeeded"),
+    }
+}
+
+fn yaml(text: &str) -> serde_norway::Value {
+    serde_norway::from_str(text).unwrap()
+}
+
+fn text_column(name: &str) -> engine::Column {
+    serde_norway::from_str(&format!("{{ name: {name}, type: text }}")).unwrap()
+}
+
+fn option(name: &str) -> engine::PropertyOption {
+    serde_norway::from_str(&format!("{{ name: {name} }}")).unwrap()
+}
+
+fn view(name: &str) -> engine::View {
+    serde_norway::from_str(&format!("{{ type: table, name: {name} }}")).unwrap()
 }
 
 fn page_create(space: &str, parent: &str, project: &str) -> create::PageCreate {
@@ -615,6 +642,173 @@ async fn run_every_write_through_root(
         store::rename_with_project(space, "Plain", eng, Some(project_str))
     );
 
+    // collections::engine prepared schema mutations
+    let item = at("Tasks/Item.md");
+    macro_rules! schema_refused {
+        ($name:literal, $result:expr) => {{
+            assert_schema_refused($name, $result);
+            ran.push($name);
+        }};
+    }
+    schema_refused!(
+        "engine::prepare_initial_collection_schema",
+        engine::prepare_initial_collection_schema(
+            space,
+            &at("Board"),
+            engine::default_collection_schema(),
+            Some(project_str),
+        )
+    );
+    schema_refused!(
+        "engine::prepare_add_schema_column",
+        engine::prepare_add_schema_column(space, &tasks, text_column("Extra"), Some(project_str))
+    );
+    schema_refused!(
+        "engine::prepare_change_schema_type",
+        engine::prepare_change_schema_type(
+            space,
+            &tasks,
+            "Status",
+            engine::PropertyType::Number,
+            None,
+            Some(project_str),
+        )
+    );
+    schema_refused!(
+        "engine::prepare_rename_schema_column",
+        engine::prepare_rename_schema_column(space, &tasks, "Status", "State", Some(project_str))
+    );
+    schema_refused!(
+        "engine::prepare_update_schema_column",
+        engine::prepare_update_schema_column(
+            space,
+            &tasks,
+            "Status",
+            yaml("color: red"),
+            Some(project_str),
+        )
+    );
+    schema_refused!(
+        "engine::prepare_delete_schema_column",
+        engine::prepare_delete_schema_column(space, &tasks, "Status", true, Some(project_str))
+    );
+    schema_refused!(
+        "engine::prepare_add_option",
+        engine::prepare_add_option(space, &tasks, "Priority".into(), option("Mid"))
+    );
+    schema_refused!(
+        "engine::prepare_update_option",
+        engine::prepare_update_option(
+            space,
+            &tasks,
+            "Priority".into(),
+            "High".into(),
+            None,
+            Some(yaml("color: red")),
+        )
+    );
+    schema_refused!(
+        "engine::prepare_promote_orphan",
+        engine::prepare_promote_orphan(space, &tasks, item.clone(), "Extra".into())
+    );
+    // The item path alone, with a Collection path of this Space.
+    assert_schema_refused(
+        "engine::prepare_promote_orphan",
+        engine::prepare_promote_orphan(space, "Plain", item.clone(), "Extra".into()),
+    );
+    schema_refused!(
+        "engine::prepare_update_system_field_label",
+        engine::prepare_update_system_field_label(
+            space,
+            &tasks,
+            "title".into(),
+            Some("Name".into())
+        )
+    );
+    schema_refused!(
+        "engine::prepare_rename_option",
+        engine::prepare_rename_option(
+            space,
+            &tasks,
+            "Priority".into(),
+            "High".into(),
+            "Top".into()
+        )
+    );
+    schema_refused!(
+        "engine::prepare_delete_option",
+        engine::prepare_delete_option(space, &tasks, "Priority".into(), "High".into(), true)
+    );
+    schema_refused!(
+        "engine::prepare_clear_field_values",
+        engine::prepare_clear_field_values(space, &tasks, "Status".into())
+    );
+    schema_refused!(
+        "engine::prepare_clear_option_values",
+        engine::prepare_clear_option_values(space, &tasks, "Priority".into(), vec!["High".into()])
+    );
+    schema_refused!(
+        "engine::prepare_replace_option_values",
+        engine::prepare_replace_option_values(
+            space,
+            &tasks,
+            "Priority".into(),
+            "High".into(),
+            "Low".into(),
+        )
+    );
+    schema_refused!(
+        "engine::prepare_assign_unique_id",
+        engine::prepare_assign_unique_id(space, &item)
+    );
+    schema_refused!(
+        "engine::prepare_normalize_unique_id_counter",
+        engine::prepare_normalize_unique_id_counter(space, &tasks)
+    );
+    schema_refused!(
+        "engine::prepare_repair_two_way_relation",
+        engine::prepare_repair_two_way_relation(
+            space,
+            &tasks,
+            "Sprint",
+            "from_this_side",
+            None,
+            Some(project_str),
+        )
+    );
+    schema_refused!(
+        "engine::prepare_add_view",
+        engine::prepare_add_view(space, &tasks, view("Board"), None)
+    );
+    schema_refused!(
+        "engine::prepare_rename_view",
+        engine::prepare_rename_view(space, &tasks, "Table", "Grid")
+    );
+    schema_refused!(
+        "engine::prepare_update_view",
+        engine::prepare_update_view(space, &tasks, "Table", yaml("name: Grid"))
+    );
+    schema_refused!(
+        "engine::prepare_delete_view",
+        engine::prepare_delete_view(space, &tasks, "Table")
+    );
+    schema_refused!(
+        "engine::prepare_duplicate_view",
+        engine::prepare_duplicate_view(space, &tasks, "Table", "Copy")
+    );
+    schema_refused!(
+        "engine::prepare_reorder_views",
+        engine::prepare_reorder_views(space, &tasks, vec!["Table".into()])
+    );
+    schema_refused!(
+        "engine::prepare_set_default_template",
+        engine::prepare_set_default_template(space, &tasks, Some("basic".into()))
+    );
+    schema_refused!(
+        "engine::prepare_reorder_templates",
+        engine::prepare_reorder_templates(space, &tasks, vec!["basic".into()])
+    );
+
     // attachments
     let source_dir = tempfile::tempdir().unwrap();
     let source = source_dir.path().join("photo.png");
@@ -903,13 +1097,281 @@ async fn existing_refusals_keep_their_codes() {
     }
 }
 
+/// Collection `collection` of the Space at `space` with a text, a select, a
+/// unique ID and a two-way relation column to the Collection `sprints`, a
+/// view, a template and an item with an orphan field.
+fn schema_fixture(space: &Path, collection: &str, sprints: &str) {
+    write_tree(
+        space,
+        &[
+            (
+                &format!("{collection}/schema.yaml"),
+                &format!(
+                    "columns:
+  - {{ name: Status, type: text }}
+  - name: Priority
+    type: select
+    options:
+      - {{ name: High }}
+      - {{ name: Low }}
+  - {{ name: Key, type: unique_id, prefix: T, next: 1 }}
+  - {{ name: Sprint, type: relation, relation: {sprints}, limit: one, two_way: {collection} }}
+views:
+  - {{ type: table, name: Table }}
+"
+                ),
+            ),
+            (
+                &format!("{collection}/Item.md"),
+                "---\ntitle: Item\nStatus: Open\nPriority: High\nSprint: sprint-1.md\nExtra: hello\n---\n",
+            ),
+            (
+                &format!("{collection}/.templates/basic.md"),
+                "---\ntitle: Basic\n---\n",
+            ),
+            (
+                &format!("{sprints}/schema.yaml"),
+                &format!(
+                    "columns:\n  - {{ name: {collection}, type: relation, relation: {collection}, two_way: Sprint }}\nviews: []\n"
+                ),
+            ),
+            (
+                &format!("{sprints}/sprint-1.md"),
+                "---\ntitle: Sprint 1\n---\n",
+            ),
+        ],
+    );
+}
+
+/// Every prepared schema mutation, applied through the Space at `space` to
+/// its Collection `collection` from `schema_fixture`. Returns the names of
+/// the operations it ran.
+fn run_every_schema_mutation(space: &str, collection: &str, project: &str) -> Vec<&'static str> {
+    let item = format!("{collection}/Item.md");
+    let project = Some(project);
+    let mut ran = Vec::new();
+    macro_rules! applied {
+        ($name:literal, $prepared:expr) => {{
+            $prepared
+                .unwrap_or_else(|error| panic!("{}: {error:?}", $name))
+                .apply()
+                .unwrap_or_else(|error| panic!("{}: {error:?}", $name));
+            ran.push($name);
+        }};
+    }
+    applied!(
+        "engine::prepare_initial_collection_schema",
+        engine::prepare_initial_collection_schema(
+            space,
+            &format!("{collection}Board"),
+            engine::default_collection_schema(),
+            project,
+        )
+    );
+    applied!(
+        "engine::prepare_add_schema_column",
+        engine::prepare_add_schema_column(space, collection, text_column("Estimate"), project)
+    );
+    applied!(
+        "engine::prepare_change_schema_type",
+        engine::prepare_change_schema_type(
+            space,
+            collection,
+            "Estimate",
+            engine::PropertyType::Number,
+            None,
+            project,
+        )
+    );
+    applied!(
+        "engine::prepare_rename_schema_column",
+        engine::prepare_rename_schema_column(space, collection, "Estimate", "Points", project)
+    );
+    applied!(
+        "engine::prepare_update_schema_column",
+        engine::prepare_update_schema_column(space, collection, "Points", yaml("min: 0"), project)
+    );
+    applied!(
+        "engine::prepare_add_option",
+        engine::prepare_add_option(space, collection, "Priority".into(), option("Mid"))
+    );
+    applied!(
+        "engine::prepare_update_option",
+        engine::prepare_update_option(
+            space,
+            collection,
+            "Priority".into(),
+            "Mid".into(),
+            None,
+            Some(yaml("color: red")),
+        )
+    );
+    applied!(
+        "engine::prepare_rename_option",
+        engine::prepare_rename_option(
+            space,
+            collection,
+            "Priority".into(),
+            "Mid".into(),
+            "Medium".into()
+        )
+    );
+    applied!(
+        "engine::prepare_replace_option_values",
+        engine::prepare_replace_option_values(
+            space,
+            collection,
+            "Priority".into(),
+            "High".into(),
+            "Low".into(),
+        )
+    );
+    applied!(
+        "engine::prepare_clear_option_values",
+        engine::prepare_clear_option_values(
+            space,
+            collection,
+            "Priority".into(),
+            vec!["Low".into()]
+        )
+    );
+    applied!(
+        "engine::prepare_delete_option",
+        engine::prepare_delete_option(space, collection, "Priority".into(), "Medium".into(), false)
+    );
+    applied!(
+        "engine::prepare_clear_field_values",
+        engine::prepare_clear_field_values(space, collection, "Status".into())
+    );
+    applied!(
+        "engine::prepare_promote_orphan",
+        engine::prepare_promote_orphan(space, collection, item.clone(), "Extra".into())
+    );
+    applied!(
+        "engine::prepare_update_system_field_label",
+        engine::prepare_update_system_field_label(
+            space,
+            collection,
+            "title".into(),
+            Some("Name".into())
+        )
+    );
+    applied!(
+        "engine::prepare_assign_unique_id",
+        engine::prepare_assign_unique_id(space, &item)
+    );
+    applied!(
+        "engine::prepare_normalize_unique_id_counter",
+        engine::prepare_normalize_unique_id_counter(space, collection)
+    );
+    applied!(
+        "engine::prepare_repair_two_way_relation",
+        engine::prepare_repair_two_way_relation(
+            space,
+            collection,
+            "Sprint",
+            "from_this_side",
+            None,
+            project,
+        )
+    );
+    applied!(
+        "engine::prepare_add_view",
+        engine::prepare_add_view(space, collection, view("Board"), None)
+    );
+    applied!(
+        "engine::prepare_rename_view",
+        engine::prepare_rename_view(space, collection, "Board", "Kanban")
+    );
+    applied!(
+        "engine::prepare_update_view",
+        engine::prepare_update_view(space, collection, "Kanban", yaml("name: Grid"))
+    );
+    applied!(
+        "engine::prepare_duplicate_view",
+        engine::prepare_duplicate_view(space, collection, "Grid", "Copy")
+    );
+    applied!(
+        "engine::prepare_reorder_views",
+        engine::prepare_reorder_views(
+            space,
+            collection,
+            vec!["Copy".into(), "Table".into(), "Grid".into()]
+        )
+    );
+    applied!(
+        "engine::prepare_delete_view",
+        engine::prepare_delete_view(space, collection, "Copy")
+    );
+    applied!(
+        "engine::prepare_set_default_template",
+        engine::prepare_set_default_template(space, collection, Some("basic".into()))
+    );
+    applied!(
+        "engine::prepare_reorder_templates",
+        engine::prepare_reorder_templates(space, collection, vec!["basic".into()])
+    );
+    applied!(
+        "engine::prepare_delete_schema_column",
+        engine::prepare_delete_schema_column(space, collection, "Points", true, project)
+    );
+    ran
+}
+
+/// Paths of a tree snapshot outside the child Space `eng`.
+fn outside_eng(snapshot: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
+    snapshot
+        .iter()
+        .filter(|(path, _)| path != "eng" && !path.starts_with("eng/"))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn schema_mutations_through_the_child_space_and_on_root_collections_still_succeed() {
+    let engine_operations: std::collections::BTreeSet<_> = checked_operations()
+        .into_iter()
+        .filter(|name| name.starts_with("engine::"))
+        .collect();
+    for kind in CHILD_REPOSITORIES {
+        let temp = project(kind);
+        let root = temp.path().canonicalize().unwrap();
+        let project_str = root.to_str().unwrap();
+        let eng = root.join("eng");
+        schema_fixture(&eng, "Tasks", "Sprints");
+        schema_fixture(&root, "Notes", "Cycles");
+
+        // In the child Space, through the child Space.
+        let root_before = outside_eng(&tree_snapshot(&root));
+        let ran = run_every_schema_mutation(eng.to_str().unwrap(), "Tasks", project_str);
+        assert_eq!(
+            ran.into_iter().collect::<std::collections::BTreeSet<_>>(),
+            engine_operations,
+            "every prepared schema mutation runs here"
+        );
+        assert_eq!(outside_eng(&tree_snapshot(&root)), root_before, "{kind:?}");
+        let tasks = fs::read_to_string(eng.join("Tasks/schema.yaml")).unwrap();
+        assert!(tasks.contains("name: Extra"), "{kind:?}: {tasks}");
+        assert!(tasks.contains("name: Grid"), "{kind:?}: {tasks}");
+        assert!(eng.join("TasksBoard/schema.yaml").is_file(), "{kind:?}");
+
+        // In the root Space, on its own Collection.
+        let eng_before = tree_snapshot(&eng);
+        run_every_schema_mutation(project_str, "Notes", project_str);
+        assert_eq!(tree_snapshot(&eng), eng_before, "{kind:?}");
+        let notes = fs::read_to_string(root.join("Notes/schema.yaml")).unwrap();
+        assert!(notes.contains("name: Extra"), "{kind:?}: {notes}");
+        assert!(root.join("NotesBoard/schema.yaml").is_file(), "{kind:?}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Inventory of public write operations
 // ---------------------------------------------------------------------------
 
 /// Source files of the modules whose public functions take a path of a
 /// Space. Every top-level public function in them is classified below.
-const SCANNED_DIRS: &[&str] = &["page", "structure", "attachments"];
+const SCANNED_DIRS: &[&str] = &["page", "structure", "attachments", "collections/engine"];
 
 /// How a public function meets the rule.
 enum Guard {
@@ -919,6 +1381,10 @@ enum Guard {
     Via(&'static str),
     /// Not a write addressed by a path of a Space; the reason says why.
     NotAWrite(#[allow(dead_code)] &'static str),
+    /// A write step that only guarded operations of `svode-core` run; the
+    /// reason names them. No host calls it, so a host reaches the write only
+    /// through an operation that passes the rule.
+    Step(#[allow(dead_code)] &'static str),
 }
 
 const INVENTORY: &[(&str, &str, Guard)] = {
@@ -1100,12 +1566,210 @@ const INVENTORY: &[(&str, &str, Guard)] = {
     ]
 };
 
+/// Public functions of `collections::engine`, by file: its prepared schema
+/// mutations pass the rule, its other writes are steps of guarded
+/// operations.
+const ENGINE_INVENTORY: &[(&str, &[(&str, Guard)])] = {
+    use Guard::{NotAWrite, Step, Via};
+    const PURE: Guard = NotAWrite("pure value or path computation");
+    const READ: Guard = NotAWrite("reads without writing");
+    const DEFAULTS: Guard = NotAWrite("fills item metadata in memory from the schema");
+    const GUARDED: Guard = Via("ensure_paths_in_space");
+    const SCHEMA_STEP: Guard = Step("schema write applied by a guarded prepared mutation");
+    const SEED_STEP: Guard =
+        Step("seed schema of the guarded Collection conversions and template create");
+    const ITEM_STEP: Guard =
+        Step("item write of the guarded page create, write, fields and template operations");
+    const STRUCTURE_STEP: Guard =
+        Step("relation effect of the guarded structure delete, move, rename and duplicate");
+    const RENUMBER_STEP: Guard =
+        Step("Git renumbering of unique IDs across the repository, outside this rule");
+    &[
+        (
+            "defaults.rs",
+            &[
+                ("apply_schema_defaults_for_path", DEFAULTS),
+                ("apply_contextual_defaults_for_path", DEFAULTS),
+                ("apply_contextual_defaults_for_path_strict", DEFAULTS),
+                ("apply_schema_defaults_to_item_tree", ITEM_STEP),
+                ("unique_id_mutation_paths_for_item", READ),
+                ("unique_id_mutation_paths_for_item_tree", READ),
+                ("unique_id_schema_path_for_item", READ),
+                ("assign_unique_ids_to_item_tree", ITEM_STEP),
+                ("assign_unique_id", SCHEMA_STEP),
+                ("reassign_unique_ids", RENUMBER_STEP),
+                ("normalize_unique_id_counter", SCHEMA_STEP),
+                ("assign_unique_id_to_meta_for_path", ITEM_STEP),
+                ("force_assign_unique_id_to_meta_for_path", ITEM_STEP),
+            ],
+        ),
+        (
+            "field_rules.rs",
+            &[
+                ("normalize_schema", PURE),
+                ("validate_item_field_value", READ),
+                ("ensure_item_field_writable", READ),
+                ("normalize_item_field_value", READ),
+            ],
+        ),
+        (
+            "integrity.rs",
+            &[("validate_collection_integrity_with_project", READ)],
+        ),
+        (
+            "mod.rs",
+            &[
+                ("column_effective_sensitivity", PURE),
+                ("schema_has_sensitive_columns", PURE),
+                ("default_status_options", PURE),
+                ("resolve_collection_schema_result", READ),
+                ("schema_response", READ),
+                ("read_collection_schema", READ),
+                ("schema_mutation_paths", READ),
+                ("schema_column_mutation_paths", READ),
+                ("schema_column_mutation_paths_with_project", READ),
+                ("schema_column_name_mutation_paths", READ),
+                ("schema_column_name_mutation_paths_with_project", READ),
+                ("schema_type_target_mutation_paths_with_project", READ),
+                (
+                    "schema_column_patch_target_mutation_paths_with_project",
+                    READ,
+                ),
+                ("cascade_clean_deleted_items", STRUCTURE_STEP),
+                ("cascade_clean_deleted_items_with_project", STRUCTURE_STEP),
+                (
+                    "cascade_clean_deleted_items_mutation_paths_with_project",
+                    READ,
+                ),
+                ("rewrite_relation_paths_for_move", STRUCTURE_STEP),
+                (
+                    "rewrite_relation_paths_for_move_with_project",
+                    STRUCTURE_STEP,
+                ),
+                (
+                    "rewrite_relation_paths_for_move_with_authorized_plan",
+                    STRUCTURE_STEP,
+                ),
+                ("relation_move_mutation_paths_with_project", READ),
+                ("rewrite_internal_relation_refs_for_copy", STRUCTURE_STEP),
+                ("update_relation_item_field", ITEM_STEP),
+                ("prepare_item_field_batch", READ),
+                ("apply_prepared_item_field_relations", ITEM_STEP),
+                ("item_property_batch_mutation_paths_with_project", READ),
+                (
+                    "relation_field_target_mutation_paths_for_value_with_project",
+                    READ,
+                ),
+                ("validate_property_value", PURE),
+                ("relation_repair_mutation_paths", READ),
+                ("relation_repair_mutation_paths_with_project", READ),
+                ("repair_two_way_relation", SCHEMA_STEP),
+                ("repair_two_way_relation_with_project", SCHEMA_STEP),
+            ],
+        ),
+        (
+            "mutations.rs",
+            &[
+                ("prepare_initial_collection_schema", GUARDED),
+                ("prepare_add_schema_column", GUARDED),
+                ("prepare_change_schema_type", GUARDED),
+                ("prepare_rename_schema_column", GUARDED),
+                ("prepare_update_schema_column", GUARDED),
+                ("prepare_delete_schema_column", GUARDED),
+                ("prepare_add_option", GUARDED),
+                ("prepare_update_option", GUARDED),
+                ("prepare_promote_orphan", GUARDED),
+                ("prepare_update_system_field_label", GUARDED),
+                ("prepare_rename_option", GUARDED),
+                ("prepare_delete_option", GUARDED),
+                ("prepare_clear_field_values", GUARDED),
+                ("prepare_clear_option_values", GUARDED),
+                ("prepare_replace_option_values", GUARDED),
+                ("prepare_assign_unique_id", GUARDED),
+                ("prepare_normalize_unique_id_counter", GUARDED),
+                ("prepare_repair_two_way_relation", GUARDED),
+                ("prepare_add_view", GUARDED),
+                ("prepare_rename_view", GUARDED),
+                ("prepare_update_view", GUARDED),
+                ("prepare_delete_view", GUARDED),
+                ("prepare_duplicate_view", GUARDED),
+                ("prepare_reorder_views", GUARDED),
+            ],
+        ),
+        ("query_filters.rs", &[("resolve_query_filters", READ)]),
+        (
+            "schema_mutations.rs",
+            &[
+                ("add_schema_column", SCHEMA_STEP),
+                ("add_schema_column_with_project", SCHEMA_STEP),
+                ("change_schema_type", SCHEMA_STEP),
+                ("change_schema_type_with_warnings", SCHEMA_STEP),
+                ("change_schema_type_with_warnings_and_project", SCHEMA_STEP),
+                ("rename_schema_column", SCHEMA_STEP),
+                ("rename_schema_column_with_project", SCHEMA_STEP),
+                ("update_schema_column", SCHEMA_STEP),
+                ("update_schema_column_with_project", SCHEMA_STEP),
+                ("delete_schema_column", SCHEMA_STEP),
+                ("delete_schema_column_with_project", SCHEMA_STEP),
+                ("add_option", SCHEMA_STEP),
+                ("rename_option", SCHEMA_STEP),
+                ("delete_option", SCHEMA_STEP),
+                ("clear_field_values", SCHEMA_STEP),
+                ("clear_option_values", SCHEMA_STEP),
+                ("replace_option_values", SCHEMA_STEP),
+                ("update_option", SCHEMA_STEP),
+                ("promote_orphan", SCHEMA_STEP),
+                ("update_system_field_label", SCHEMA_STEP),
+                ("set_default_template", SCHEMA_STEP),
+                ("reorder_templates", SCHEMA_STEP),
+                ("default_collection_schema", PURE),
+                ("write_default_collection_schema", SEED_STEP),
+                ("add_view", SCHEMA_STEP),
+                ("rename_view", SCHEMA_STEP),
+                ("update_view", SCHEMA_STEP),
+                ("delete_view", SCHEMA_STEP),
+                ("duplicate_view", SCHEMA_STEP),
+                ("reorder_views", SCHEMA_STEP),
+            ],
+        ),
+        (
+            "templates.rs",
+            &[
+                ("list_templates", READ),
+                ("ensure_template_exists", READ),
+                ("validate_template_order", READ),
+                ("prepare_set_default_template", GUARDED),
+                ("prepare_reorder_templates", GUARDED),
+                ("resolve_template_source", READ),
+                ("templates_dir", PURE),
+                ("template_head_rel", PURE),
+                ("join_template_rel", PURE),
+                ("template_rel_abs", PURE),
+                ("normalize_template_rel", PURE),
+                ("humanize_template_slug", PURE),
+            ],
+        ),
+    ]
+};
+
+/// Every classified public function with its source file.
+fn inventory() -> Vec<(String, &'static str, &'static Guard)> {
+    INVENTORY
+        .iter()
+        .map(|(file, name, guard)| (file.to_string(), *name, guard))
+        .chain(ENGINE_INVENTORY.iter().flat_map(|(file, rows)| {
+            rows.iter()
+                .map(move |(name, guard)| (format!("collections/engine/{file}"), *name, guard))
+        }))
+        .collect()
+}
+
 /// Module-qualified names of the guarded write operations, as
 /// `run_every_write_through_root` names them.
 fn checked_operations() -> std::collections::BTreeSet<&'static str> {
-    INVENTORY
+    inventory()
         .iter()
-        .filter(|(_, _, guard)| !matches!(guard, Guard::NotAWrite(_)))
+        .filter(|(_, _, guard)| matches!(guard, Guard::Direct | Guard::Via(_)))
         .map(|(file, name, _)| operation_name(file, name))
         .collect()
 }
@@ -1120,6 +1784,7 @@ fn operation_name(file: &str, name: &str) -> &'static str {
         "page/templates.rs" => "templates",
         "page/write/runtime.rs" | "page/write/restore.rs" => "write",
         "structure/ops.rs" | "structure/plan.rs" => "structure",
+        "collections/engine/mutations.rs" | "collections/engine/templates.rs" => "engine",
         other => panic!("no operation name for {other}"),
     };
     // `execute_managed_import` re-plans with `plan_managed_import`, which
@@ -1221,7 +1886,10 @@ fn is_guarded(files: &[(String, String)], file: &str, name: &str, depth: usize) 
     if body.contains("ensure_path_in_space(") {
         return true;
     }
-    match INVENTORY.iter().find(|(f, n, _)| *f == file && *n == name) {
+    match inventory()
+        .into_iter()
+        .find(|(f, n, _)| f == file && *n == name)
+    {
         Some((_, _, Guard::Via(target))) => {
             body.contains(&format!("{target}(")) && is_guarded(files, file, target, depth + 1)
         }
@@ -1238,23 +1906,98 @@ fn every_public_write_operation_with_a_space_path_passes_the_membership_rule() {
             found.push((file.clone(), name));
         }
     }
+    let inventory = inventory();
     for (file, name) in &found {
         assert!(
-            INVENTORY.iter().any(|(f, n, _)| f == file && n == name),
+            inventory.iter().any(|(f, n, _)| f == file && n == name),
             "{file}: public fn {name} is not classified; a write that takes a path of a Space must call ensure_path_in_space and be listed as guarded"
         );
     }
-    for (file, name, guard) in INVENTORY {
+    for (file, name, guard) in &inventory {
         assert!(
             found.iter().any(|(f, n)| f == file && n == name),
             "{file}: classified fn {name} no longer exists"
         );
         match guard {
-            Guard::NotAWrite(_) => {}
+            Guard::NotAWrite(_) | Guard::Step(_) => {}
             Guard::Direct | Guard::Via(_) => assert!(
                 is_guarded(&files, file, name, 0),
                 "{file}: {name} does not pass ensure_path_in_space"
             ),
+        }
+    }
+}
+
+/// Production sources of the crates that host `svode-core`: every crate of
+/// the workspace except the core itself, and the Desktop backend.
+fn host_source_files() -> Vec<(String, String)> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut dirs: Vec<PathBuf> = fs::read_dir(manifest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.as_path() != manifest)
+        .map(|path| path.join("src"))
+        .chain([manifest.join("../../apps/desktop/src-tauri/src")])
+        .filter(|path| path.is_dir())
+        .collect();
+    let mut files = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if path.is_dir() {
+                if name != "tests" {
+                    dirs.push(path);
+                }
+            } else if name.ends_with(".rs") && !name.ends_with("tests.rs") {
+                let text = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+                // An inline test module closes a production file.
+                let text = match text.find("\n#[cfg(test)]\nmod ") {
+                    Some(end) => text[..end].to_string(),
+                    None => text,
+                };
+                files.push((path.display().to_string(), text));
+            }
+        }
+    }
+    files
+}
+
+/// Whether `text` calls or imports the `collections::engine` function
+/// `name`.
+fn reaches_engine_function(text: &str, name: &str) -> bool {
+    if [format!("engine::{name}("), format!("engine::{name};")]
+        .iter()
+        .any(|pattern| text.contains(pattern.as_str()))
+    {
+        return true;
+    }
+    text.match_indices("collections::engine::{")
+        .any(|(start, prefix)| {
+            let group = &text[start + prefix.len()..];
+            let group = &group[..group.find('}').unwrap_or(group.len())];
+            group.split(',').any(|item| item.trim() == name)
+        })
+}
+
+#[test]
+fn hosts_reach_schema_writes_only_through_operations_under_the_rule() {
+    let hosts = host_source_files();
+    assert!(
+        hosts
+            .iter()
+            .any(|(_, text)| reaches_engine_function(text, "prepare_add_view")),
+        "the scan finds the host calls of prepared mutations"
+    );
+    for (file, name, guard) in inventory() {
+        if !matches!(guard, Guard::Step(_)) {
+            continue;
+        }
+        for (host, text) in &hosts {
+            assert!(
+                !reaches_engine_function(text, name),
+                "{host} reaches the write step {name} of {file}; call an operation that passes ensure_path_in_space"
+            );
         }
     }
 }

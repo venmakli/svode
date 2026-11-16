@@ -109,6 +109,9 @@ impl From<CollectionError> for PageError {
             CollectionError::PageSource(error) => error.into(),
             CollectionError::DocumentNameConflict(conflict) => Self::DocumentNameConflict(conflict),
             CollectionError::Recovery { cause, paths } => Self::Recovery { cause, paths },
+            CollectionError::PathInOtherSpace { path, space_id } => {
+                Self::PathInOtherSpace { path, space_id }
+            }
         }
     }
 }

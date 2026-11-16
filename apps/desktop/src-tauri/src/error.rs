@@ -44,6 +44,9 @@ impl From<svode_core::collections::CollectionError> for AppError {
             svode_core::collections::CollectionError::Recovery { cause, paths } => {
                 Self::PageWriteRecovery { cause, paths }
             }
+            svode_core::collections::CollectionError::PathInOtherSpace { path, space_id } => {
+                Self::PathInOtherSpace { path, space_id }
+            }
         }
     }
 }
@@ -985,6 +988,20 @@ mod tests {
         assert_eq!(
             other_space["message"],
             "eng/README.md belongs to Space eng; run the operation in that Space"
+        );
+        let schema_other_space = serde_json::to_value(AppError::from(
+            svode_core::collections::CollectionError::PathInOtherSpace {
+                path: "eng/Tasks".into(),
+                space_id: "eng".into(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(schema_other_space["kind"], "path_in_other_space");
+        assert_eq!(schema_other_space["path"], "eng/Tasks");
+        assert_eq!(schema_other_space["spaceId"], "eng");
+        assert_eq!(
+            schema_other_space["message"],
+            "eng/Tasks belongs to Space eng; run the operation in that Space"
         );
 
         let parent = serde_json::to_value(AppError::from(

@@ -857,7 +857,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "add_collection_column",
-            "Add a schema column to an existing collection. Read get_collection_schema first. For boolean completion/confirmation fields use display checkbox; for maintained enabled/active fields use display switch; omit display when intent is ambiguous to use checkbox. actor values are canonical emails; status is workflow state; unique_id is read-only after materialization. Does not autocommit.",
+            "Add a schema column to an existing collection. Read get_collection_schema first. For boolean completion/confirmation fields use display checkbox; for maintained enabled/active fields use display switch; omit display when intent is ambiguous to use checkbox. actor values are canonical emails; status is workflow state; unique_id is read-only after materialization. A Collection inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and changes nothing: run it in that Space. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -872,7 +872,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(SCHEMA_CHANGE),
         def(
             "update_collection_column",
-            "Patch configurable settings of an existing collection column, such as options, display, color, sensitivity, relation, date settings, or status groups. Read get_collection_schema first and preserve the current boolean display unless the user explicitly asks to change its presentation. For new fields prefer add_collection_column. Does not autocommit.",
+            "Patch configurable settings of an existing collection column, such as options, display, color, sensitivity, relation, date settings, or status groups. Read get_collection_schema first and preserve the current boolean display unless the user explicitly asks to change its presentation. For new fields prefer add_collection_column. A Collection inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and changes nothing: run it in that Space. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -888,7 +888,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(SCHEMA_CHANGE),
         def(
             "delete_collection_column",
-            "Delete a Collection column. Set deleteValues true only when stored values should also be removed from Collection items. Does not autocommit.",
+            "Delete a Collection column. Set deleteValues true only when stored values should also be removed from Collection items. A Collection inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and changes nothing: run it in that Space. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -904,7 +904,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(SCHEMA_CHANGE),
         def(
             "add_collection_view",
-            "Add a table, board, calendar, list, or gallery view to an existing collection schema. Calendar requires date_field. Board group_by should be status, select, or single actor. Gallery uses card_cover. Does not autocommit.",
+            "Add a table, board, calendar, list, or gallery view to an existing collection schema. Calendar requires date_field. Board group_by should be status, select, or single actor. Gallery uses card_cover. A Collection inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and changes nothing: run it in that Space. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -920,7 +920,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(SCHEMA_CHANGE),
         def(
             "update_collection_view",
-            "Patch an existing collection view: filters, sort, visible_fields, card_fields, group_by, date_field, gallery cover settings, and related view settings. Does not autocommit.",
+            "Patch an existing collection view: filters, sort, visible_fields, card_fields, group_by, date_field, gallery cover settings, and related view settings. A Collection inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and changes nothing: run it in that Space. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -936,7 +936,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(SCHEMA_CHANGE),
         def(
             "delete_collection_view",
-            "Delete a named collection view. Collection README content belongs to the separate Readme scope surface and is not a schema view. Does not autocommit.",
+            "Delete a named collection view. Collection README content belongs to the separate Readme scope surface and is not a schema view. A Collection inside a registered child Space, addressed through the Space that registers it, fails with PATH_IN_OTHER_SPACE and changes nothing: run it in that Space. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -1133,7 +1133,7 @@ Body saves:
 Structural work and integrity:
 - Files-first work covers the body text described under Body saves and new plain Markdown Pages in an existing folder without a schema; create them directly and Svode picks them up. Everything that changes frontmatter, names, structure, schema, attachments or system folders goes through Svode tools.
 - Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, renames, moves, or Collections manually. Rename a Page, Collection item, or Collection with a README by changing its title as described under Renaming; use rename_content only for a folder without a title, including a Collection without a README (it refuses every other target) and move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection for the other structural changes so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
-- Every write addressed through a Space stays inside it: a registered child Space owns its directory and everything in it, so a write from the Space that registers it with a source, parent or destination there (delete, move, create, conversion, duplicate, title, metadata, body, import) fails with PATH_IN_OTHER_SPACE and changes nothing. Run it in that child Space with its spaceId and a path relative to it; removing a Space from the project is not a Page or Collection delete.
+- Every write addressed through a Space stays inside it: a registered child Space owns its directory and everything in it, so a write from the Space that registers it with a source, parent, destination or Collection there (delete, move, create, conversion, duplicate, title, metadata, body, import, Collection columns and views) fails with PATH_IN_OTHER_SPACE and changes nothing. Run it in that child Space with its spaceId and a path relative to it; removing a Space from the project is not a Page or Collection delete.
 - move_content moves under a folder, Collection, folder Page (or its README.md) or leaf Page, or to the space root with an empty toParent. A leaf Page parent becomes `<name>/README.md` first, and a folder Page the move leaves holding nothing but its README.md becomes a leaf again, in the same operation; convertedParents reports both, so continue with the returned paths. A missing parent is FILE_NOT_FOUND and creates no folder; a file that is not a Markdown Page, the moved content itself or a path inside it is UNSUPPORTED_MOVE_PARENT.
 - Structural tools do not autocommit and return changed/touched paths. rename_content and move_content apply all their effects or none: when any step fails they restore every touched file, return the error and leave no pending change. PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored; inspect them before retrying. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
 - When structural files changed outside Svode (by hand, Git or another program), run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
@@ -2528,12 +2528,19 @@ mod tests {
         assert!(guide.contains("becomes a leaf again, in the same operation"));
         assert!(guide.contains("UNSUPPORTED_MOVE_PARENT"));
         assert!(guide.contains("PATH_IN_OTHER_SPACE"));
+        assert!(guide.contains("Collection columns and views) fails with PATH_IN_OTHER_SPACE"));
         for name in [
             "write_page",
             "write_collection_readme",
             "update_collection_item_body",
             "rename_content",
             "move_content",
+            "add_collection_column",
+            "update_collection_column",
+            "delete_collection_column",
+            "add_collection_view",
+            "update_collection_view",
+            "delete_collection_view",
         ] {
             assert!(description(name).contains("PATH_IN_OTHER_SPACE"), "{name}");
         }
