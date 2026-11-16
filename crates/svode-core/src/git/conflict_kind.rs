@@ -138,7 +138,11 @@ pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, 
         return Ok(Vec::new());
     }
     let absent = absent_from_merge_base(cli, repo, &conflicts).await?;
-    let unmergeable = merge_unset(cli, repo, &conflicts).await?;
+    let both: Vec<&ConflictedPath> = conflicts
+        .iter()
+        .filter(|conflict| conflict.ours.is_some() && conflict.theirs.is_some())
+        .collect();
+    let binary = binary_paths(cli, repo, &both).await?;
     let mut facts = Vec::with_capacity(conflicts.len());
     for conflict in &conflicts {
         let stages = [&conflict.base, &conflict.ours, &conflict.theirs]
@@ -155,12 +159,8 @@ pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, 
         } else {
             None
         };
-        let binary = conflict.ours.is_some()
-            && conflict.theirs.is_some()
-            && (unmergeable.contains(conflict.path.as_str())
-                || binary_side(cli, repo, conflict).await?);
         facts.push(KindFacts {
-            binary,
+            binary: binary.contains(conflict.path.as_str()),
             rename,
             frontmatter: false,
         });
@@ -540,7 +540,7 @@ async fn absent_from_merge_base(
 async fn merge_unset(
     cli: &GitCli,
     repo: &Path,
-    conflicts: &[ConflictedPath],
+    conflicts: &[&ConflictedPath],
 ) -> Result<HashSet<String>, GitError> {
     let paths: Vec<String> = conflicts
         .iter()
@@ -575,10 +575,101 @@ pub async fn is_binary(
     repo: &Path,
     conflict: &ConflictedPath,
 ) -> Result<bool, GitError> {
-    Ok(merge_unset(cli, repo, std::slice::from_ref(conflict))
+    Ok(binary_paths(cli, repo, &[conflict])
         .await?
-        .contains(conflict.path.as_str())
-        || binary_side(cli, repo, conflict).await?)
+        .contains(conflict.path.as_str()))
+}
+
+/// How many bytes of versions [`binary_paths`] reads in one go.
+const SIDE_READ_LIMIT: usize = MAX_STAGE;
+/// How long that read may take.
+const SIDE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The paths among `conflicts` Git does not merge as text ([`is_binary`]).
+/// The attribute of every path is read at once and the versions of their
+/// sides by one `git cat-file --batch`; when the versions are larger than
+/// [`SIDE_READ_LIMIT`] together or that read fails, the sides of each path
+/// are probed on their own.
+pub(crate) async fn binary_paths(
+    cli: &GitCli,
+    repo: &Path,
+    conflicts: &[&ConflictedPath],
+) -> Result<HashSet<String>, GitError> {
+    if conflicts.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let mut binary = merge_unset(cli, repo, conflicts).await?;
+    let pending: Vec<&ConflictedPath> = conflicts
+        .iter()
+        .copied()
+        .filter(|conflict| !binary.contains(conflict.path.as_str()))
+        .collect();
+    let sides: Vec<(&str, &str)> = pending
+        .iter()
+        .flat_map(|conflict| {
+            conflict
+                .sides()
+                .filter(|side| side.is_regular_file())
+                .map(|side| (conflict.path.as_str(), side.oid.as_str()))
+        })
+        .collect();
+    if sides.is_empty() {
+        return Ok(binary);
+    }
+    match binary_sides(cli, repo, &sides).await {
+        Some(probed) => binary.extend(probed),
+        None => {
+            for conflict in pending {
+                if binary_side(cli, repo, conflict).await? {
+                    binary.insert(conflict.path.clone());
+                }
+            }
+        }
+    }
+    Ok(binary)
+}
+
+/// The paths of `sides`, pairs of a path and the blob of one of its sides,
+/// with a side binary to Git or an LFS pointer, by one `git cat-file
+/// --batch`; `None` when the versions are larger than [`SIDE_READ_LIMIT`]
+/// together or the read fails.
+async fn binary_sides(
+    cli: &GitCli,
+    repo: &Path,
+    sides: &[(&str, &str)],
+) -> Option<HashSet<String>> {
+    let input: String = sides.iter().map(|(_, oid)| format!("{oid}\n")).collect();
+    let output = super::cli::read_with_input(
+        cli,
+        repo,
+        &["cat-file", "--batch"],
+        input.as_bytes(),
+        SIDE_READ_LIMIT,
+        SIDE_READ_TIMEOUT,
+    )
+    .await
+    .ok()
+    .flatten()?;
+    let mut rest = output.as_slice();
+    let mut binary = HashSet::new();
+    for (path, _) in sides {
+        let end = rest.iter().position(|byte| *byte == b'\n')?;
+        let header = std::str::from_utf8(&rest[..end]).ok()?;
+        rest = &rest[end + 1..];
+        // A missing object is its header alone and reads as no version.
+        if header.ends_with(" missing") {
+            continue;
+        }
+        let size: usize = header.rsplit(' ').next()?.parse().ok()?;
+        if rest.len() <= size {
+            return None;
+        }
+        if binary_version(&rest[..size]) {
+            binary.insert((*path).to_owned());
+        }
+        rest = &rest[size + 1..];
+    }
+    Some(binary)
 }
 
 /// Whether a side of `conflict` is binary to Git or an LFS pointer.
@@ -594,12 +685,18 @@ async fn binary_side(
         let (_, bytes) =
             super::cli::read_bounded(cli, repo, &["cat-file", "blob", &side.oid], BINARY_PROBE)
                 .await?;
-        let probe = &bytes[..bytes.len().min(BINARY_PROBE)];
-        if probe.contains(&0) || probe.starts_with(LFS_POINTER) {
+        if binary_version(&bytes) {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// Whether Git takes `version` for binary — a NUL byte among its first
+/// bytes — or it is an LFS pointer.
+fn binary_version(version: &[u8]) -> bool {
+    let probe = &version[..version.len().min(BINARY_PROBE)];
+    probe.contains(&0) || probe.starts_with(LFS_POINTER)
 }
 
 #[cfg(all(test, unix))]

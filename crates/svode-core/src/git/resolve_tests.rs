@@ -213,7 +213,21 @@ async fn merge_commit_holds_only_the_merge_and_resolved_paths_and_is_pushed() {
         "data.json",
         "{\"order\":[\"plan.md\",\"ours.md\",\"theirs.md\"]}\n",
     );
-    let result = f.resolve(&["data.json", "old.md"]).await.unwrap();
+    assert!(matches!(
+        f.resolve(&["data.json"]).await.unwrap(),
+        SyncResult::Conflict { .. }
+    ));
+    // The modify/delete conflict of `old.md` ends by an explicit choice.
+    let result = super::conflict_file::resolve(
+        &f.cli,
+        &f.local,
+        "old.md",
+        &super::conflict_file::FileResolution::Side {
+            side: super::conflict_file::Side::Ours,
+        },
+    )
+    .await
+    .unwrap();
     let SyncResult::Success { published_head, .. } = result else {
         panic!("{result:?}");
     };
@@ -365,4 +379,201 @@ async fn marker_like_lines_of_another_size_and_lone_separators_resolve() {
         let staged = lines(git(&f.local, &["diff", "--cached", "--name-only"]));
         assert!(staged.contains(&"plan.md".to_string()), "{staged:?}");
     }
+}
+
+fn git_status(repo: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+fn stage_pointer(repo: &Path, digit: char) {
+    let oid: String = std::iter::repeat_n(digit, 40).collect();
+    git(
+        repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{oid},space"),
+        ],
+    );
+}
+
+/// A merge in progress in `local` of a clone of a remote, with every kind of
+/// conflict: text `notes.md`, modify/delete `edited.md` and `dir/gone.md`,
+/// rename/delete `renamed.md` → `renamed-ours.md`, rename/rename `moved.md`
+/// → `moved-ours.md` / `moved-theirs.md`, binary `image.png`, binary add/add
+/// `both.md`, text add/add `added.md` and the Space pointer `space`.
+async fn every_kind() -> (tempfile::TempDir, PathBuf, GitCli) {
+    let temp = tempfile::tempdir().unwrap();
+    let seed = temp.path().join("seed");
+    init(&seed);
+    write(&seed, "notes.md", "a\nb\nc\n");
+    write(&seed, "edited.md", "one\n");
+    write(&seed, "dir/gone.md", "gone\n");
+    write(&seed, "renamed.md", "rename me\nplease\n");
+    write(&seed, "moved.md", "line 1\nline 2\nline 3\n");
+    std::fs::write(seed.join("image.png"), b"PNG\0base").unwrap();
+    git(&seed, &["add", "-A"]);
+    stage_pointer(&seed, '1');
+    std::fs::create_dir_all(seed.join("space")).unwrap();
+    git(&seed, &["commit", "-qm", "base"]);
+    let remote = temp.path().join("remote.git");
+    git(
+        temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            seed.to_str().unwrap(),
+            remote.to_str().unwrap(),
+        ],
+    );
+    let other = temp.path().join("other");
+    let local = temp.path().join("local");
+    for clone in [&other, &local] {
+        git(
+            temp.path(),
+            &[
+                "clone",
+                "-q",
+                remote.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        git(clone, &["config", "user.name", "Fixture"]);
+        git(clone, &["config", "user.email", "fixture@example.test"]);
+    }
+
+    write(&other, "notes.md", "a\ntheirs\nc\n");
+    std::fs::remove_file(other.join("edited.md")).unwrap();
+    write(&other, "dir/gone.md", "gone, theirs\n");
+    std::fs::remove_file(other.join("renamed.md")).unwrap();
+    git(&other, &["mv", "moved.md", "moved-theirs.md"]);
+    std::fs::write(other.join("image.png"), b"PNG\0theirs").unwrap();
+    std::fs::write(other.join("both.md"), b"theirs\0").unwrap();
+    write(&other, "added.md", "theirs\n");
+    git(&other, &["add", "-A"]);
+    stage_pointer(&other, '2');
+    git(&other, &["commit", "-qm", "theirs"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    write(&local, "notes.md", "a\nours\nc\n");
+    write(&local, "edited.md", "one, ours\n");
+    std::fs::remove_file(local.join("dir/gone.md")).unwrap();
+    git(&local, &["mv", "renamed.md", "renamed-ours.md"]);
+    git(&local, &["mv", "moved.md", "moved-ours.md"]);
+    std::fs::write(local.join("image.png"), b"PNG\0ours").unwrap();
+    std::fs::write(local.join("both.md"), b"ours\0").unwrap();
+    write(&local, "added.md", "ours\n");
+    git(&local, &["add", "-A"]);
+    stage_pointer(&local, '3');
+    git(&local, &["commit", "-qm", "ours"]);
+    git(&local, &["fetch", "-q", "origin"]);
+    assert!(!git_status(&local, &["merge", "-q", "origin/main"]));
+
+    let cli = test_cli(temp.path());
+    let mut kinds: Vec<_> = super::conflict_kind::unresolved(&cli, &local)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|conflict| (conflict.path, conflict.kind))
+        .collect();
+    kinds.sort_by(|a, b| a.0.cmp(&b.0));
+    use super::conflict_kind::ConflictKind::*;
+    assert_eq!(
+        kinds,
+        [
+            ("added.md".to_string(), AddAdd),
+            ("both.md".to_string(), AddAdd),
+            ("dir/gone.md".to_string(), ModifyDelete),
+            ("edited.md".to_string(), ModifyDelete),
+            ("image.png".to_string(), Binary),
+            ("moved-ours.md".to_string(), RenameRename),
+            ("notes.md".to_string(), PageText),
+            ("renamed-ours.md".to_string(), RenameDelete),
+            ("space".to_string(), SpacePointer),
+        ]
+    );
+    (temp, local, cli)
+}
+
+#[tokio::test]
+async fn a_conflict_its_markers_do_not_decide_refuses_the_request_and_changes_nothing() {
+    let (_temp, local, cli) = every_kind().await;
+    write(&local, "notes.md", "a\nours\ntheirs\nc\n");
+    write(&local, "added.md", "ours\ntheirs\n");
+    let index = git(&local, &["ls-files", "--stage"]);
+    let merge_head = git(&local, &["rev-parse", "MERGE_HEAD"]);
+    let head = git(&local, &["rev-parse", "HEAD"]);
+
+    for (requested, refused) in [
+        ("edited.md", "edited.md"),
+        // A pathspec refuses by the entry under it.
+        ("dir", "dir/gone.md"),
+        ("renamed-ours.md", "renamed-ours.md"),
+        ("moved-ours.md", "moved-ours.md"),
+        ("moved-theirs.md", "moved-theirs.md"),
+        ("moved.md", "moved.md"),
+        ("image.png", "image.png"),
+        ("both.md", "both.md"),
+        ("space", "space"),
+    ] {
+        // Neither the refused path nor the text Page beside it is staged.
+        let paths = ["notes.md".to_string(), requested.to_string()];
+        let result = resolve_and_continue(&cli, &local, &paths).await;
+        assert!(
+            matches!(&result, Err(GitError::Conflict(message)) if message.starts_with(&format!("{refused} "))),
+            "{requested}: {result:?}"
+        );
+        assert_eq!(git(&local, &["ls-files", "--stage"]), index, "{requested}");
+        assert_eq!(git(&local, &["rev-parse", "MERGE_HEAD"]), merge_head);
+        assert_eq!(git(&local, &["rev-parse", "HEAD"]), head);
+    }
+
+    // Text kinds resolve as before; the refused kinds stay in conflict.
+    let result = resolve_and_continue(&cli, &local, &["notes.md".into(), "added.md".into()])
+        .await
+        .unwrap();
+    let SyncResult::Conflict { mut files, .. } = result else {
+        panic!("{result:?}");
+    };
+    files.sort();
+    assert_eq!(
+        files,
+        [
+            "both.md",
+            "dir/gone.md",
+            "edited.md",
+            "image.png",
+            "moved-ours.md",
+            "moved-theirs.md",
+            "moved.md",
+            "renamed-ours.md",
+            "space",
+        ]
+    );
+    let staged = lines(git(&local, &["diff", "--cached", "--name-only"]));
+    assert!(staged.contains(&"notes.md".to_string()), "{staged:?}");
+    assert!(staged.contains(&"added.md".to_string()), "{staged:?}");
+    assert_eq!(git(&local, &["rev-parse", "MERGE_HEAD"]), merge_head);
+}
+
+#[tokio::test]
+async fn a_file_the_merge_attribute_makes_binary_is_not_resolved_by_its_file() {
+    let f = MergeFixture::conflicted_with_attributes("*.json binary\n").await;
+    let index = git(&f.local, &["ls-files", "--stage"]);
+    let refused = f.resolve(&["data.json"]).await;
+    assert!(
+        matches!(&refused, Err(GitError::Conflict(message)) if message.starts_with("data.json ")),
+        "{refused:?}"
+    );
+    assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);
 }

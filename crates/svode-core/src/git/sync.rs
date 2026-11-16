@@ -7,12 +7,12 @@ use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::branch::GitOperation;
 use super::cli::{GitCli, literal_pathspec_input, nul_paths_input, stdin_paths_input};
 use super::conflict_file::ResolutionFinding;
-use super::conflict_kind::{self, PathConflict};
+use super::conflict_kind::{self, ConflictKind, PathConflict};
 use super::diagnostics::{GitStage, HookTrace};
 use super::merge_preflight::{self, Checked, Preflight};
 use super::path::{RootMode, normalize_repo_relative};
 use super::renumber::{self, Landing};
-use super::service_merge::{self, ServiceFile};
+use super::service_merge::{self, ConflictedPath, ServiceFile};
 use crate::collections::unique_id_renumber::RenumberedItem;
 
 /// Who started a sync. Background sync never starts a merge that can stop
@@ -1076,7 +1076,9 @@ pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String
 
 /// Continue a sync merge with the conflicted `paths` (relative to `space_dir`)
 /// the user resolved. Only those without Git conflict markers are staged; the
-/// merge commit and push run once no file is left in conflict.
+/// merge commit and push run once no file is left in conflict. A path whose
+/// conflict markers do not decide its conflict refuses the whole request
+/// ([`refuse_without_markers`]).
 pub async fn resolve_and_continue(
     cli: &GitCli,
     space_dir: &Path,
@@ -1091,17 +1093,20 @@ pub async fn resolve_and_continue(
     let unmerged = if paths.is_empty() {
         Vec::new()
     } else {
-        unmerged_paths(cli, space_dir).await?
+        service_merge::index_conflicts(cli, space_dir).await?
     };
     // A path names its own entry or, as a pathspec, the entries under it.
+    let names =
+        |path: &str, entry: &ConflictedPath| entry.path == path || is_under(&entry.path, path);
     let paths: Vec<String> = paths
         .into_iter()
-        .filter(|path| {
-            unmerged
-                .iter()
-                .any(|entry| entry == path || is_under(entry, path))
-        })
+        .filter(|path| unmerged.iter().any(|entry| names(path, entry)))
         .collect();
+    let named: Vec<&ConflictedPath> = unmerged
+        .iter()
+        .filter(|entry| paths.iter().any(|path| names(path, entry)))
+        .collect();
+    refuse_without_markers(cli, space_dir, &named).await?;
     let mut contents = Vec::with_capacity(paths.len());
     for path in &paths {
         match std::fs::read(space_dir.join(path)) {
@@ -1229,21 +1234,44 @@ pub(crate) async fn continue_merge(
     })
 }
 
-/// Paths of the unmerged index entries of `repo`.
-async fn unmerged_paths(cli: &GitCli, repo: &Path) -> Result<Vec<String>, GitError> {
-    let out = cli.exec(repo, &["ls-files", "--unmerged", "-z"]).await?;
-    if out.exit_code != 0 {
-        return Err(GitError::GitCommandFailed(format!(
-            "git ls-files failed: {}",
-            out.stderr
-        )));
+/// Refuse to resolve `conflicts` by the absence of conflict markers when
+/// the markers of one do not decide it (DF-354 R2): a side lacks the path
+/// (modify/delete, rename/delete, rename/rename), a side is a Space pointer,
+/// or Git does not merge it as text (binary, binary add/add). Such a
+/// conflict holds no markers whatever the person decided, so it is resolved
+/// only by an explicit choice ([`super::conflict_file::resolve`]). The kinds
+/// follow the index stages ([`conflict_kind::classify`]); which side of a
+/// rename a path holds does not change the refusal.
+async fn refuse_without_markers(
+    cli: &GitCli,
+    repo: &Path,
+    conflicts: &[&ConflictedPath],
+) -> Result<(), GitError> {
+    let refused = |path: &str| {
+        GitError::Conflict(format!(
+            "{path} is not resolved by the absence of conflict markers: choose how to resolve it"
+        ))
+    };
+    for conflict in conflicts {
+        let kind = conflict_kind::classify(conflict, conflict_kind::KindFacts::default());
+        if !matches!(
+            kind,
+            ConflictKind::Text
+                | ConflictKind::PageText
+                | ConflictKind::PageProperties
+                | ConflictKind::AddAdd
+        ) {
+            return Err(refused(&conflict.path));
+        }
     }
-    Ok(out
-        .stdout
-        .split('\0')
-        .filter_map(|record| record.split_once('\t'))
-        .map(|(_, path)| path.to_string())
-        .collect())
+    let binary = conflict_kind::binary_paths(cli, repo, conflicts).await?;
+    match conflicts
+        .iter()
+        .find(|conflict| binary.contains(conflict.path.as_str()))
+    {
+        Some(conflict) => Err(refused(&conflict.path)),
+        None => Ok(()),
+    }
 }
 
 fn is_under(entry: &str, path: &str) -> bool {
