@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -35,17 +36,20 @@ struct Reconciled {
 /// `changed` changes of HEAD, refs or the index by any Git process: an
 /// observed event, including a watcher error, only makes the observation
 /// compare the repository state with the one of the last signal.
+///
+/// Dropping it stops the observation without waiting for its thread (DF-363):
+/// a resolution may wait for a Git process slot held by work that itself
+/// waits for the caller. The thread starts no signal after the stop and ends
+/// once its current work returns.
 pub(crate) struct ActorObservation {
     sender: mpsc::Sender<Message>,
-    thread: Option<JoinHandle<()>>,
+    stopped: Arc<AtomicBool>,
 }
 
 impl Drop for ActorObservation {
     fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
         let _ = self.sender.send(Message::Stop);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
     }
 }
 
@@ -66,7 +70,20 @@ impl ActorObservation {
         watcher
             .watch(&space, RecursiveMode::NonRecursive)
             .map_err(|error| AppError::Watcher(error.to_string()))?;
-        let thread = std::thread::spawn(move || {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = stopped.clone();
+        std::thread::spawn(move || {
+            let live = || !stop.load(Ordering::Acquire);
+            let invalidate = |repository: &Path| {
+                if live() {
+                    invalidate(repository);
+                }
+            };
+            let changed = |repository: &Path| {
+                if live() {
+                    changed(repository);
+                }
+            };
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -174,6 +191,9 @@ impl ActorObservation {
                 }
                 true
             };
+            if !live() {
+                return;
+            }
             let first = reconcile(&mut watcher, &mut sources);
             let mut healthy = first.healthy;
             let mut resolved = first.resolved;
@@ -198,6 +218,9 @@ impl ActorObservation {
                 let message = match message {
                     Ok(message) => message,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if !live() {
+                            return;
+                        }
                         let next = reconcile(&mut watcher, &mut sources);
                         resolved = next.resolved;
                         healthy = next.healthy;
@@ -247,6 +270,9 @@ impl ActorObservation {
                         break;
                     }
                 }
+                if !live() {
+                    return;
+                }
                 if relevant {
                     if let Some(source) = &sources {
                         invalidate(&source.repository);
@@ -260,10 +286,7 @@ impl ActorObservation {
                 }
             }
         });
-        Ok(Self {
-            sender,
-            thread: Some(thread),
-        })
+        Ok(Self { sender, stopped })
     }
 }
 

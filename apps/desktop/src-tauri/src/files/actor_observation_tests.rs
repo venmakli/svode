@@ -468,4 +468,113 @@ mod tests {
         wait("the merge commit");
         drop(observation);
     }
+
+    /// DF-363: the stop returns while a resolution waits for its Git process,
+    /// the stopped observation signals nothing once that process returns, and
+    /// a new observation of the same Space neither waits for nor hears it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stopping_during_a_resolution_neither_waits_nor_signals_afterwards() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let repo = init_repo("Root", "root@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        let cli = GitCli::detect().unwrap();
+        let bin = tempfile::tempdir().expect("fake git directory");
+        let hold = bin.path().join("hold");
+        let entered = bin.path().join("entered");
+        let finished = bin.path().join("finished");
+        fs::write(&hold, "").unwrap();
+        // Git that does not start until the test removes the hold file.
+        let fake = bin.path().join("git");
+        svode_testkit::write_executable(
+            &fake,
+            format!(
+                "#!/bin/sh\ntouch '{entered}'\nwhile [ -e '{hold}' ]; do sleep 0.05; done\n'{git}' \"$@\"\nstatus=$?\ntouch '{finished}'\nexit $status\n",
+                entered = entered.display(),
+                hold = hold.display(),
+                git = cli.git_path().display(),
+                finished = finished.display(),
+            ),
+        )
+        .unwrap();
+        let appears = |path: &Path| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            while !path.exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{} did not appear",
+                    path.display()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+
+        let (stale_tx, stale) = mpsc::channel();
+        let changed_tx = stale_tx.clone();
+        let observation = ActorObservation::start(
+            GitCli::for_test(fake),
+            repo.path().to_path_buf(),
+            move |_| {
+                let _ = stale_tx.send("invalidate");
+            },
+            move |_| {
+                let _ = changed_tx.send("changed");
+            },
+        )
+        .unwrap();
+        appears(&entered);
+
+        // The stop must return while the resolution still waits.
+        let (stopped_tx, stopped) = mpsc::channel();
+        std::thread::spawn(move || {
+            drop(observation);
+            let _ = stopped_tx.send(());
+        });
+        if stopped.recv_timeout(Duration::from_secs(1)).is_err() {
+            // Let the waiting stop finish instead of leaving it behind.
+            fs::remove_file(&hold).unwrap();
+            panic!("the stop waited for the resolution of the observation");
+        }
+
+        // A new observation of the same Space starts while the old one still
+        // waits, and signals on its own.
+        let (fresh_tx, fresh) = mpsc::channel();
+        let (fresh_changed_tx, fresh_changed) = mpsc::channel();
+        let restarted = ActorObservation::start(
+            cli,
+            repo.path().to_path_buf(),
+            move |_| {
+                let _ = fresh_tx.send(());
+            },
+            move |_| {
+                let _ = fresh_changed_tx.send(());
+            },
+        )
+        .unwrap();
+        fresh.recv_timeout(Duration::from_secs(8)).unwrap();
+        assert!(!finished.exists(), "the old resolution must still wait");
+
+        // The old resolution returns now; its observation stays silent.
+        fs::remove_file(&hold).unwrap();
+        appears(&finished);
+        assert!(
+            stale.recv_timeout(Duration::from_secs(1)).is_err(),
+            "the stopped observation signalled"
+        );
+
+        // The new observation keeps signalling state changes.
+        while fresh_changed
+            .recv_timeout(Duration::from_millis(500))
+            .is_ok()
+        {}
+        commit(repo.path(), "two.txt", "two", "two");
+        fresh_changed.recv_timeout(Duration::from_secs(8)).unwrap();
+        assert!(
+            stale.try_recv().is_err(),
+            "the stopped observation signalled"
+        );
+        drop(restarted);
+    }
 }
