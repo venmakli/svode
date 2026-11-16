@@ -205,7 +205,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(terminal::commands::ordered_input_handler![
+        .invoke_handler(commands::ordered::ordered_handler![
             attachments::commands::attachments_list,
             attachments::commands::attachments_inspect_import_source,
             attachments::commands::attachments_import_file,
@@ -349,8 +349,6 @@ pub fn run() {
             commands::files::make_relative_link,
             commands::files::suggest_link_fix,
             commands::space::get_app_preferences,
-            commands::space::set_app_locale,
-            commands::space::set_app_theme,
             commands::space::list_projects,
             commands::space::create_project,
             commands::space::open_project,

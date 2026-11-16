@@ -1,6 +1,7 @@
+use std::future::Future;
 use std::io::Write;
-use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::error::AppError;
 
@@ -15,9 +16,17 @@ pub struct PreferenceMutation {
     pub changed: bool,
 }
 
+/// A queued preference write, which hands its result over itself.
+type PreferenceWrite = Box<dyn FnOnce() + Send>;
+
 #[derive(Default)]
 pub struct AppSettingsState {
+    /// Serializes Variables operations, which hold it around their Keychain
+    /// calls (`run_locked`); the preference commands never take it
+    /// (DF-365 R2).
     operation_lock: Arc<Mutex<()>>,
+    /// The queue of the settings executor, started with the first write.
+    preference_writes: Mutex<Option<mpsc::Sender<PreferenceWrite>>>,
 }
 
 impl AppSettingsState {
@@ -25,14 +34,78 @@ impl AppSettingsState {
         Self::default()
     }
 
-    pub fn lock(&self) -> Result<MutexGuard<'_, ()>, AppError> {
-        self.operation_lock
-            .lock()
-            .map_err(|_| AppError::General("app settings mutex poisoned".to_string()))
-    }
-
     pub(crate) fn operation_lock(&self) -> Arc<Mutex<()>> {
         Arc::clone(&self.operation_lock)
+    }
+
+    /// Queues the locale write behind the earlier preference writes and
+    /// returns at once; the future gives its result.
+    pub fn set_app_locale(
+        &self,
+        config_dir: PathBuf,
+        locale: String,
+    ) -> Result<impl Future<Output = Result<PreferenceMutation, AppError>> + Send + use<>, AppError>
+    {
+        self.queue_preference_write(move || set_app_locale(&config_dir, &locale))
+    }
+
+    /// Queues the theme write behind the earlier preference writes and
+    /// returns at once; the future gives its result.
+    pub fn set_app_theme(
+        &self,
+        config_dir: PathBuf,
+        theme: String,
+    ) -> Result<impl Future<Output = Result<PreferenceMutation, AppError>> + Send + use<>, AppError>
+    {
+        self.queue_preference_write(move || set_app_theme(&config_dir, &theme))
+    }
+
+    /// Theme and locale writes run one at a time in queue order on the
+    /// settings executor, its own thread: the settings lock they take may be
+    /// held by a Variables operation across a Keychain prompt, so neither the
+    /// main thread nor a tokio worker waits for it (DF-365 R2). The future
+    /// waits for the result without holding a thread.
+    fn queue_preference_write<W>(
+        &self,
+        write: W,
+    ) -> Result<impl Future<Output = Result<PreferenceMutation, AppError>> + Send + use<W>, AppError>
+    where
+        W: FnOnce() -> Result<PreferenceMutation, AppError> + Send + 'static,
+    {
+        let (done, written) = tokio::sync::oneshot::channel();
+        self.preference_executor()?
+            .send(Box::new(move || {
+                let _ = done.send(write());
+            }))
+            .map_err(|_| AppError::General("app settings executor stopped".to_string()))?;
+        Ok(async move {
+            written
+                .await
+                .map_err(|_| AppError::General("app settings write failed".to_string()))?
+        })
+    }
+
+    fn preference_executor(&self) -> Result<mpsc::Sender<PreferenceWrite>, AppError> {
+        let mut queue = self
+            .preference_writes
+            .lock()
+            .map_err(|_| AppError::General("app settings executor mutex poisoned".to_string()))?;
+        if let Some(queue) = queue.as_ref() {
+            return Ok(queue.clone());
+        }
+        let (sender, writes) = mpsc::channel::<PreferenceWrite>();
+        std::thread::Builder::new()
+            .name("app-settings-writer".to_string())
+            .spawn(move || {
+                // Ends with the state that owns the queue.
+                for write in writes {
+                    // A write that panics drops its result sender and fails
+                    // only its own call.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(write));
+                }
+            })?;
+        *queue = Some(sender.clone());
+        Ok(sender)
     }
 }
 
@@ -204,7 +277,7 @@ fn set_app_preference(
     })
 }
 
-pub fn set_app_locale(config_dir: &Path, locale: &str) -> Result<PreferenceMutation, AppError> {
+fn set_app_locale(config_dir: &Path, locale: &str) -> Result<PreferenceMutation, AppError> {
     if !SUPPORTED_LOCALES.contains(&locale) {
         return Err(AppError::General(format!(
             "unsupported app locale: {locale}"
@@ -213,15 +286,20 @@ pub fn set_app_locale(config_dir: &Path, locale: &str) -> Result<PreferenceMutat
     set_app_preference(config_dir, "language", locale, &SUPPORTED_LOCALES)
 }
 
-pub fn set_app_theme(config_dir: &Path, theme: &str) -> Result<PreferenceMutation, AppError> {
+fn set_app_theme(config_dir: &Path, theme: &str) -> Result<PreferenceMutation, AppError> {
     set_app_preference(config_dir, "theme", theme, &SUPPORTED_THEMES)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::app_variables::SecretStore;
     use crate::space::types::{AppAgentSettings, DetectedCli};
-    use std::sync::{Arc, Barrier};
+    use std::sync::Barrier;
+    use std::time::Duration;
+    use svode_core::variables::{
+        Context, Kind, Mode, Owner, Save, SaveOperation, Service, SourceOwner,
+    };
 
     fn settings_with_siblings(locale: &str) -> AppSettings {
         let mut settings = AppSettings::default();
@@ -498,93 +576,384 @@ mod tests {
         }
     }
 
-    #[test]
-    fn operation_lock_serializes_concurrent_locale_mutations() {
-        let config_dir = tempfile::tempdir().expect("config dir");
-        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
-            .expect("write settings");
-
-        let locales = ["ru", "en", "ru", "en"];
-        let state = Arc::new(AppSettingsState::new());
-        let start = Arc::new(Barrier::new(locales.len()));
-        let commit_order = Arc::new(std::sync::Mutex::new(Vec::new()));
-
-        let handles = locales.map(|locale| {
-            let config_dir = config_dir.path().to_path_buf();
-            let state = Arc::clone(&state);
-            let start = Arc::clone(&start);
-            let commit_order = Arc::clone(&commit_order);
-            std::thread::spawn(move || {
-                start.wait();
-                let _guard = state.lock().expect("lock settings mutation");
-                let committed = set_app_locale(&config_dir, locale)
-                    .expect("set locale")
-                    .value;
-                commit_order
-                    .lock()
-                    .expect("lock commit order")
-                    .push(committed);
-            })
-        });
-
-        for handle in handles {
-            handle.join().expect("join locale mutation");
-        }
-
-        let last_committed = commit_order
-            .lock()
-            .expect("lock final commit order")
-            .last()
-            .cloned()
-            .expect("at least one commit");
-        assert_eq!(
-            read_app_settings(config_dir.path())
-                .expect("read final settings")
-                .appearance
-                .language,
-            last_committed
-        );
+    /// Stands in for the Keychain: `get` reports that it was entered and
+    /// waits until the test releases it.
+    struct GatedSecretStore {
+        entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: Mutex<mpsc::Receiver<()>>,
     }
 
-    #[test]
-    fn operation_lock_prevents_concurrent_theme_and_locale_field_loss() {
+    impl GatedSecretStore {
+        fn new() -> (Self, tokio::sync::oneshot::Receiver<()>, mpsc::Sender<()>) {
+            let (entered, on_entered) = tokio::sync::oneshot::channel();
+            let (release, released) = mpsc::channel();
+            let store = Self {
+                entered: Mutex::new(Some(entered)),
+                release: Mutex::new(released),
+            };
+            (store, on_entered, release)
+        }
+    }
+
+    impl SecretStore for GatedSecretStore {
+        fn get(&self, _account: &str) -> svode_core::variables::Result<Option<String>> {
+            if let Some(entered) = self.entered.lock().expect("entered").take() {
+                let _ = entered.send(());
+            }
+            let _ = self.release.lock().expect("release").recv();
+            Ok(None)
+        }
+
+        fn set(&self, _account: &str, _value: &str) -> svode_core::variables::Result<()> {
+            unreachable!("the catalog only reads secrets")
+        }
+
+        fn remove(&self, _account: &str) -> svode_core::variables::Result<()> {
+            unreachable!("the catalog only reads secrets")
+        }
+    }
+
+    /// A secret store that keeps values in memory, to set up Variables.
+    #[derive(Default)]
+    struct MemorySecretStore(Mutex<std::collections::BTreeMap<String, String>>);
+
+    impl SecretStore for MemorySecretStore {
+        fn get(&self, account: &str) -> svode_core::variables::Result<Option<String>> {
+            Ok(self.0.lock().expect("secrets").get(account).cloned())
+        }
+
+        fn set(&self, account: &str, value: &str) -> svode_core::variables::Result<()> {
+            self.0
+                .lock()
+                .expect("secrets")
+                .insert(account.into(), value.into());
+            Ok(())
+        }
+
+        fn remove(&self, account: &str) -> svode_core::variables::Result<()> {
+            self.0.lock().expect("secrets").remove(account);
+            Ok(())
+        }
+    }
+
+    /// `owner` with the secret `API_TOKEN`, whose catalog reads the store.
+    fn with_secret(owner: &Owner) {
+        let secrets = MemorySecretStore::default();
+        let service = Service::new(&secrets);
+        let revision = service.catalog(owner).expect("catalog").revision;
+        service
+            .save(
+                owner,
+                Save {
+                    name: "API_TOKEN".into(),
+                    mode: Mode::Local,
+                    kind: Kind::Secret,
+                    value: Some("token".into()),
+                    revision,
+                    operation: SaveOperation::Create,
+                    keep: None,
+                },
+            )
+            .expect("save secret");
+    }
+
+    /// Starts a Variables operation under `run_locked` that reads the
+    /// catalog of `owner` and waits in the secret store until released, as
+    /// it waits for a Keychain prompt.
+    async fn variables_operation_waiting_on_the_secret_store(
+        state: &Arc<AppSettingsState>,
+        owner: Owner,
+    ) -> (
+        tokio::task::JoinHandle<Result<usize, AppError>>,
+        mpsc::Sender<()>,
+    ) {
+        let (secrets, entered, release) = GatedSecretStore::new();
+        let operation = tokio::spawn({
+            let state = Arc::clone(state);
+            async move {
+                crate::commands::app_variables::run_locked(&state, move || {
+                    Service::new(&secrets)
+                        .catalog(&owner)
+                        .map(|catalog| catalog.entries.len())
+                        .map_err(|failure| AppError::Storage(failure.to_string()))
+                })
+                .await
+            }
+        });
+        tokio::time::timeout(WITHIN, entered)
+            .await
+            .expect("the Variables operation reaches the secret store")
+            .expect("entered signal");
+        (operation, release)
+    }
+
+    async fn finishes<T>(operation: tokio::task::JoinHandle<Result<T, AppError>>) -> T {
+        tokio::time::timeout(WITHIN, operation)
+            .await
+            .expect("the operation finishes")
+            .expect("join the operation")
+            .expect("the operation succeeds")
+    }
+
+    async fn written(
+        write: Result<impl Future<Output = Result<PreferenceMutation, AppError>>, AppError>,
+    ) -> PreferenceMutation {
+        tokio::time::timeout(WITHIN, write.expect("the write is queued"))
+            .await
+            .expect("the write finishes")
+            .expect("the write succeeds")
+    }
+
+    const WITHIN: Duration = Duration::from_secs(5);
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn preference_commands_finish_while_project_variables_wait_on_the_secret_store() {
+        // DF-365 acceptance 4(a): the commands no longer take the lock that
+        // `run_locked` holds around the secret store.
         let config_dir = tempfile::tempdir().expect("config dir");
         write_app_settings(config_dir.path(), &settings_with_siblings("en"))
             .expect("write settings");
-
+        let project = tempfile::tempdir().expect("project");
+        std::fs::create_dir_all(project.path().join(".svode")).expect("project .svode");
+        std::fs::write(
+            project.path().join(".svode/config.json"),
+            r#"{"name":"Test"}"#,
+        )
+        .expect("project config");
+        let context = Context::new(project.path(), None, config_dir.path()).expect("context");
+        let owner = Owner::in_context(&context, &SourceOwner::Project).expect("project owner");
+        with_secret(&owner);
         let state = Arc::new(AppSettingsState::new());
-        let start = Arc::new(Barrier::new(2));
-        let theme_handle = {
-            let config_dir = config_dir.path().to_path_buf();
-            let state = Arc::clone(&state);
-            let start = Arc::clone(&start);
-            std::thread::spawn(move || {
-                start.wait();
-                let _guard = state.lock().expect("lock theme mutation");
-                set_app_theme(&config_dir, "light").expect("set theme");
-            })
-        };
-        let locale_handle = {
-            let config_dir = config_dir.path().to_path_buf();
-            let state = Arc::clone(&state);
-            let start = Arc::clone(&start);
-            std::thread::spawn(move || {
-                start.wait();
-                let _guard = state.lock().expect("lock locale mutation");
-                set_app_locale(&config_dir, "ru").expect("set locale");
-            })
-        };
+        let (operation, release) =
+            variables_operation_waiting_on_the_secret_store(&state, owner).await;
 
-        theme_handle.join().expect("join theme mutation");
-        locale_handle.join().expect("join locale mutation");
-
+        let path = config_dir.path().to_path_buf();
         assert_eq!(
-            read_app_preferences(config_dir.path()).expect("read final preferences"),
+            written(state.set_app_theme(path.clone(), "light".into())).await,
+            PreferenceMutation {
+                value: "light".to_string(),
+                changed: true,
+            }
+        );
+        assert_eq!(
+            written(state.set_app_locale(path.clone(), "ru".into()))
+                .await
+                .value,
+            "ru"
+        );
+        let preferences = tokio::time::timeout(
+            WITHIN,
+            crate::commands::blocking(move || read_app_preferences(&path)),
+        )
+        .await
+        .expect("get_app_preferences does not wait for the Variables operation")
+        .expect("read preferences");
+        assert_eq!(
+            preferences,
             AppPreferences {
                 theme: "light".to_string(),
                 language: "ru".to_string(),
                 theme_needs_recovery: false,
             }
         );
+        assert!(!operation.is_finished());
+
+        release.send(()).expect("release the secret store");
+        assert_eq!(finishes(operation).await, 1);
+    }
+
+    #[test]
+    fn with_global_variables_on_the_secret_store_a_theme_write_waits_on_the_executor_alone() {
+        // DF-365 acceptance 4(b): the settings lock that global Variables
+        // hold around the secret store is waited for by the settings
+        // executor, never by the caller or a runtime thread.
+        let config_dir = tempfile::tempdir().expect("config dir");
+        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
+            .expect("write settings");
+        let owner = Owner::global(config_dir.path()).expect("global owner");
+        with_secret(&owner);
+        let path = config_dir.path().to_path_buf();
+        let state = Arc::new(AppSettingsState::new());
+
+        within(Duration::from_secs(20), move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime")
+                .block_on(theme_write_waits_on_the_executor(state, owner, path))
+        });
+    }
+
+    async fn theme_write_waits_on_the_executor(
+        state: Arc<AppSettingsState>,
+        owner: Owner,
+        path: PathBuf,
+    ) {
+        let (operation, release) =
+            variables_operation_waiting_on_the_secret_store(&state, owner.clone()).await;
+
+        // `get_app_preferences` reads without the lock.
+        let preferences = read_app_preferences(&path).expect("read preferences");
+        assert_eq!(preferences.theme, "dark");
+
+        // Queueing returns at once; the write waits on the executor.
+        let write = tokio::spawn(
+            state
+                .set_app_theme(path.clone(), "light".into())
+                .expect("the write is queued"),
+        );
+        // Another task of the only runtime thread goes on meanwhile.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !write.is_finished(),
+            "the write waits for the settings lock"
+        );
+        assert_eq!(
+            read_app_preferences(&path).expect("read preferences").theme,
+            "dark"
+        );
+
+        release.send(()).expect("release the secret store");
+        assert_eq!(finishes(operation).await, 1);
+        let mutation = tokio::time::timeout(WITHIN, write)
+            .await
+            .expect("the write finishes after the release")
+            .expect("join the write")
+            .expect("set theme");
+        assert_eq!(
+            mutation,
+            PreferenceMutation {
+                value: "light".to_string(),
+                changed: true,
+            }
+        );
+        assert_eq!(
+            read_app_preferences(&path).expect("read preferences").theme,
+            "light"
+        );
+        let catalog = Service::new(&MemorySecretStore::default())
+            .catalog(&owner)
+            .expect("catalog after the write");
+        assert_eq!(catalog.entries.len(), 1, "the global Variable stays");
+    }
+
+    /// Runs `body` on its own thread and fails if it does not return within
+    /// `limit`, so a write that waits on its caller fails the test instead of
+    /// hanging it.
+    fn within<T: Send + 'static>(limit: Duration, body: impl FnOnce() -> T + Send + 'static) -> T {
+        let (done, result) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(body());
+        });
+        result
+            .recv_timeout(limit)
+            .expect("the test returns instead of waiting on its caller")
+    }
+
+    #[tokio::test]
+    async fn a_series_of_theme_writes_queued_in_call_order_leaves_the_value_of_the_last_call() {
+        // DF-365 acceptance 4(c): the ordered dispatch queues each call on
+        // the main thread as it arrives, as this loop does, without waiting.
+        let config_dir = tempfile::tempdir().expect("config dir");
+        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
+            .expect("write settings");
+        let state = AppSettingsState::new();
+        let path = config_dir.path().to_path_buf();
+        let themes: Vec<&str> = SUPPORTED_THEMES.iter().copied().cycle().take(200).collect();
+
+        // The calls pile up behind the settings lock, as behind a Variables
+        // operation, so only the queue keeps them in order once it is free.
+        let held = svode_core::variables::files::lock(&path).expect("settings lock");
+        let pending: Vec<_> = themes
+            .iter()
+            .map(|theme| state.set_app_theme(path.clone(), theme.to_string()))
+            .collect();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(held);
+        // Results are awaited in reverse, so the call order alone decides
+        // the outcome. Each call changes the theme its predecessor wrote,
+        // which holds only when they are written in call order.
+        for (theme, pending) in themes.iter().zip(pending).rev() {
+            let mutation = written(pending).await;
+            assert_eq!(mutation.value, *theme);
+            assert!(mutation.changed, "{theme} follows a different theme");
+        }
+
+        assert_eq!(
+            read_app_preferences(&path).expect("read preferences").theme,
+            *themes.last().expect("last theme")
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_theme_and_locale_writes_keep_both_fields() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
+            .expect("write settings");
+        let state = AppSettingsState::new();
+        let path = config_dir.path().to_path_buf();
+
+        let theme = state.set_app_theme(path.clone(), "light".into());
+        let locale = state.set_app_locale(path.clone(), "ru".into());
+        let (theme, locale) = tokio::join!(written(theme), written(locale));
+        assert!(theme.changed && locale.changed);
+
+        assert_eq!(
+            read_app_preferences(&path).expect("read final preferences"),
+            AppPreferences {
+                theme: "light".to_string(),
+                language: "ru".to_string(),
+                theme_needs_recovery: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn preference_writes_keep_settings_written_concurrently_by_variables() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        write_app_settings(config_dir.path(), &settings_with_siblings("en"))
+            .expect("write settings");
+        let state = AppSettingsState::new();
+        let path = config_dir.path().to_path_buf();
+        let start = Arc::new(Barrier::new(2));
+        let owners: Vec<PathBuf> = (0..20)
+            .map(|index| config_dir.path().join(format!("owner-{index}")))
+            .collect();
+
+        let variables = std::thread::spawn({
+            let path = path.clone();
+            let start = Arc::clone(&start);
+            let owners = owners.clone();
+            move || {
+                start.wait();
+                for owner in owners {
+                    crate::space::app_variables::register_s3_owner(&path, &owner)
+                        .expect("register owner");
+                }
+            }
+        });
+        start.wait();
+        let pending: Vec<_> = (0..20)
+            .map(|index| {
+                let theme = SUPPORTED_THEMES[index % SUPPORTED_THEMES.len()];
+                state.set_app_theme(path.clone(), theme.to_string())
+            })
+            .collect();
+        for pending in pending {
+            written(pending).await;
+        }
+        variables.join().expect("join Variables writes");
+
+        let saved: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(path.join("settings.json")).expect("read settings"),
+        )
+        .expect("parse settings");
+        assert_eq!(
+            saved["appearance"]["theme"],
+            SUPPORTED_THEMES[19 % SUPPORTED_THEMES.len()]
+        );
+        let registered: Vec<PathBuf> =
+            serde_json::from_value(saved["s3VariableOwners"].clone()).expect("owners");
+        assert_eq!(registered.len(), owners.len());
     }
 }

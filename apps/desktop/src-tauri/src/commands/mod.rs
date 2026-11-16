@@ -1,6 +1,7 @@
 pub mod app_variables;
 pub mod files;
 pub mod greet;
+pub(crate) mod ordered;
 pub mod project_openers;
 pub mod space;
 

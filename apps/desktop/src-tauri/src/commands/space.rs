@@ -1,11 +1,13 @@
+use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Manager, State, Window};
+use tauri::ipc::Invoke;
+use tauri::{AppHandle, Emitter, Manager, Runtime, State, Window};
 
 use crate::app_windows::{ProjectWindowRequest, WindowBinding, WindowView};
-use crate::commands::blocking;
+use crate::commands::{blocking, ordered};
 use crate::error::AppError;
 use crate::git::access::{RepositoryAccessSnapshot, require_repository_mutation};
 use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy};
@@ -151,53 +153,64 @@ fn root_project_info(
 
 const APP_PREFERENCES_CHANGED_EVENT: &str = "app-settings:preferences-changed";
 
+/// Reads without a lock: `settings.json` is replaced by an atomic rename,
+/// so the read is a short local one that may stay on the main thread
+/// (DF-365 R2).
 #[tauri::command]
-pub fn get_app_preferences(
-    app: AppHandle,
-    settings_state: State<'_, settings::AppSettingsState>,
-) -> Result<AppPreferences, AppError> {
-    let _guard = settings_state.lock()?;
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::General(e.to_string()))?;
-    settings::read_app_preferences(&config_dir)
+pub fn get_app_preferences(app: AppHandle) -> Result<AppPreferences, AppError> {
+    settings::read_app_preferences(&app_config_dir(&app)?)
 }
 
-#[tauri::command]
-pub fn set_app_locale(
-    app: AppHandle,
-    settings_state: State<'_, settings::AppSettingsState>,
-    locale: String,
+/// The commands that [`ordered`] dispatches itself.
+pub(crate) const SET_APP_LOCALE: &str = "set_app_locale";
+pub(crate) const SET_APP_THEME: &str = "set_app_theme";
+
+/// `set_app_locale`, dispatched by [`ordered`]: the write is queued on the
+/// main thread in call order to the settings executor, which alone waits for
+/// the settings lock a Variables operation may hold across a Keychain prompt,
+/// and the call is answered once it is written (DF-365 R2). Its name,
+/// argument, result, errors and change event are those of the former
+/// `#[tauri::command]`.
+pub(crate) fn set_app_locale<R: Runtime>(invoke: Invoke<R>) {
+    ordered::answer(invoke, SET_APP_LOCALE, |call| {
+        let locale: String = call.arg("locale")?;
+        let app = call.webview().app_handle().clone();
+        let written = app
+            .state::<settings::AppSettingsState>()
+            .set_app_locale(app_config_dir(&app)?, locale)?;
+        Ok(announce_preference(app, written))
+    });
+}
+
+/// `set_app_theme`, dispatched by [`ordered`] as [`set_app_locale`] is.
+pub(crate) fn set_app_theme<R: Runtime>(invoke: Invoke<R>) {
+    ordered::answer(invoke, SET_APP_THEME, |call| {
+        let theme: String = call.arg("theme")?;
+        let app = call.webview().app_handle().clone();
+        let written = app
+            .state::<settings::AppSettingsState>()
+            .set_app_theme(app_config_dir(&app)?, theme)?;
+        Ok(announce_preference(app, written))
+    });
+}
+
+/// The value of a written preference; a change is announced to the windows
+/// after the write.
+async fn announce_preference<R: Runtime>(
+    app: AppHandle<R>,
+    written: impl Future<Output = Result<settings::PreferenceMutation, AppError>>,
 ) -> Result<String, AppError> {
-    let _guard = settings_state.lock()?;
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::General(e.to_string()))?;
-    let mutation = settings::set_app_locale(&config_dir, &locale)?;
+    let mutation = written.await?;
     if mutation.changed {
         let _ = app.emit(APP_PREFERENCES_CHANGED_EVENT, ());
     }
     Ok(mutation.value)
 }
 
-#[tauri::command]
-pub fn set_app_theme(
-    app: AppHandle,
-    settings_state: State<'_, settings::AppSettingsState>,
-    theme: String,
-) -> Result<String, AppError> {
-    let _guard = settings_state.lock()?;
-    let config_dir = app
-        .path()
+fn app_config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, AppError> {
+    app.path()
         .app_config_dir()
-        .map_err(|e| AppError::General(e.to_string()))?;
-    let mutation = settings::set_app_theme(&config_dir, &theme)?;
-    if mutation.changed {
-        let _ = app.emit(APP_PREFERENCES_CHANGED_EVENT, ());
-    }
-    Ok(mutation.value)
+        .map_err(|e| AppError::General(e.to_string()))
 }
 
 // --- Projects ---

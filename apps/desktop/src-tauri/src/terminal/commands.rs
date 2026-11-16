@@ -1,7 +1,8 @@
-use tauri::ipc::{CommandArg, CommandItem, Invoke, InvokeError};
+use tauri::ipc::Invoke;
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::{TerminalManager, TerminalResourcePath, TerminalSession};
+use crate::commands::ordered;
 use crate::error::AppError;
 use svode_core::agent_adapters::AgentId;
 
@@ -17,66 +18,23 @@ pub fn terminal_spawn(
     manager.spawn(app, cwd, mcp_project_path, cols, rows)
 }
 
-/// The command that [`with_ordered_input`] dispatches itself.
-const TERMINAL_WRITE: &str = "terminal_write";
+/// The command that [`crate::commands::ordered`] dispatches itself.
+pub(crate) const TERMINAL_WRITE: &str = "terminal_write";
 
-/// `tauri::generate_handler!` over the listed commands, with `terminal_write`
-/// dispatched by [`with_ordered_input`].
-macro_rules! ordered_input_handler {
-    ($($commands:tt)*) => {
-        $crate::terminal::commands::with_ordered_input(::tauri::generate_handler![$($commands)*])
-    };
-}
-pub(crate) use ordered_input_handler;
-
-/// The generated command handler with `terminal_write` dispatched by hand.
-///
-/// The window sends terminal input without waiting for each call, and only
-/// the main thread sees IPC calls in the order they were made: a sync
-/// `#[tauri::command]` would wait there for the PTY, and an async one starts
-/// on a tokio worker in no fixed order. So `terminal_write` queues its input
-/// on the main thread and answers once the write is done, from a task that
-/// waits without holding a worker (DF-365 R2). Its name, arguments, result
-/// and errors are those of the former `#[tauri::command]`.
-pub(crate) fn with_ordered_input<R: Runtime>(
-    commands: impl Fn(Invoke<R>) -> bool + Send + Sync + 'static,
-) -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
-    move |invoke| {
-        if invoke.message.command() != TERMINAL_WRITE {
-            return commands(invoke);
-        }
-        terminal_write(invoke);
-        true
-    }
-}
-
-fn terminal_write<R: Runtime>(invoke: Invoke<R>) {
-    let Invoke {
-        message,
-        resolver,
-        acl,
-    } = invoke;
-    let arg = |key| CommandItem {
-        plugin: None,
-        name: TERMINAL_WRITE,
-        key,
-        message: &message,
-        acl: &acl,
-    };
-    let queued = <String as CommandArg<R>>::from_command(arg("ptyId")).and_then(|pty_id| {
-        let data = <String as CommandArg<R>>::from_command(arg("data"))?;
-        message
-            .webview_ref()
+/// `terminal_write`, dispatched by [`crate::commands::ordered`]: the window
+/// sends terminal input without waiting for each call, so the input is queued
+/// on the main thread in call order and the call is answered once the PTY
+/// takes it (DF-365 R2). Its name, arguments, result and errors are those of
+/// the former `#[tauri::command]`.
+pub(crate) fn terminal_write<R: Runtime>(invoke: Invoke<R>) {
+    ordered::answer(invoke, TERMINAL_WRITE, |call| {
+        let pty_id: String = call.arg("ptyId")?;
+        let data: String = call.arg("data")?;
+        Ok(call
+            .webview()
             .state::<TerminalManager>()
-            .write_queued(&pty_id, data)
-            .map_err(InvokeError::from)
+            .write_queued(&pty_id, data)?)
     });
-    match queued {
-        Ok(written) => {
-            resolver.respond_async(async move { written.await.map_err(InvokeError::from) })
-        }
-        Err(error) => resolver.respond::<()>(Err(error)),
-    }
 }
 
 #[tauri::command]
