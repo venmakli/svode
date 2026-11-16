@@ -116,6 +116,22 @@ export function notifyGitResolveFailed(page: string, reason?: string): void {
   toast.error(m.git_resolve_page_failed({ page }), { description: reason });
 }
 
+/**
+ * An explicit save wrote the Page `page`, whose conflict a write does not
+ * decide: names where the choice is made, with `openChanges` as its action
+ * when the window can open "Changes" at the path (DF-354 R4).
+ */
+export function notifyGitPageAwaitsChanges(
+  page: string,
+  openChanges: (() => void) | undefined,
+): void {
+  toast.info(m.git_resolve_page_awaits_changes({ page }), {
+    action: openChanges
+      ? { label: m.git_resolve_page_open_changes(), onClick: openChanges }
+      : undefined,
+  });
+}
+
 /** A refused explicit commit outside the Page and "Changes": names the Page and leads to its version choice. */
 export function notifyGitCommitRefusal(refusal: GitCommitRefusal): void {
   toast.warning(

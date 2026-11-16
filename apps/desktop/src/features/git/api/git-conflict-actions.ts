@@ -4,11 +4,13 @@ import {
   getGitConflictKinds,
   resolveGitConflictFile as resolvePlatformGitConflictFile,
 } from "@/platform/git/git-api";
-import type {
-  GitConflictFile,
-  GitFileResolution,
-  GitPathConflict,
-  GitSyncOutcome,
+import {
+  gitPathConflictKind,
+  type GitConflictFile,
+  type GitConflictKind,
+  type GitFileResolution,
+  type GitPathConflict,
+  type GitSyncOutcome,
 } from "../model";
 import { runSync } from "./git-actions";
 
@@ -17,6 +19,17 @@ export async function readGitConflictKinds(
   spacePath: string,
 ): Promise<GitPathConflict[]> {
   return (await getGitConflictKinds(spacePath)).map((file) => ({ ...file }));
+}
+
+/**
+ * The kind of the conflict that holds `path` (relative to `spacePath`), read
+ * from Git; null when Git does not hold it unresolved.
+ */
+export async function readGitPathConflictKind(
+  spacePath: string,
+  path: string,
+): Promise<GitConflictKind | null> {
+  return gitPathConflictKind(await readGitConflictKinds(spacePath), path);
 }
 
 /** The conflicted file at `path` (relative to `spacePath`) with its places. */

@@ -13,6 +13,10 @@ import {
   useGitStore,
 } from "@/features/git";
 import {
+  registerConflictNavigation,
+  type ConflictFileTarget,
+} from "@/features/git/app-shell";
+import {
   refreshGitSpaceStatus,
   registerPageSaveOwner,
   type GitCommitRefusal,
@@ -91,6 +95,8 @@ async function harness(path: string, body: string, markerSize = 7) {
     conflicted: [] as string[],
     /** A merge is in progress, so resolving its last path finishes it. */
     merging: true,
+    /** The conflict kinds of paths Git holds unresolved; `page_text` if absent. */
+    kinds: {} as Record<string, string>,
     /** What the next resolutions fail with, as the backend refuses them. */
     resolveError: null as unknown,
     /** The file is gone: reads fail as the backend reports a missing file. */
@@ -150,6 +156,11 @@ async function harness(path: string, body: string, markerSize = 7) {
         return { type: "conflict", files: [...disk.conflicted] };
       return disk.merging ? { type: "success" } : { type: "resolved" };
     }
+    if (command === "git_conflict_kinds")
+      return disk.conflicted.map((file) => ({
+        path: file,
+        kind: disk.kinds[file] ?? "page_text",
+      }));
     if (command === "git_status" && disk.conflicted.length)
       return {
         branch: "main",
@@ -291,9 +302,14 @@ async function harness(path: string, body: string, markerSize = 7) {
     reconcile: () =>
       act(() => writerRef.current!.reconcileExternalChange(path)),
     /** Git holds `paths` unresolved, as the Space status reads it. */
-    conflict: async (paths: string[], merging = true) => {
+    conflict: async (
+      paths: string[],
+      merging = true,
+      kinds: Record<string, string> = {},
+    ) => {
       disk.conflicted = paths;
       disk.merging = merging;
+      disk.kinds = kinds;
       await act(() => refreshGitSpaceStatus(SPACE));
     },
     /** The commit "Changes" sends to the Page, or ⌘S with `"notify"`. */
@@ -1314,6 +1330,115 @@ test("⌘S of a conflicted Page goes the same way: it writes, resolves the path,
     await view.cleanup();
   }
 });
+
+/** Toasts shown while `run` and the resolution after its write ran, with the label of their action. */
+async function toastsWithActionResolving(run: () => Promise<unknown>) {
+  const before = toast.getToasts().length;
+  await run();
+  await settle();
+  return toast
+    .getToasts()
+    .slice(before)
+    .map((item) => ({
+      type: "type" in item ? item.type : undefined,
+      title: "title" in item ? item.title : undefined,
+      action:
+        "action" in item &&
+        item.action &&
+        typeof item.action === "object" &&
+        "label" in item.action
+          ? item.action.label
+          : undefined,
+    }));
+}
+
+/** Runs the action of the last toast, as a click on it does. */
+function openChangesOfLastToast() {
+  const last = toast.getToasts().at(-1);
+  const action = last && "action" in last ? last.action : undefined;
+  if (action && typeof action === "object" && "onClick" in action)
+    action.onClick({} as never);
+  else throw new Error("the toast has no action");
+}
+
+const awaitsChanges = {
+  type: "info" as const,
+  title: m.git_resolve_page_awaits_changes({ page: "Plan" }),
+  action: m.git_resolve_page_open_changes(),
+};
+
+for (const kind of ["modify_delete", "rename_delete", "rename_rename"]) {
+  test(`autosave, ⌘S and ⇧⌘S of a Page in a ${kind} conflict write it and leave its path unresolved; only the explicit saves name "Changes"`, async () => {
+    const path = `pages/${kind}.md`;
+    const view = await harness(path, "Status: ok\n\nMiddle\n");
+    const opened: ConflictFileTarget[] = [];
+    const unregister = registerConflictNavigation({
+      openFile: (target) => opened.push(target),
+      openPage: () => {},
+    });
+    try {
+      await view.conflict([path, "pages/other.md"], true, { [path]: kind });
+
+      appendToBlock(view.editor, "Middle", " typed");
+      const autosaved = await toastsWithActionResolving(() => view.save());
+      expect(view.writes.length).toBe(1);
+      expect(view.disk.body.includes("Middle typed")).toBe(true);
+      expect(view.resolves).toEqual([]);
+      expect(autosaved).toEqual([]);
+
+      appendToBlock(view.editor, "Middle typed", "!");
+      useEditorStore.getState().markUnsaved(SPACE, path);
+      const saved = await toastsWithActionResolving(() =>
+        view.commitPage("notify"),
+      );
+      expect(view.writes.length).toBe(2);
+      expect(view.resolves).toEqual([]);
+      expect(view.commits).toEqual([]);
+      expect(saved).toEqual([awaitsChanges]);
+      // Its action opens "Changes" at the Page.
+      openChangesOfLastToast();
+      expect(opened).toEqual([{ spacePath: SPACE, path }]);
+
+      appendToBlock(view.editor, "Middle typed!", "!");
+      useEditorStore.getState().markUnsaved(SPACE, path);
+      const savedAll = await toastsWithActionResolving(() =>
+        view.commitArea(undefined, "notify"),
+      );
+      expect(view.writes.length).toBe(3);
+      expect(view.resolves).toEqual([]);
+      expect(savedAll).toEqual([awaitsChanges]);
+    } finally {
+      unregister();
+      useEditorStore.getState().clearUnsaved(SPACE, path);
+      await view.cleanup();
+    }
+  });
+}
+
+for (const kind of ["page_text", "page_properties", "add_add"]) {
+  test(`⇧⌘S of a Page in a ${kind} conflict without marker lines still resolves its path`, async () => {
+    const path = `pages/${kind}.md`;
+    const view = await harness(path, "Status: ok\n\nMiddle\n");
+    try {
+      await view.conflict([path, "pages/other.md"], true, { [path]: kind });
+      appendToBlock(view.editor, "Middle", " chosen");
+      useEditorStore.getState().markUnsaved(SPACE, path);
+      const shown = await toastsWithActionResolving(() =>
+        view.commitArea(undefined, "notify"),
+      );
+      expect(view.writes.length).toBe(1);
+      expect(view.resolves).toEqual([[path]]);
+      expect(shown).toContainEqual({
+        type: "info",
+        title: m.git_resolve_conflicts_remaining({ page: "Plan", count: "1" }),
+        action: undefined,
+      });
+    } finally {
+      useEditorStore.getState().clearUnsaved(SPACE, path);
+      await view.cleanup();
+    }
+  });
+}
 
 test("while writes are held a due autosave writes nothing and keeps the draft, and a restore writes the edited body the next save goes on from", async () => {
   const h = await harness("pages/held.md", "Before\n");

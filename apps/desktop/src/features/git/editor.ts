@@ -1,9 +1,12 @@
 import {
+  conflictFileOpener,
+  conflictResolvedByEditorWrite,
   gitStatusPathInConflict,
   useGitStore,
   type GitSaveScope,
   type GitStatus,
 } from "./model";
+import { readGitPathConflictKind } from "./api/git-conflict-actions";
 import { refreshGitStatus } from "./api/git-status-actions";
 import {
   commitAllSpace as commitAllSpaceAction,
@@ -15,6 +18,7 @@ import {
   type GitCommitResult,
 } from "./api/git-actions";
 import {
+  notifyGitPageAwaitsChanges,
   notifyGitResolveFailed,
   notifyGitResolveOutcome,
   notifyGitSyncFailed,
@@ -87,14 +91,22 @@ export function gitPathInConflict(spacePath: string, path: string): boolean {
 
 /**
  * Continues the merge with the saved Page `path`, named `page` in feedback;
- * a refusal to resolve it is named, never thrown (DF-294 R5).
+ * a refusal to resolve it is named, never thrown (DF-294 R5). A conflict a
+ * write does not decide, such as modify/delete, stays unresolved and is not
+ * sent; an `explicitSave` names where its choice is made (DF-354 R1, R4).
  */
 export async function continueGitResolve(
   spacePath: string,
   path: string,
   page: string,
+  { explicitSave = false }: { explicitSave?: boolean } = {},
 ): Promise<void> {
   const conflicted = gitPathInConflict(spacePath, path);
+  if (conflicted && !(await resolvedByEditorWrite(spacePath, path))) {
+    if (explicitSave)
+      notifyGitPageAwaitsChanges(page, conflictFileOpener({ spacePath, path }));
+    return;
+  }
   try {
     await continueGitResolveAction(spacePath, [path], {
       onSyncOutcome: conflicted
@@ -105,6 +117,23 @@ export async function continueGitResolve(
     console.error("git merge resolution failed:", error);
     if (conflicted) notifyGitResolveFailed(page);
     else notifyGitSyncFailed();
+  }
+}
+
+/**
+ * Whether a write decides the conflict of `path` by its kind; a kind that
+ * does not read leaves the path to an explicit choice.
+ */
+async function resolvedByEditorWrite(
+  spacePath: string,
+  path: string,
+): Promise<boolean> {
+  try {
+    const kind = await readGitPathConflictKind(spacePath, path);
+    return kind === null || conflictResolvedByEditorWrite(kind);
+  } catch (error) {
+    console.error("git conflict kind unavailable:", error);
+    return false;
   }
 }
 

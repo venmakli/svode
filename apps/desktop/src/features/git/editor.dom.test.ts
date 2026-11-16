@@ -22,13 +22,18 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
     expect(result.status).toBe(0);
   });
 } else {
-  const toasts: { kind: string; message: unknown }[] = [];
+  interface ToastAction {
+    label: string;
+    onClick: () => void;
+  }
+  const toasts: { kind: string; message: unknown; action?: ToastAction }[] = [];
   const mock = bunTest.mock;
 
   mock.module("sonner", () => ({
     toast: {
       error: (message: unknown) => toasts.push({ kind: "error", message }),
-      info: (message: unknown) => toasts.push({ kind: "info", message }),
+      info: (message: unknown, options?: { action?: ToastAction }) =>
+        toasts.push({ kind: "info", message, action: options?.action }),
     },
   }));
 
@@ -38,7 +43,7 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
   });
 
   const { continueGitResolve } = await import("./editor");
-  const { useGitStore } = await import("./model");
+  const { registerConflictNavigation, useGitStore } = await import("./model");
 
   const spacePath = "/project/space";
 
@@ -66,6 +71,8 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
         resolveArgs.push(args);
         return { type: "conflict", files: remaining };
       }
+      if (command === "git_conflict_kinds")
+        return [{ path: "plan.md", kind: "page_text" }];
       if (command === "git_status") return conflictStatus(remaining);
       throw new Error(command);
     });
@@ -128,6 +135,8 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
     mockNativeIpc((command) => {
       commands.push(command);
       if (command === "git_resolve_continue") return { type: "resolved" };
+      if (command === "git_conflict_kinds")
+        return [{ path: "old.md", kind: "add_add" }];
       if (command === "git_status") return conflictStatus([]);
       throw new Error(command);
     });
@@ -140,12 +149,90 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
         service: [],
       });
       await continueGitResolve(spacePath, "old.md", "Old");
-      expect(commands).toEqual(["git_resolve_continue", "git_status"]);
+      expect(commands).toEqual([
+        "git_conflict_kinds",
+        "git_resolve_continue",
+        "git_status",
+      ]);
       expect(toasts).toEqual([]);
       const state = useGitStore.getState();
       expect(spacePath in state.syncError).toBe(false);
       expect(spacePath in state.syncStop).toBe(false);
       expect(state.statuses[spacePath]?.hasConflicts).toBe(false);
+    } finally {
+      clearNativeMocks();
+      useGitStore.getState().clear(spacePath);
+    }
+  });
+  test("a saved Page whose conflict a write does not decide is not sent, and only an explicit save names where to choose", async () => {
+    const commands: string[] = [];
+    const opened: unknown[] = [];
+    toasts.length = 0;
+    mockNativeIpc((command) => {
+      commands.push(command);
+      if (command === "git_conflict_kinds")
+        return [
+          { path: "plan.md", kind: "modify_delete" },
+          { path: "old.md", kind: "rename_delete" },
+        ];
+      throw new Error(command);
+    });
+    const unregister = registerConflictNavigation({
+      openFile: (target) => opened.push(target),
+      openPage: () => {},
+    });
+    try {
+      useGitStore
+        .getState()
+        .applyStatus(spacePath, conflictStatus(["plan.md", "old.md"]));
+      await continueGitResolve(spacePath, "plan.md", "Plan");
+      expect(commands).toEqual(["git_conflict_kinds"]);
+      expect(toasts).toEqual([]);
+
+      await continueGitResolve(spacePath, "old.md", "Old", {
+        explicitSave: true,
+      });
+      expect(commands).toEqual(["git_conflict_kinds", "git_conflict_kinds"]);
+      expect(toasts.map(({ kind, message }) => ({ kind, message }))).toEqual([
+        {
+          kind: "info",
+          message: m.git_resolve_page_awaits_changes({ page: "Old" }),
+        },
+      ]);
+      expect(toasts[0]?.action?.label).toBe(m.git_resolve_page_open_changes());
+      toasts[0]?.action?.onClick();
+      expect(opened).toEqual([{ spacePath, path: "old.md" }]);
+      expect(useGitStore.getState().statuses[spacePath]?.files.length).toBe(2);
+    } finally {
+      unregister();
+      clearNativeMocks();
+      useGitStore.getState().clear(spacePath);
+    }
+  });
+
+  test("a conflict kind that does not read leaves the saved Page unresolved", async () => {
+    const commands: string[] = [];
+    toasts.length = 0;
+    mockNativeIpc((command) => {
+      commands.push(command);
+      throw new Error(command);
+    });
+    try {
+      useGitStore
+        .getState()
+        .applyStatus(spacePath, conflictStatus(["plan.md"]));
+      await continueGitResolve(spacePath, "plan.md", "Plan", {
+        explicitSave: true,
+      });
+      expect(commands).toEqual(["git_conflict_kinds"]);
+      expect(toasts.map(({ kind, message }) => ({ kind, message }))).toEqual([
+        {
+          kind: "info",
+          message: m.git_resolve_page_awaits_changes({ page: "Plan" }),
+        },
+      ]);
+      // Without the app shell of the main window the notice has no action.
+      expect(toasts[0]?.action).toBeUndefined();
     } finally {
       clearNativeMocks();
       useGitStore.getState().clear(spacePath);

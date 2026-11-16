@@ -335,14 +335,25 @@ export function useEditorDocumentWriter({
    * After a write of `path`: while Git holds it unresolved, in a merge or
    * without an operation, the write resolves it, an autosave as much as ⌘S;
    * `always` continues the merge for any Page, as ⌘S in a merge does. The
-   * backend refuses a file with marker lines left (1.F п. 3). One resolution
-   * at a time, outside the write chain; a refusal is named, never thrown.
+   * backend refuses a file with marker lines left (1.F п. 3). A conflict a
+   * write does not decide, such as modify/delete, stays unresolved, and an
+   * `explicitSave` names where its choice is made (DF-354 R1, R4). One
+   * resolution at a time, outside the write chain; a refusal is named,
+   * never thrown.
    */
   const resolveWrittenPage = useCallback(
-    (path: string, always = false): Promise<void> => {
+    (
+      path: string,
+      {
+        always = false,
+        explicitSave = false,
+      }: { always?: boolean; explicitSave?: boolean } = {},
+    ): Promise<void> => {
       const resolve = async () => {
         if (!always && !gitPathInConflict(spacePath, path)) return;
-        await continueGitResolve(spacePath, path, titleRef.current || path);
+        await continueGitResolve(spacePath, path, titleRef.current || path, {
+          explicitSave,
+        });
       };
       const run = resolutionChainRef.current.then(resolve);
       resolutionChainRef.current = run;
@@ -710,7 +721,10 @@ export function useEditorDocumentWriter({
       applySavedDocumentResult(currentDocument);
       const status = getGitSpaceStatus(spacePath);
       if (status?.hasConflicts) {
-        await resolveWrittenPage(currentDocument, true);
+        await resolveWrittenPage(currentDocument, {
+          always: true,
+          explicitSave: true,
+        });
         return null;
       }
       return commitWritten(() =>
@@ -832,7 +846,7 @@ export function useEditorDocumentWriter({
         applySavedDocumentResult(currentDocument, {
           cacheCurrentDocument: false,
         });
-        await resolveWrittenPage(currentDocument);
+        await resolveWrittenPage(currentDocument, { explicitSave: true });
         return commitWritten(commitScope([currentDocument]));
       };
       let failure: CommitFailure | null;
