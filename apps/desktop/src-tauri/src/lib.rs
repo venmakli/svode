@@ -57,7 +57,7 @@ pub fn run() {
     let routine_acp_launches =
         routines::RoutineAcpLaunches::new(agent_runtime_state.runtime().clone());
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -536,14 +536,51 @@ pub fn run() {
             speech::commands::speech_open_system_settings,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            // Every normal exit path ends in `Exit`; macOS app-menu Quit and Windows
-            // File → Quit never emit `ExitRequested` (tauri#9198).
-            if let tauri::RunEvent::Exit = event {
-                shutdown_desktop(app_handle);
+        .expect("error while building tauri application");
+    let app_handle = app.handle().clone();
+    run_event_loop(
+        move || {
+            app.run(|app_handle, event| {
+                // Every normal exit path ends in `Exit`; macOS app-menu Quit and Windows
+                // File → Quit never emit `ExitRequested` (tauri#9198).
+                if let tauri::RunEvent::Exit = event {
+                    shutdown_desktop(app_handle);
+                }
+            });
+        },
+        || emergency_stop(&app_handle),
+    );
+}
+
+/// Runs the event loop. A panic that ends it skips `Exit` and with it the
+/// exit sequence, so before the panic goes on `emergency_stop` runs once;
+/// the panic then continues with its own payload, as if never caught
+/// (DF-333 R3). A panic of `emergency_stop` itself is logged and does not
+/// replace the panic of the loop.
+fn run_event_loop<T>(event_loop: impl FnOnce() -> T, emergency_stop: impl FnOnce()) -> T {
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+
+    match catch_unwind(AssertUnwindSafe(event_loop)) {
+        Ok(value) => value,
+        Err(payload) => {
+            tracing::error!(
+                "the desktop event loop ended in a panic; emergency stop of managed processes"
+            );
+            if catch_unwind(AssertUnwindSafe(emergency_stop)).is_err() {
+                tracing::error!("the emergency stop of managed processes panicked");
             }
-        });
+            resume_unwind(payload)
+        }
+    }
+}
+
+/// What the emergency stop after a panic of the event loop signals, without
+/// any wait and without the waiting steps of the exit (DF-333 R3): the App
+/// processes, the agent process trees and the terminal processes. The
+/// speech recognizer exits by itself once its stdin closes.
+fn emergency_stop(app_handle: &tauri::AppHandle) {
+    app_handle.state::<apps::AppProcessState>().kill_all();
+    force_stop_managed_processes(app_handle);
 }
 
 /// The exit sequence of DF-365 R3. The main thread runs it inside `Exit`
@@ -627,6 +664,78 @@ fn force_stop_managed_processes(app_handle: &tauri::AppHandle) {
     app_handle
         .state::<terminal::TerminalManager>()
         .force_stop_all();
+}
+
+#[cfg(test)]
+mod event_loop_panic {
+    use std::any::Any;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::run_event_loop;
+
+    /// The payload of the panic the fake event loop ends in.
+    #[derive(Debug, PartialEq)]
+    struct LoopPanic(u32);
+
+    /// Runs the event loop on its own thread with a fake emergency stop that
+    /// counts its calls, and gives up on it, instead of hanging, when it
+    /// does not end in a few seconds.
+    fn run_bounded<T: Send + 'static>(
+        event_loop: impl FnOnce() -> T + Send + 'static,
+        emergency_stop: impl FnOnce() + Send + 'static,
+    ) -> (Result<T, Box<dyn Any + Send>>, usize) {
+        let stops = Arc::new(AtomicUsize::new(0));
+        let counted = stops.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                run_event_loop(event_loop, move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    emergency_stop();
+                })
+            }));
+            let _ = done_tx.send(outcome);
+        });
+        let outcome = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the event loop ends instead of hanging");
+        (outcome, stops.load(Ordering::SeqCst))
+    }
+
+    fn loop_panic(payload: Box<dyn Any + Send>) -> LoopPanic {
+        *payload
+            .downcast::<LoopPanic>()
+            .expect("the panic of the event loop goes on with its own payload")
+    }
+
+    #[test]
+    fn a_panic_of_the_event_loop_stops_managed_processes_once_and_goes_on() {
+        let (outcome, stops) = run_bounded::<()>(|| std::panic::panic_any(LoopPanic(333)), || {});
+        assert_eq!(loop_panic(outcome.unwrap_err()), LoopPanic(333));
+        assert_eq!(stops, 1);
+    }
+
+    #[test]
+    fn an_event_loop_that_returns_runs_no_emergency_stop() {
+        let (outcome, stops) = run_bounded(|| 7, || {});
+        assert_eq!(outcome.unwrap(), 7);
+        assert_eq!(stops, 0);
+    }
+
+    #[test]
+    fn a_panic_of_the_emergency_stop_leaves_the_panic_of_the_event_loop() {
+        let (outcome, stops) = run_bounded::<()>(
+            || std::panic::panic_any(LoopPanic(333)),
+            || panic!("the emergency stop failed"),
+        );
+        assert_eq!(loop_panic(outcome.unwrap_err()), LoopPanic(333));
+        assert_eq!(stops, 1);
+    }
 }
 
 #[cfg(test)]
