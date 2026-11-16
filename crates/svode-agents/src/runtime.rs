@@ -7,7 +7,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ use crate::drafts::{AgentDeclaration, DraftHost, DraftSession, LastDeclarations,
 use crate::error::{AgentRuntimeError, SettingRefusal};
 use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
-use crate::process::{self, ProcessTree};
+use crate::process::{self, ProcessTree, TreeStop};
 use crate::projection::Projection;
 use crate::prompt::{self, PromptPart};
 use crate::registry::AdapterRuntimeRegistry;
@@ -369,6 +369,8 @@ struct Connection {
     info: Mutex<Option<AgentInfo>>,
     /// The agent process with its descendants until the connection closes.
     process: tokio::sync::Mutex<Option<ProcessTree>>,
+    /// Kills that tree without the `process` lock.
+    stop: Option<TreeStop>,
     stderr: Arc<Mutex<Vec<u8>>>,
     /// Sessions by the agent's ACP session id.
     sessions: Mutex<HashMap<String, Arc<Session>>>,
@@ -498,6 +500,7 @@ impl AgentRuntime {
         let id = ConnectionId(self.inner.next_connection.fetch_add(1, Ordering::Relaxed) + 1);
         let (rpc, incoming) = RpcClient::start(reader, writer);
         let root_exit = process.as_ref().map(ProcessTree::root_exit);
+        let stop = process.as_ref().map(ProcessTree::stop);
         let connection = Arc::new(Connection {
             runtime: Arc::downgrade(&self.inner),
             agent: launch.agent.clone(),
@@ -515,6 +518,7 @@ impl AgentRuntime {
             state: Mutex::new(ConnectionState::Starting),
             info: Mutex::new(None),
             process: tokio::sync::Mutex::new(process),
+            stop,
             stderr: Arc::new(Mutex::new(Vec::new())),
             sessions: Mutex::new(HashMap::new()),
             holds: AtomicUsize::new(0),
@@ -1989,6 +1993,27 @@ impl AgentRuntime {
                 }
             }
             connection.terminate().await;
+        }
+    }
+
+    /// Kills every live agent process with its descendants at once, for a
+    /// host that exits without waiting for `shutdown` (DF-365 R4). It is
+    /// synchronous: it never waits for a process, a task or the tokio
+    /// runtime and takes no lock a task holds across an await, so a thread
+    /// that must not wait may call it while every worker is blocked, and
+    /// after a panic has unwound. It only signals: a connection closes when
+    /// its dispatch hears the root exit, while the runtime still runs.
+    pub fn kill_process_trees(&self) {
+        let stops: Vec<_> = self
+            .inner
+            .connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .filter_map(|connection| connection.stop.clone())
+            .collect();
+        for stop in stops {
+            stop.kill();
         }
     }
 

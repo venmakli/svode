@@ -1,6 +1,7 @@
 //! Child-process helpers shared by diagnostics and agent connections.
 
 use std::io;
+use std::sync::{Arc, Weak};
 
 use tokio::process::{Child, Command};
 
@@ -32,8 +33,64 @@ pub(crate) fn bounded_text(bytes: &[u8], limit: usize) -> String {
 /// except a process that left the group or Job itself (DF-218 R1, R6).
 pub(crate) struct ProcessTree {
     child: Child,
+    signal: Arc<TreeSignal>,
+}
+
+/// Kills every process of one tree at once: its group, while the unreaped
+/// root's pid still names it, on Unix; its Job on Windows.
+struct TreeSignal {
+    /// The root's pid until the root may be reaped, so that a reused pid is
+    /// never signalled. Held only for the signal itself.
+    #[cfg(unix)]
+    group: std::sync::Mutex<Option<u32>>,
     #[cfg(windows)]
     job: job::Job,
+}
+
+impl TreeSignal {
+    fn kill(&self) {
+        #[cfg(unix)]
+        if let Some(group) = *self.group() {
+            unix::kill_group(group);
+        }
+        #[cfg(windows)]
+        self.job.terminate();
+    }
+
+    /// Kills the group one last time before the root may be reaped; later
+    /// kills do nothing.
+    #[cfg(unix)]
+    fn release(&self) {
+        if let Some(group) = self.group().take() {
+            unix::kill_group(group);
+        }
+    }
+
+    /// The group even after a panic elsewhere, for a host that stops its
+    /// agents on that path.
+    #[cfg(unix)]
+    fn group(&self) -> std::sync::MutexGuard<'_, Option<u32>> {
+        self.group
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Kills a tree without its owner: synchronous, without waiting for any
+/// process and without a lock a task holds across an await, so a host can
+/// stop its agents from a thread that must not wait (DF-365 R4). It does
+/// nothing once the tree is gone.
+#[derive(Clone)]
+pub(crate) struct TreeStop(Weak<TreeSignal>);
+
+impl TreeStop {
+    /// Sends the kill to the root and its descendants and returns at once;
+    /// the owner still collects the root.
+    pub(crate) fn kill(&self) {
+        if let Some(signal) = self.0.upgrade() {
+            signal.kill();
+        }
+    }
 }
 
 impl ProcessTree {
@@ -44,9 +101,11 @@ impl ProcessTree {
         #[cfg(unix)]
         {
             command.process_group(0);
-            Ok(Self {
-                child: command.spawn()?,
-            })
+            let child = command.spawn()?;
+            let signal = Arc::new(TreeSignal {
+                group: std::sync::Mutex::new(child.id()),
+            });
+            Ok(Self { child, signal })
         }
         #[cfg(windows)]
         {
@@ -60,7 +119,10 @@ impl ProcessTree {
                 job::resume(&child)?;
                 Ok(job)
             }) {
-                Ok(job) => Ok(Self { child, job }),
+                Ok(job) => Ok(Self {
+                    child,
+                    signal: Arc::new(TreeSignal { job }),
+                }),
                 Err(error) => {
                     let _ = child.start_kill();
                     Err(error)
@@ -71,6 +133,11 @@ impl ProcessTree {
 
     pub(crate) fn child(&mut self) -> &mut Child {
         &mut self.child
+    }
+
+    /// A handle that kills this tree without its owner.
+    pub(crate) fn stop(&self) -> TreeStop {
+        TreeStop(Arc::downgrade(&self.signal))
     }
 
     /// Resolves once the root has exited, even while a descendant holds its
@@ -108,24 +175,19 @@ impl ProcessTree {
     }
 
     /// Kills the group or Job while the root's id still names it: an
-    /// unreaped root keeps its pid, and with it its group, from reuse.
+    /// unreaped root keeps its pid, and with it its group, from reuse. The
+    /// root is reaped only after this, by `kill` or `kill_on_drop`.
     fn kill_descendants(&mut self) {
         #[cfg(unix)]
-        if let Some(pid) = self.child.id() {
-            // SAFETY: `killpg` only sends a signal; the group exists while
-            // its unreaped leader does.
-            unsafe {
-                libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-            }
-        }
+        self.signal.release();
         #[cfg(windows)]
-        self.job.terminate();
+        self.signal.kill();
     }
 }
 
 impl Drop for ProcessTree {
     /// The root ends through `kill_on_drop`, the rest of a Job when its
-    /// handle closes, the rest of a group here.
+    /// last handle closes, the rest of a group here.
     fn drop(&mut self) {
         #[cfg(unix)]
         self.kill_descendants();
@@ -137,6 +199,15 @@ mod unix {
     use std::io;
 
     use tokio::signal::unix::{SignalKind, signal};
+
+    /// Kills every process of group `group`.
+    pub(super) fn kill_group(group: u32) {
+        // SAFETY: `killpg` only sends a signal; the group exists while its
+        // unreaped leader does.
+        unsafe {
+            libc::killpg(group as libc::pid_t, libc::SIGKILL);
+        }
+    }
 
     /// Waits for child `pid` to exit, looking again on every SIGCHLD.
     pub(super) async fn exited(pid: u32) {
@@ -201,6 +272,9 @@ mod job {
 
     // SAFETY: a kernel object handle may be used and closed from any thread.
     unsafe impl Send for Job {}
+    // SAFETY: `terminate` and `processes` may run on one handle from several
+    // threads at once.
+    unsafe impl Sync for Job {}
 
     impl Job {
         pub(super) fn new() -> io::Result<Self> {
@@ -385,6 +459,23 @@ pub(crate) mod tests {
         true
     }
 
+    /// Whether process group `group` is gone within a few seconds.
+    #[cfg(unix)]
+    pub(crate) async fn group_ends(group: u32) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            // SAFETY: signal 0 only checks that the group has a process.
+            let signalled = unsafe { libc::killpg(group as libc::pid_t, 0) } == 0;
+            if !signalled && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     /// A shell that leaves a `sleep` running in the background, with the
     /// pid of the `sleep` from its first stdout line.
     #[cfg(unix)]
@@ -413,7 +504,7 @@ pub(crate) mod tests {
         let tree = ProcessTree::spawn(&mut command).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let processes = tree.job.processes();
+            let processes = tree.signal.job.processes();
             if processes.len() >= 2 {
                 return (tree, processes);
             }
@@ -453,7 +544,7 @@ pub(crate) mod tests {
         let root = tree.child().id().unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let processes = tree.job.processes();
+            let processes = tree.signal.job.processes();
             if !processes.is_empty() && !processes.contains(&root) {
                 return (tree, processes);
             }
@@ -497,6 +588,7 @@ pub(crate) mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let descendants: Vec<u32> = tree
+                .signal
                 .job
                 .processes()
                 .into_iter()
@@ -571,6 +663,33 @@ pub(crate) mod tests {
         for pid in descendants {
             assert!(ends(pid).await, "process {pid} of the tree still runs");
         }
+    }
+
+    #[tokio::test]
+    async fn a_stop_ends_the_whole_tree_at_once_while_its_owner_waits() {
+        let (mut tree, descendants) = tree_with_descendant().await;
+        let root = tree.child().id().unwrap();
+        tree.stop().kill();
+        tokio::time::timeout(Duration::from_secs(5), tree.root_exit())
+            .await
+            .expect("the root ends");
+        for pid in &descendants {
+            assert!(ends(*pid).await, "process {pid} of the tree still runs");
+        }
+        // Not collected by the stop: still a zombie for its owner.
+        #[cfg(unix)]
+        assert!(exists(root));
+        tree.kill().await;
+        assert!(!exists(root));
+    }
+
+    #[tokio::test]
+    async fn a_stop_does_nothing_once_its_tree_is_gone() {
+        let (tree, _) = tree_with_descendant().await;
+        let stop = tree.stop();
+        tree.kill().await;
+        assert!(stop.0.upgrade().is_none());
+        stop.kill();
     }
 
     #[tokio::test]

@@ -4333,6 +4333,54 @@ async fn shutdown_ends_the_agents_with_their_descendants() {
     assert_tree_ended(tree).await;
 }
 
+/// The synchronous kill reaches the agent and its descendant while a task
+/// holds the lock of the agent process; the connection then closes and
+/// reaps the agent once the lock is free (DF-365 R4).
+#[cfg(unix)]
+#[tokio::test]
+async fn killing_the_process_trees_ends_the_agents_with_their_descendants_without_waiting() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::default();
+    let lease = runtime.acquire(tree_agent(&pids)).await.unwrap();
+    let id = lease.connection();
+    let (agent, descendant) = tree_pids(&pids).await;
+    let connection = runtime.connection(id).unwrap();
+    let (held, is_held) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let holder = tokio::spawn(async move {
+        let _process = connection.process.lock().await;
+        held.send(()).unwrap();
+        let _ = released.await;
+    });
+    is_held.await.unwrap();
+
+    let started = std::time::Instant::now();
+    runtime.kill_process_trees();
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(
+        process::tests::ends(descendant).await,
+        "the descendant of the agent still runs"
+    );
+
+    release.send(()).unwrap();
+    holder.await.unwrap();
+    for _ in 0..250 {
+        if runtime.connection_status(id).unwrap().state == ConnectionState::Closed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Closed
+    );
+    assert_tree_ended((agent, descendant)).await;
+    // The agent leads its own group.
+    assert!(process::tests::group_ends(agent).await);
+    drop(lease);
+}
+
 /// An agent that leaves a `sleep` running in its process group, without
 /// its pipes, writes `<agent pid> <sleep pid>` to `$SVODE_TREE`, answers
 /// `initialize` and then runs `then` (DF-218).
