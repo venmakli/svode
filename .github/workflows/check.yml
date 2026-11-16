@@ -168,8 +168,9 @@ jobs:
     # The native session readers of Stage 10 `07` on Windows, which no live
     # device checks: their store fixtures, the store paths of this OS, the
     # liveness signal of a live and an exited child process and the Cursor
-    # chat folders of Windows paths; the local paths of the chat of `08`; and
-    # Git path sets beyond the command line limit of this OS (DF-270).
+    # chat folders of Windows paths; the local paths of the chat of `08`;
+    # Git path sets beyond the command line limit of this OS (DF-270); and
+    # the publication proof of a root with a Space (DF-364).
     # Linux runs them with the workspace tests of the rust job.
     runs-on: windows-latest
     steps:
@@ -225,6 +226,11 @@ jobs:
       # the budget.
       - name: Git path sets beyond the command line limit
         run: cargo test -p svode-core --lib -- git::path_set_tests git::cli::tests
+      # A root commit that moves an initialized Space to a published revision
+      # passes the publication proof with Git for Windows and is pushed
+      # (DF-364): the proof hands Git no verbatim `\\?\` local path.
+      - name: Publication of a root with a Space
+        run: cargo test -p svode-core --lib -- git::publication::paths_tests
       - name: Chat paths of the agent runtime
         run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
       - name: Chat paths of Desktop

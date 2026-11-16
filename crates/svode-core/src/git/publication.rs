@@ -517,7 +517,9 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                         "--shared",
                         "--bare",
                         "--",
-                        &child.to_string_lossy(),
+                        // A canonical path of the Space copy, verbatim on
+                        // Windows, is no source Git for Windows reads.
+                        &crate::system_path::user_facing_path(&child),
                         &source_repo.to_string_lossy(),
                     ],
                 )
@@ -695,6 +697,10 @@ async fn changed_gitlinks(
 #[cfg(test)]
 #[path = "publication_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "publication_paths_tests.rs"]
+mod paths_tests;
 
 /// Read fresh remote history without pushing, probing capability or changing user refs.
 pub async fn head_is_published(
