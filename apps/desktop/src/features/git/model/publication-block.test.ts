@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
+import type { GitPublicationSpaceClass } from "@/platform/git/publication-errors";
+import * as m from "@/paraglide/messages.js";
 import {
+  publicationBlockCopy,
   publicationBlockedSpaces,
   publicationBlockSpacePaths,
   type GitPublicationBlock,
@@ -76,4 +79,33 @@ test("Windows separators and the open project path still find the Space", () => 
     new Set(),
   );
   expect(canonical[0].spacePath).toBe("/project/compliance");
+});
+
+test("the block copy asks to publish while any Space version needs publishing", () => {
+  const publish = {
+    title: m.git_publication_block_title(),
+    status: m.git_sync_publication_blocked_status(),
+  };
+  const verify = {
+    title: m.git_publication_block_verify_failed_title(),
+    status: m.git_sync_publication_verify_failed_status(),
+  };
+  const classes: [GitPublicationSpaceClass, typeof publish][] = [
+    ["local_commits", publish],
+    ["outside_branch", publish],
+    ["missing", publish],
+    ["unverified", verify],
+    ["source_unavailable", verify],
+    ["uninitialized", verify],
+    ["configuration", verify],
+  ];
+  for (const [only, expected] of classes) {
+    expect(publicationBlockCopy([{ class: only }])).toEqual(expected);
+    // Any class that needs publishing names the publication.
+    for (const [other, otherExpected] of classes)
+      expect(publicationBlockCopy([{ class: other }, { class: only }])).toEqual(
+        expected === publish || otherExpected === publish ? publish : verify,
+      );
+  }
+  expect(publicationBlockCopy([])).toEqual(publish);
 });

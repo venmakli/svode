@@ -1,4 +1,5 @@
 import type { GitPublicationSpaceClass } from "@/platform/git/publication-errors";
+import * as m from "@/paraglide/messages.js";
 
 /**
  * A project publication stopped by Spaces whose versions, referenced by the
@@ -24,6 +25,35 @@ export interface GitPublicationBlockedSpace {
   readOnly: boolean;
   /** The user can publish this Space's local commits. */
   publishable: boolean;
+}
+
+/** Classes that need a Space version published before the project. */
+const PUBLISH_FIRST: ReadonlySet<GitPublicationSpaceClass> = new Set([
+  "local_commits",
+  "outside_branch",
+  "missing",
+]);
+
+/**
+ * The Dialog title and the sync status of a publication stopped by these
+ * Spaces: publish them first while any version needs publishing, otherwise
+ * the Spaces only could not be verified.
+ */
+export function publicationBlockCopy(
+  spaces: readonly { class: GitPublicationSpaceClass }[],
+): { title: string; status: string } {
+  const verify =
+    spaces.length > 0 &&
+    spaces.every((space) => !PUBLISH_FIRST.has(space.class));
+  return verify
+    ? {
+        title: m.git_publication_block_verify_failed_title(),
+        status: m.git_sync_publication_verify_failed_status(),
+      }
+    : {
+        title: m.git_publication_block_title(),
+        status: m.git_sync_publication_blocked_status(),
+      };
 }
 
 export interface PublicationBlockContext {

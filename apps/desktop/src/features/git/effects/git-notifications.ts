@@ -3,6 +3,7 @@ import * as m from "@/paraglide/messages.js";
 import { gitSaveErrorFromError } from "../api/git-save-error";
 import { toGitPublicationBlock } from "../api/git-sync-error";
 import {
+  publicationBlockCopy,
   syncStopFromResult,
   type GitRenumberedItem,
   type GitSyncOutcome,
@@ -60,7 +61,8 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
     }
     case "Failed":
       // Spaces and the publication guard stop publication; not a failure.
-      if (outcome.block) toast.info(m.git_sync_publication_blocked_status());
+      if (outcome.block)
+        toast.info(publicationBlockCopy(outcome.block.spaces).status);
       else if (outcome.stop) toast.info(gitSyncStopTitle(outcome.stop));
       else notifyGitSyncFailed();
       break;

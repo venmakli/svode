@@ -254,8 +254,12 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
           expect(copy.includes("SECRET")).toBe(false);
           classes.add(copy);
         }
-        // Text without the list only names the stop; the list is the block's.
-        expect([...classes]).toEqual([m.git_sync_publication_blocked_status()]);
+        // Text without the list only names the stop by its classes; the list
+        // is the block's.
+        expect([...classes]).toEqual([
+          m.git_sync_publication_blocked_status(),
+          m.git_sync_publication_verify_failed_status(),
+        ]);
         const parent = toParentPublication({
           repository: "/project",
           pointer: "local",

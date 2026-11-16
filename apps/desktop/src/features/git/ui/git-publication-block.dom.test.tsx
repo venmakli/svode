@@ -434,4 +434,198 @@ if (process.env.SVODE_PUBLICATION_BLOCK_DOM !== "1") {
       await setLocale(previousLocale, { reload: false });
     }
   });
+
+  test("the stop names verification when only checks of the Spaces failed", async () => {
+    const dom = await createTestDom();
+    const path = "/project";
+    activeSpacePath = path;
+    let syncError: unknown = block;
+    mockNativeIpc(
+      async (command, args) => {
+        const spacePath = (args as { spacePath?: string } | undefined)
+          ?.spacePath;
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/project.git";
+        if (command === "git_publication_status") return null;
+        if (command === "repository_access_get") return access(spacePath);
+        if (command === "git_fetch_status" || command === "git_status")
+          return { branch: "main", ahead: 2, behind: 0, files: [] };
+        if (command === "git_unpushed_commits") return [];
+        if (command === "git_sync") throw syncError;
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const m = await import("@/paraglide/messages.js");
+    const previousLocale = getLocale();
+    const control = () =>
+      dom.document.querySelector<HTMLButtonElement>(
+        "[data-repository-control]",
+      )!;
+    const dialog = () =>
+      dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+    const unverified = { path: "ops", class: "unverified" };
+    const cases = [
+      [[unverified, { path: "legal", class: "source_unavailable" }], false],
+      [[unverified, { path: "compliance", class: "local_commits" }], true],
+      [[unverified, { path: "compliance", class: "outside_branch" }], true],
+      [[unverified, { path: "compliance", class: "missing" }], true],
+    ] as const;
+    try {
+      for (const locale of ["en", "ru"] as const) {
+        await setLocale(locale, { reload: false });
+        for (const [spaces, publishFirst] of cases) {
+          syncError = { ...block, spaces };
+          useGitStore.getState().clear(path);
+          toasts.length = 0;
+          await dom.render(
+            <TooltipProvider>
+              <GitSyncStatusWidget
+                key={`${locale}-${spaces[1].class}`}
+                repositoryPath={path}
+              />
+            </TooltipProvider>,
+          );
+          await settle();
+          await act(async () => {
+            control().click();
+          });
+          await settle();
+          await act(async () => {
+            Array.from(dialog().querySelectorAll("button"))
+              .find((button) => button.textContent === m.git_sync_action())!
+              .click();
+          });
+          await settle();
+
+          const title = publishFirst
+            ? m.git_publication_block_title()
+            : m.git_publication_block_verify_failed_title();
+          const status = publishFirst
+            ? m.git_sync_publication_blocked_status()
+            : m.git_sync_publication_verify_failed_status();
+          expect(toasts).toEqual([{ kind: "info", message: status }]);
+          expect(
+            dialog().querySelector(
+              "[data-git-publication-block] [data-slot=alert-title]",
+            )?.textContent,
+          ).toBe(title);
+          expect(control().getAttribute("aria-label")!.includes(status)).toBe(
+            true,
+          );
+          expect(
+            dialog().querySelector<HTMLElement>(
+              "[data-publication-blocked-space=ops]",
+            )?.lastElementChild?.textContent,
+          ).toBe(m.git_publication_block_unverified());
+          await dom.render(null);
+        }
+      }
+      expect(String(m.git_publication_block_unverified())).toBe(
+        "Не удалось подготовить проверку этой версии пространства на устройстве. Повторите синхронизацию; если ошибка повторится, подробности — в журнале Svode.",
+      );
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+      await setLocale(previousLocale, { reload: false });
+    }
+  });
+
+  test("the Space Dialog names verification when only checks kept the project version", async () => {
+    const dom = await createTestDom();
+    const path = "/project/docs";
+    activeSpacePath = path;
+    const parent = {
+      repository: "/project",
+      pointer: "local",
+      target: "target",
+      error: {
+        ...block,
+        spaces: [{ path: "ops", class: "unverified" }],
+      },
+    };
+    mockNativeIpc(
+      async (command, args) => {
+        const spacePath = (args as { spacePath?: string } | undefined)
+          ?.spacePath;
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/docs.git";
+        if (command === "git_publication_status") return null;
+        if (command === "repository_access_get") return access(spacePath);
+        if (command === "git_fetch_status" || command === "git_status")
+          return { branch: "main", ahead: 0, behind: 0, files: [] };
+        if (command === "git_unpushed_commits") return [];
+        if (command === "git_sync")
+          return { type: "success", publishedHead: "head", parent };
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const m = await import("@/paraglide/messages.js");
+    const previousLocale = getLocale();
+    const dialog = () =>
+      dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+    try {
+      for (const locale of ["en", "ru"] as const) {
+        await setLocale(locale, { reload: false });
+        useGitStore.getState().clear(path);
+        toasts.length = 0;
+        await dom.render(
+          <TooltipProvider>
+            <GitSyncStatusWidget key={locale} repositoryPath={path} />
+          </TooltipProvider>,
+        );
+        await settle();
+        await act(async () => {
+          dom.document
+            .querySelector<HTMLButtonElement>("[data-repository-control]")!
+            .click();
+        });
+        await settle();
+        await act(async () => {
+          Array.from(dialog().querySelectorAll("button"))
+            .find((button) => button.textContent === m.git_sync_action())!
+            .click();
+        });
+        await settle();
+
+        // The summary of the result itself does not change.
+        expect(toasts).toEqual([
+          { kind: "info", message: m.git_publication_blocked_summary() },
+        ]);
+        const text = dialog().textContent;
+        expect(text.includes(m.git_publication_blocked_summary())).toBe(true);
+        expect(
+          text.includes(m.git_publication_block_verify_failed_title()),
+        ).toBe(true);
+        expect(text.includes(m.git_publication_block_title())).toBe(false);
+        expect(
+          Array.from(
+            dialog().querySelectorAll<HTMLElement>(
+              "[data-publication-blocked-space]",
+            ),
+          ).map((row) => row.textContent),
+        ).toEqual([`Operations${m.git_publication_block_unverified()}`]);
+        await dom.render(null);
+      }
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+      await setLocale(previousLocale, { reload: false });
+    }
+  });
 }

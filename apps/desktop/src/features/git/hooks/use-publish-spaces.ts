@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { publishBlockedSpaces } from "../api/git-spaces-publication-actions";
 import { notifyGitSyncOutcome } from "../effects/git-notifications";
 import {
+  publicationBlockCopy,
   runForBlock,
   spacesToPublish,
   useSpacesPublicationStore,
@@ -58,7 +59,7 @@ export function usePublishSpaces(
     if (!project) {
       // The fresh proof took none of them: the list itself is outdated.
       if (outcome.total === 0)
-        toast.info(m.git_sync_publication_blocked_status());
+        toast.info(publicationBlockCopy(shown.spaces).status);
       return;
     }
     if (

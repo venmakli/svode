@@ -36,6 +36,7 @@ import { useGitSyncAbort } from "../hooks/use-git-sync-abort";
 import { useGitServiceMerge } from "../hooks/use-git-service-merge";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
 import { isParentPointerPending } from "../model/publication";
+import { publicationBlockCopy } from "../model/publication-block";
 import { syncStopBlocksSync } from "../model/sync-stop";
 import { conflictFileOpener } from "../model/conflict-navigation";
 import { useConflictPathNames } from "../hooks/use-conflict-path-names";
@@ -144,7 +145,7 @@ export function GitSyncStatusWidget({
         stopLabel: stop
           ? gitSyncStopTitle(stop)
           : block
-            ? m.git_sync_publication_blocked_status()
+            ? publicationBlockCopy(block.spaces).status
             : null,
         synced,
       })

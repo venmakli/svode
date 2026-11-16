@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import { gitSyncErrorMessage } from "./git-sync-error";
+import * as m from "@/paraglide/messages.js";
 
 const missingObjects = (lfsDeclaration: string | null) => ({
   kind: "git_push_rejected",
@@ -221,6 +222,33 @@ test("an explicit remote write denial names the missing write access", async () 
       });
       expect(message).toBe(text);
       expect(message.includes(unknownCause)).toBe(false);
+    }
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});
+
+test("a refusal by Spaces names publication or verification by their classes", async () => {
+  const original = getLocale();
+  const refusal = (...classes: string[]) => ({
+    kind: "git_publication_blocked",
+    reason: "spaces",
+    repository: "/project",
+    spaces: classes.map((value, index) => ({
+      path: `space-${index}`,
+      class: value,
+    })),
+  });
+  try {
+    for (const locale of ["en", "ru"] as const) {
+      await setLocale(locale, { reload: false });
+      expect(gitSyncErrorMessage(refusal("unverified", "configuration"))).toBe(
+        m.git_sync_publication_verify_failed_status(),
+      );
+      for (const publish of ["local_commits", "outside_branch", "missing"])
+        expect(gitSyncErrorMessage(refusal("unverified", publish))).toBe(
+          m.git_sync_publication_blocked_status(),
+        );
     }
   } finally {
     await setLocale(original, { reload: false });

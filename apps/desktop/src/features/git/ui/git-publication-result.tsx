@@ -1,9 +1,8 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { GitPublicationStatus } from "../model";
+import { publicationBlockCopy, type GitPublicationStatus } from "../model";
 import type { PublishSpaces } from "../hooks/use-publish-spaces";
 import { GitPublicationBlockedSpaces } from "./git-publication-block";
 import { publicationCopy } from "./git-publication-copy";
-import * as m from "@/paraglide/messages.js";
 
 export function GitPublicationResult({
   publication,
@@ -29,7 +28,7 @@ export function GitPublicationResult({
         {copy.block && publish && (
           <div className="mt-1 flex min-w-0 flex-col gap-1">
             <p className="font-medium text-foreground">
-              {m.git_publication_block_title()}
+              {publicationBlockCopy(publish.spaces).title}
             </p>
             <GitPublicationBlockedSpaces
               publish={publish}

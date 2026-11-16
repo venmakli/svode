@@ -10,7 +10,10 @@ import { toGitPushRejectionDto } from "@/platform/git/push-rejection-errors";
 import { toRepositoryAccessDeniedDto } from "@/platform/git/repository-access-api";
 import { redactUrlCredentials } from "../model/remote-auth";
 import { gitBranchErrorMessage } from "./git-branch-error";
-import type { GitPublicationBlock } from "../model/publication-block";
+import {
+  publicationBlockCopy,
+  type GitPublicationBlock,
+} from "../model/publication-block";
 import type { GitSyncStop } from "../model/sync-stop";
 import * as m from "@/paraglide/messages.js";
 
@@ -106,7 +109,7 @@ export function gitSyncErrorMessage(error: unknown): string {
         source_unavailable: m.git_sync_publication_source_unavailable,
         revision_unavailable: m.git_publication_revision_unavailable,
       }[publication.reason]();
-    return m.git_sync_publication_blocked_status();
+    return publicationBlockCopy(publication.spaces).status;
   }
   if (toGitConflictMarkersDto(error)) return m.git_resolve_page_markers();
   const pullBlock = toGitPullBlockDto(error);

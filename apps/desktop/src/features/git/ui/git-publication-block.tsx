@@ -3,9 +3,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { gitSyncErrorMessage } from "../api/git-sync-error";
 import type { PublishSpaces } from "../hooks/use-publish-spaces";
-import type {
-  GitPublicationBlockedSpace,
-  GitSpacePublicationStep,
+import {
+  publicationBlockCopy,
+  type GitPublicationBlockedSpace,
+  type GitSpacePublicationStep,
 } from "../model";
 import { gitOperationStopTitle } from "./git-sync-stop-copy";
 import * as m from "@/paraglide/messages.js";
@@ -25,7 +26,7 @@ export function GitPublicationBlockNotice({
     <Alert data-git-publication-block>
       <CloudUpload />
       <AlertTitle className="break-words">
-        {m.git_publication_block_title()}
+        {publicationBlockCopy(publish.spaces).title}
       </AlertTitle>
       <AlertDescription className="min-w-0">
         <GitPublicationBlockedSpaces
