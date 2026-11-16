@@ -343,7 +343,6 @@ pub fn run() {
             commands::files::duplicate_page,
             commands::files::watch_space,
             commands::files::unwatch_space,
-            commands::files::read_tree_order,
             commands::files::save_tree_order,
             commands::files::resolve_doc_link,
             commands::files::make_relative_link,

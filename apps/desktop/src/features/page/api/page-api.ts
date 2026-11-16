@@ -16,7 +16,6 @@ import {
 } from "@/platform/pages/pages-api";
 import {
   createContentTreeFolder,
-  readContentTreeOrder,
   saveContentTreeOrder,
 } from "@/platform/space/content-tree-api";
 import { convertToCollection as convertToCollectionDto } from "@/platform/collections/collections-api";
@@ -307,14 +306,9 @@ export async function savePageTreeOrderNames({
   names,
   projectPath,
 }: SavePageTreeOrderNamesInput) {
-  const existing = await readContentTreeOrder(spacePath).catch(() => ({}));
-
   await saveContentTreeOrder({
     space: spacePath,
-    order: {
-      ...existing,
-      [orderKey || "."]: names,
-    },
+    sections: { [orderKey || "."]: names },
     projectPath: projectPath ?? null,
   });
 }

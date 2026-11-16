@@ -13,7 +13,6 @@ import {
   prepareTreeDrag,
 } from "../lib/tree-dnd-commit-plan";
 import type { Projection } from "../lib/tree-dnd-utilities";
-import { buildOrderMap } from "../lib/tree-node-queries";
 import { createFileTreeEditorSync } from "../effects/file-tree-editor-sync";
 import { useSpaceStore, type SpaceState } from "../model/space-store";
 import type { SpaceInfo } from "../model/types";
@@ -120,14 +119,15 @@ export function useFileTreeDragCommand({
       if (updatedTree) {
         const movedNodeName =
           newPath?.split("/").pop() ?? movePlan.fromNode.name;
-        const order =
-          buildCrossParentMoveOrder({
-            currentTree: updatedTree,
-            movedNodeName,
-            parentPath: drag.toParent,
-            projection: input.projection,
-          }) ?? buildOrderMap(updatedTree);
-        await useSpaceStore.getState().saveOrder(spaceId, order);
+        // Only a target that shows its children gets the projected place;
+        // a collapsed target keeps the item at the end where the move put it.
+        const order = buildCrossParentMoveOrder({
+          currentTree: updatedTree,
+          movedNodeName,
+          parentPath: drag.toParent,
+          projection: input.projection,
+        });
+        if (order) await useSpaceStore.getState().saveOrder(spaceId, order);
         await useSpaceStore
           .getState()
           .reloadTreeParents(spaceId, [drag.fromParent, drag.toParent]);

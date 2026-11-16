@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::error::AppError;
@@ -16,10 +16,6 @@ pub fn list_children_checked(
     parent_path: Option<&str>,
 ) -> Result<Vec<tree::TreeChildNode>, tree::TreeLoadError> {
     tree::list_tree_children_checked(space, parent_path)
-}
-
-pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
-    svode_core::content_tree::read_order(space)
 }
 
 pub fn replace_order_sections(

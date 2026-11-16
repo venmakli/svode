@@ -5,7 +5,7 @@ import {
   isDescendantOf,
   type Projection,
 } from "./tree-dnd-utilities";
-import { buildOrderMap, findTreeNode } from "./tree-node-queries";
+import { findTreeNode } from "./tree-node-queries";
 
 export interface PreparedTreeDrag {
   fromPath: string;
@@ -43,15 +43,17 @@ export function prepareTreeDrag(
   };
 }
 
+/**
+ * The one order section a reorder within its folder writes: the shown
+ * children of that folder with the dragged item at its projected place.
+ */
 export function buildSameParentReorderOrder(input: {
   currentTree: TreeNode[];
   fromNodeName: string;
   parentPath: string;
   projection: Projection;
 }): Record<string, string[]> | null {
-  const order = buildOrderMap(input.currentTree);
-  const dirKey = input.parentPath || ".";
-  const currentSiblings = order[dirKey];
+  const currentSiblings = shownChildNames(input.currentTree, input.parentPath);
   if (!currentSiblings) return null;
 
   const fromIndex = currentSiblings.indexOf(input.fromNodeName);
@@ -71,19 +73,22 @@ export function buildSameParentReorderOrder(input: {
   siblings.splice(insertionIndex, 0, input.fromNodeName);
   if (sameStringArray(currentSiblings, siblings)) return null;
 
-  order[dirKey] = siblings;
-  return order;
+  return { [orderKey(input.parentPath)]: siblings };
 }
 
+/**
+ * The one order section written after the move into another folder: the
+ * target section with the moved item at its projected place, only while the
+ * target shows its children. Otherwise the move itself has already put the
+ * item at the end of the target, and nothing more is written.
+ */
 export function buildCrossParentMoveOrder(input: {
   currentTree: TreeNode[];
   movedNodeName: string;
   parentPath: string;
   projection: Projection;
 }): Record<string, string[]> | null {
-  const order = buildOrderMap(input.currentTree);
-  const dirKey = input.parentPath || ".";
-  const currentSiblings = order[dirKey];
+  const currentSiblings = shownChildNames(input.currentTree, input.parentPath);
   if (!currentSiblings) return null;
 
   const movedIndex = currentSiblings.indexOf(input.movedNodeName);
@@ -101,8 +106,39 @@ export function buildCrossParentMoveOrder(input: {
   if (insertionIndex === null) return null;
 
   siblings.splice(insertionIndex, 0, input.movedNodeName);
-  order[dirKey] = siblings;
-  return order;
+  return { [orderKey(input.parentPath)]: siblings };
+}
+
+function orderKey(parentPath: string): string {
+  return parentPath || ".";
+}
+
+/**
+ * Names of the children the tree shows under a folder ("" for the Space
+ * root), or null when the folder is collapsed or not in the tree.
+ */
+function shownChildNames(
+  tree: TreeNode[],
+  parentPath: string,
+): string[] | null {
+  if (!parentPath) return tree.map((node) => node.name);
+  const folder = findShownFolder(tree, parentPath);
+  if (!folder || folder.children.length === 0) return null;
+  return folder.children.map((node) => node.name);
+}
+
+function findShownFolder(
+  nodes: TreeNode[],
+  folderPath: string,
+): TreeNode | null {
+  for (const node of nodes) {
+    if (treeParentKeyForNode(node) === folderPath) return node;
+    if (node.children.length > 0) {
+      const found = findShownFolder(node.children, folderPath);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function projectedSiblingInsertionIndex(input: {

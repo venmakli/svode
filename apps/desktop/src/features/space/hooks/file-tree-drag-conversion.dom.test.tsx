@@ -336,6 +336,33 @@ const lastChildIntoLeaf: Scenario = {
   },
 };
 
+const intoCollapsedFolder: Scenario = {
+  before: {
+    "": [leaf("note.md"), folderPage("ideas"), folderPage("archive")],
+    ideas: [leaf("ideas/b.md"), leaf("ideas/a.md")],
+    archive: [leaf("archive/x.md")],
+  },
+  expanded: ["archive/README.md"],
+  files: ["note.md", "ideas/README.md", "archive/README.md"],
+  move: {
+    newPath: "ideas/note.md",
+    convertedParents: [],
+    after: {
+      "": [folderPage("ideas"), folderPage("archive")],
+      ideas: [leaf("ideas/b.md"), leaf("ideas/a.md"), leaf("ideas/note.md")],
+      archive: [leaf("archive/x.md")],
+    },
+    relocations: [["note.md", "ideas/note.md"]],
+  },
+};
+
+const childOfIdeas: Projection = {
+  depth: 1,
+  overPath: "ideas/README.md",
+  parentPath: "ideas",
+  type: "child",
+};
+
 const childOfTarget: Projection = {
   depth: 1,
   overPath: "target.md",
@@ -357,7 +384,8 @@ const cases: {
   projection: Projection;
   toParent: string;
   follows: Record<string, string>;
-  order: Record<string, string[]>;
+  /** Order sections written after the move; none for a collapsed target. */
+  orders: Record<string, string[]>[];
 }[] = [
   {
     name: "dragging a Page into a leaf Page",
@@ -369,7 +397,16 @@ const cases: {
       "target.md": "target/README.md",
       "note.md": "target/note.md",
     },
-    order: { ".": ["a.md", "target", "z.md"] },
+    orders: [],
+  },
+  {
+    name: "dragging a Page into a collapsed folder Page",
+    scenario: intoCollapsedFolder,
+    from: "note.md",
+    projection: childOfIdeas,
+    toParent: "ideas",
+    follows: { "note.md": "ideas/note.md" },
+    orders: [],
   },
   {
     name: "dragging the last child out of a folder Page",
@@ -381,10 +418,7 @@ const cases: {
       "parent/README.md": "parent.md",
       "parent/child.md": "archive/child.md",
     },
-    order: {
-      ".": ["parent.md", "archive"],
-      archive: ["a.md", "child.md", "b.md"],
-    },
+    orders: [{ archive: ["a.md", "child.md", "b.md"] }],
   },
   {
     name: "dragging a Page between folder Pages",
@@ -396,11 +430,7 @@ const cases: {
       "parent/README.md": "parent/README.md",
       "parent/child.md": "archive/child.md",
     },
-    order: {
-      ".": ["parent", "archive"],
-      parent: ["keep.md"],
-      archive: ["a.md", "child.md", "b.md"],
-    },
+    orders: [{ archive: ["a.md", "child.md", "b.md"] }],
   },
   {
     name: "dragging the last child of a folder Page into a leaf Page",
@@ -413,7 +443,7 @@ const cases: {
       "parent/README.md": "parent.md",
       "parent/child.md": "target/child.md",
     },
-    order: { ".": ["parent.md", "target"] },
+    orders: [],
   },
 ];
 
@@ -440,8 +470,8 @@ for (const item of cases) {
         expect(env.opened()).toEqual({ page: followed, selection: followed });
         expect(env.gone()).toBe(0);
         expect(env.shown).toEqual([]);
-        // The last order write places the item by the drag projection.
-        expect(env.orders.at(-1)).toEqual(item.order);
+        // Only a shown target section is written, by the drag projection.
+        expect(env.orders).toEqual(item.orders);
       } finally {
         await env.cleanup();
       }

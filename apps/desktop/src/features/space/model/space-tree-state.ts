@@ -140,9 +140,10 @@ export interface SpaceTreeState extends SpaceTreeDataState {
     from: string,
     toParent: string,
   ) => Promise<MoveContentResult>;
+  /** Replace the passed order sections (folder key -> child names) only. */
   saveOrder: (
     spaceId: string,
-    order: Record<string, string[]>,
+    sections: Record<string, string[]>,
   ) => Promise<void>;
 }
 
@@ -1303,12 +1304,12 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       return moved;
     },
 
-    saveOrder: async (spaceId: string, order: Record<string, string[]>) => {
+    saveOrder: async (spaceId: string, sections: Record<string, string[]>) => {
       const spacePath = findSpacePath(get(), spaceId);
       if (!spacePath) return;
       await spaceActions.saveSpaceTreeOrder({
         spacePath,
-        order,
+        sections,
         projectPath: get().activeRootPath,
       });
     },

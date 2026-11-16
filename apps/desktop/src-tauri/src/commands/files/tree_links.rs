@@ -2,11 +2,6 @@
 
 use super::*;
 
-#[tauri::command]
-pub async fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, AppError> {
-    blocking(move || Ok(crate::space::content_tree::read_order(Path::new(&space)))).await
-}
-
 /// Replace the passed order sections of a Space (folder key -> child names);
 /// other sections of its order.json stay as they are.
 #[tauri::command]

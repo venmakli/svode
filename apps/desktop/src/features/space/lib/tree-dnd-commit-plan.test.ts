@@ -20,9 +20,7 @@ test("leaf Page move plan moves the Markdown file itself", () => {
   expect(movePlan.isBareFolder).toBe(false);
   expect(movePlan.isDocFolder).toBe(false);
   expect(movePlan.movePath).toBe("note.md");
-  expect(movedPagePath(movePlan, "archive/note.md")).toBe(
-    "archive/note.md",
-  );
+  expect(movedPagePath(movePlan, "archive/note.md")).toBe("archive/note.md");
 });
 
 test("Page folder move plan moves the directory and reopens README", () => {
@@ -84,7 +82,45 @@ test("cross-parent move order inserts before the projected target child", () => 
     },
   });
 
-  expect(order?.archive).toEqual(["a.md", "note.md", "b.md"]);
+  expect(order).toEqual({ archive: ["a.md", "note.md", "b.md"] });
+});
+
+test("cross-parent move into a collapsed folder writes no order", () => {
+  const order = buildCrossParentMoveOrder({
+    currentTree: [
+      doc("note.md", "note.md"),
+      collapsedFolder("ideas", "ideas/README.md"),
+    ],
+    movedNodeName: "note.md",
+    parentPath: "ideas",
+    projection: {
+      depth: 1,
+      parentPath: "ideas",
+      type: "child",
+      overPath: "ideas/README.md",
+    },
+  });
+
+  expect(order).toBeNull();
+});
+
+test("cross-parent move into a leaf Page that became a folder writes no order", () => {
+  const order = buildCrossParentMoveOrder({
+    currentTree: [
+      doc("a.md", "a.md"),
+      collapsedFolder("target", "target/README.md"),
+    ],
+    movedNodeName: "note.md",
+    parentPath: "target",
+    projection: {
+      depth: 1,
+      parentPath: "target",
+      type: "child",
+      overPath: "target.md",
+    },
+  });
+
+  expect(order).toBeNull();
 });
 
 test("cross-parent move order inserts first when projected after the parent row", () => {
@@ -100,7 +136,7 @@ test("cross-parent move order inserts first when projected after the parent row"
     },
   });
 
-  expect(order?.archive).toEqual(["note.md", "a.md", "b.md"]);
+  expect(order).toEqual({ archive: ["note.md", "a.md", "b.md"] });
 });
 
 test("same-parent reorder supports the first child projection after parent row", () => {
@@ -116,7 +152,58 @@ test("same-parent reorder supports the first child projection after parent row",
     },
   });
 
-  expect(order?.archive).toEqual(["note.md", "a.md", "b.md"]);
+  expect(order).toEqual({ archive: ["note.md", "a.md", "b.md"] });
+});
+
+test("same-parent reorder at the root writes only the root section beside collapsed folders and Collections", () => {
+  const order = buildSameParentReorderOrder({
+    currentTree: [
+      doc("a.md", "a.md"),
+      collapsedFolder("ideas", "ideas/README.md"),
+      collapsedCollection("tasks", "tasks/README.md"),
+      folder("archive", "archive/README.md", [
+        doc("x.md", "archive/x.md"),
+        doc("y.md", "archive/y.md"),
+      ]),
+      doc("note.md", "note.md"),
+    ],
+    fromNodeName: "note.md",
+    parentPath: "",
+    projection: {
+      depth: 0,
+      parentPath: "",
+      type: "before",
+      overPath: "a.md",
+    },
+  });
+
+  expect(order).toEqual({
+    ".": ["note.md", "a.md", "ideas", "tasks", "archive"],
+  });
+});
+
+test("same-parent reorder in a nested folder writes only that folder section", () => {
+  const order = buildSameParentReorderOrder({
+    currentTree: [
+      collapsedFolder("ideas", "ideas/README.md"),
+      folder("archive", "archive/README.md", [
+        doc("a.md", "archive/a.md"),
+        doc("b.md", "archive/b.md"),
+        doc("note.md", "archive/note.md"),
+      ]),
+      collapsedCollection("tasks", "tasks/README.md"),
+    ],
+    fromNodeName: "note.md",
+    parentPath: "archive",
+    projection: {
+      depth: 1,
+      parentPath: "archive",
+      type: "before",
+      overPath: "archive/b.md",
+    },
+  });
+
+  expect(order).toEqual({ archive: ["a.md", "note.md", "b.md"] });
 });
 
 function afterIntoArchive(): Projection {
@@ -174,6 +261,14 @@ function folder(name: string, path: string, children: TreeNode[]): TreeNode {
     kind: "folder",
     children,
   };
+}
+
+function collapsedFolder(name: string, path: string): TreeNode {
+  return { ...folder(name, path, []), hasChildren: true };
+}
+
+function collapsedCollection(name: string, path: string): TreeNode {
+  return { ...collection(name, path), hasChildren: true };
 }
 
 function bareFolder(path: string): TreeNode {

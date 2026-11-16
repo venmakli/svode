@@ -176,12 +176,12 @@ export function moveSpaceTreeItem(input: {
 
 export function saveSpaceTreeOrder(input: {
   spacePath: string;
-  order: Record<string, string[]>;
+  sections: Record<string, string[]>;
   projectPath: string | null;
 }) {
   return saveContentTreeOrder({
     space: input.spacePath,
-    order: input.order,
+    sections: input.sections,
     projectPath: input.projectPath,
   });
 }

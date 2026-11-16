@@ -33,7 +33,6 @@ mod tests {
         unpolled(files::list_tree_children(text(), None));
         unpolled(files::list_content_tree(text()));
         unpolled(files::get_page_detail_state(text(), text()));
-        unpolled(files::read_tree_order(text()));
         unpolled(files::list_collections(text()));
         unpolled(files::query_relation_backlinks(text(), text(), None, None));
         unpolled(files::list_templates(text(), text()));

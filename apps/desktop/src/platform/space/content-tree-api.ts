@@ -129,16 +129,18 @@ export function deleteContentTreeItem(input: {
   return invokeCommand<void>("delete_content", { ...input });
 }
 
+/**
+ * Replace the passed order sections of a Space (folder key -> child names);
+ * the other sections of its order.json stay as they are.
+ */
 export function saveContentTreeOrder(input: {
   space: string;
-  order: Record<string, string[]>;
+  sections: Record<string, string[]>;
   projectPath: string | null;
 }): Promise<void> {
-  return invokeCommand<void>("save_tree_order", { ...input });
-}
-
-export function readContentTreeOrder(
-  space: string,
-): Promise<Record<string, string[]>> {
-  return invokeCommand<Record<string, string[]>>("read_tree_order", { space });
+  return invokeCommand<void>("save_tree_order", {
+    space: input.space,
+    order: input.sections,
+    projectPath: input.projectPath,
+  });
 }
