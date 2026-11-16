@@ -118,6 +118,10 @@ impl RoutineRunLifecycleSink {
         }
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs on the tokio blocking pool (spawn_blocking in routines::acp_launch) or on the desktop-exit thread (RoutineAcpLaunches::record_exit), never on the main thread"
+    )]
     fn current_pool(&self) -> Result<SqlitePool, AppError> {
         let mut pool = self
             .pool
@@ -135,6 +139,10 @@ impl RoutineRunLifecycleSink {
     }
 
     /// Records the run's outcome and ends its turn.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs on the tokio blocking pool (spawn_blocking in routines::acp_launch) or on the desktop-exit thread (RoutineAcpLaunches::record_exit), never on the main thread"
+    )]
     pub(crate) fn record_outcome(&self, evidence: &RunOutcomeEvidence) -> Result<(), AppError> {
         self.end_turn();
         let pool = self.current_pool()?;
@@ -151,6 +159,10 @@ impl RoutineRunLifecycleSink {
     }
 
     /// Records the session status of the run while its turn runs.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs on the tokio blocking pool (spawn_blocking in routines::acp_launch) or on the desktop-exit thread (RoutineAcpLaunches::record_exit), never on the main thread"
+    )]
     pub(crate) fn reconcile_agent_session(
         &self,
         source_session_id: &str,

@@ -463,6 +463,10 @@ fn process_published_events(
             );
         }
         for target in targets {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "runs on the debounce thread of the file watcher, never on the main thread"
+            )]
             tauri::async_runtime::block_on(async {
                 let state = app.state::<IndexState>();
                 if let Err(error) = crate::index::update::refresh_agent_context_projection(
@@ -753,6 +757,10 @@ fn is_attachment_sidecar(name: &str) -> bool {
         )
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the debounce thread of the file watcher, never on the main thread"
+)]
 fn emit_routine_invalidation(space_root: &Path, owner_path: &str, app: &AppHandle) {
     tauri::async_runtime::block_on(async {
         let canonical_space_root =
@@ -794,6 +802,10 @@ fn agent_actor_owner_for_path(space_root: &Path, path: &Path) -> Option<PathBuf>
     Some(space_root.join(normalized.strip_suffix(suffix)?))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the debounce thread of the file watcher, never on the main thread"
+)]
 fn sync_index_for_watched_path(
     space_root: &Path,
     path: &Path,
@@ -835,6 +847,10 @@ fn sync_index_for_watched_path(
 
 /// Indexed sources under a directory that left at once report no removal of
 /// their own, so the directory publishes it for them. Returns those sources.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the debounce thread of the file watcher, never on the main thread"
+)]
 fn sync_index_for_vanished_directory(
     space_root: &Path,
     path: &Path,
@@ -871,6 +887,10 @@ fn sync_index_for_vanished_directory(
 /// следует `spaces` на диске»). The config of a child Space lists no Spaces.
 /// Returns whether a Space folder joined or left, which rebuilds the root
 /// index.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the debounce thread of the file watcher, never on the main thread"
+)]
 fn pick_up_spaces(space_root: &Path, app: &AppHandle) -> bool {
     tauri::async_runtime::block_on(async {
         let Some(IndexKey::Root(project)) = app
@@ -894,6 +914,10 @@ fn pick_up_spaces(space_root: &Path, app: &AppHandle) -> bool {
     })
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the debounce thread of the file watcher, never on the main thread"
+)]
 fn sync_index_for_visibility_change(
     space_root: &Path,
     app: &AppHandle,

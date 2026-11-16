@@ -1,0 +1,7 @@
+# The main thread of the desktop host never waits for the shared tokio
+# runtime (DF-365 R1): its workers answering IPC wait for the main thread.
+# Each remaining call states the thread it runs on with
+# `#[expect(clippy::disallowed_methods, reason = "...")]`.
+disallowed-methods = [
+    { path = "tauri::async_runtime::block_on", reason = "never block on the shared tokio runtime from the main thread; off it, state the thread with #[expect(clippy::disallowed_methods, reason = ...)]" },
+]

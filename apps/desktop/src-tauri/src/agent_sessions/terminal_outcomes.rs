@@ -64,6 +64,10 @@ pub(crate) fn save_terminal_outcome(project: &Path, outcome: &SavedTerminalOutco
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on a terminal-reader thread, on the tokio blocking pool (terminal_kill, agent session re-entry) or on the desktop-exit thread (TerminalManager::kill_all), never on the main thread"
+)]
 fn write_outcome(project: &Path, outcome: &SavedTerminalOutcome) -> Result<(), AppError> {
     let state_json = serde_json::to_string(&outcome.state)?;
     tauri::async_runtime::block_on(async {
@@ -128,6 +132,10 @@ type OutcomeRow = (
 
 /// The saved outcomes of the project; a missing, unreadable or damaged
 /// store gives none, with a diagnostic. The read writes nothing.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the tokio blocking pool of the agent sessions reads, never on the main thread"
+)]
 fn read_outcomes(project: &Path) -> Vec<SavedTerminalOutcome> {
     let db_path = cache_db_path(project);
     if !db_path.is_file() {

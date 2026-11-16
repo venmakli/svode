@@ -648,6 +648,10 @@ fn exit_waiting_steps(app_handle: &tauri::AppHandle) -> Vec<exit_sequence::Waiti
 }
 
 /// Waits for `future` on the exit thread, never on the main thread.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the desktop-exit thread of the exit sequence (DF-365 R3), never on the main thread"
+)]
 fn on_exit_thread<F: std::future::Future>(future: F) -> F::Output {
     tauri::async_runtime::block_on(future)
 }

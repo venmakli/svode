@@ -354,6 +354,10 @@ fn source_of(
 /// A variable of the environment the agent's processes run in: the user's
 /// login shell environment (Stage 10 `03` A1), else the app's, as the agent
 /// gets it where there is no login shell.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the tokio blocking pool of the agent sessions reads and native catalogue refreshes, never on the main thread"
+)]
 pub(crate) fn agent_variable(name: &str) -> Option<OsString> {
     match tauri::async_runtime::block_on(LoginEnvironment::session().get()) {
         Some(environment) => environment.get(name).map(OsStr::to_os_string),

@@ -27,6 +27,10 @@ pub(crate) type StoreQuery<'c, T> = Pin<Box<dyn Future<Output = Result<T, sqlx::
 /// cannot open — missing, or a WAL store without `-shm` in a folder it may
 /// not write — is an error, which the agent's source reports as its
 /// diagnostic (N5).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the tokio blocking pool of the agent sessions reads and native catalogue refreshes, never on the main thread"
+)]
 pub(crate) fn read_only<T>(
     db: &Path,
     read: impl for<'c> FnOnce(&'c mut SqliteConnection) -> StoreQuery<'c, T>,

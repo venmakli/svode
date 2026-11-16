@@ -161,6 +161,10 @@ fn sessions_hash(sessions: &[SavedSession]) -> Option<u64> {
     Some(hasher.finish())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the tokio blocking pool of the agent sessions reads, never on the main thread"
+)]
 fn read_saved_lists(project: &Path) -> HashMap<CatalogSourceKey, SavedList> {
     let db_path = cache_db_path(project);
     if !db_path.is_file() {
@@ -200,6 +204,10 @@ fn read_saved_lists(project: &Path) -> HashMap<CatalogSourceKey, SavedList> {
         .collect()
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs on the tokio blocking pool of the agent sessions reads, never on the main thread"
+)]
 fn write_saved_list(
     project: &Path,
     agent: &CatalogSourceKey,
