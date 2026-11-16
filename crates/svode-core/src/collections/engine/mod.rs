@@ -142,6 +142,41 @@ fn ensure_paths_in_space(space: &str, paths: &[&str]) -> Result<(), CollectionEr
     Ok(())
 }
 
+/// Refuse a relation column without `relation_scope`, in a Collection of
+/// the Space at `space`, whose target Collection a registered child Space
+/// owns. A target without scope belongs to the Space of the operation; a
+/// relation to a Collection of the child Space names it with
+/// `relation_scope`. Every write that creates a relation target or changes
+/// it or its scope, and every write that follows a stored relation to its
+/// target side (the reverse column and values of `two_way`), calls this
+/// before it plans or writes anything. Reads of relations do not.
+fn ensure_relation_target_in_space(space: &str, column: &Column) -> Result<(), CollectionError> {
+    if column.type_ != PropertyType::Relation || column.relation_scope.is_some() {
+        return Ok(());
+    }
+    let Some(relation) = column.relation.as_deref() else {
+        return Ok(());
+    };
+    let relation = normalize_collection_path(relation)?;
+    ensure_paths_in_space(space, &[&relation]).map_err(|error| match error {
+        CollectionError::PathInOtherSpace { path, space_id } => {
+            CollectionError::RelationTargetInOtherSpace { path, space_id }
+        }
+        other => other,
+    })
+}
+
+/// Target Space, Collection and reverse scope of a relation that a write
+/// follows to its target side, under `ensure_relation_target_in_space`.
+fn relation_write_target_pair(
+    space: &str,
+    project_path: Option<&str>,
+    column: &Column,
+) -> Result<Option<(String, String, Option<RelationScope>)>, CollectionError> {
+    ensure_relation_target_in_space(space, column)?;
+    relation_target_pair(space, project_path, column)
+}
+
 /// Sensitivity of the column for decisions about personal data. A value set
 /// by a newer Svode version, or a newer property without `sensitivity: none`,
 /// counts as `pii`.
@@ -627,6 +662,12 @@ pub fn schema_type_target_mutation_paths_with_project(
     else {
         return Ok(Vec::new());
     };
+    // The conversion sets the target of a column that was not a relation,
+    // or another target or scope of a relation.
+    let sets_target = column.type_ != PropertyType::Relation
+        || conversion_strategy.is_some_and(|strategy| {
+            strategy.get("relation").is_some() || strategy.get("relation_scope").is_some()
+        });
     column.type_ = PropertyType::Relation;
     if let Some(strategy) = conversion_strategy {
         if let Some(relation) = strategy.get("relation") {
@@ -645,6 +686,9 @@ pub fn schema_type_target_mutation_paths_with_project(
         if let Some(two_way) = strategy.get("two_way") {
             column.two_way = two_way.as_str().map(ToOwned::to_owned);
         }
+    }
+    if sets_target {
+        ensure_relation_target_in_space(space, &column)?;
     }
     let mut paths = Vec::new();
     extend_relation_side_effect_paths(space, project_path, collection_path, &column, &mut paths)?;
@@ -683,6 +727,9 @@ pub fn schema_column_patch_target_mutation_paths_with_project(
     if let Some(two_way) = patch.get("two_way") {
         column.two_way = two_way.as_str().map(ToOwned::to_owned);
     }
+    if patch.get("relation").is_some() || patch.get("relation_scope").is_some() {
+        ensure_relation_target_in_space(space, &column)?;
+    }
     let mut paths = Vec::new();
     extend_relation_side_effect_paths(space, project_path, collection_path, &column, &mut paths)?;
     dedupe_paths(paths)
@@ -698,7 +745,8 @@ fn extend_relation_side_effect_paths(
     if column.type_ != PropertyType::Relation || column.two_way.is_none() {
         return Ok(());
     }
-    let Some((target_space, relation, _)) = relation_target_pair(space, project_path, column)?
+    let Some((target_space, relation, _)) =
+        relation_write_target_pair(space, project_path, column)?
     else {
         return Ok(());
     };
@@ -758,7 +806,7 @@ fn ensure_two_way_schema_and_values_with_project(
         ))
     })?;
     let Some((target_space, relation, reverse_scope)) =
-        relation_target_pair(space, project_path, column)?
+        relation_write_target_pair(space, project_path, column)?
     else {
         return Ok(());
     };
@@ -869,7 +917,7 @@ fn materialize_two_way_reverse_values_with_limit_policy(
         ))
     })?;
     let Some((target_space, relation, reverse_scope)) =
-        relation_target_pair(space, project_path, column)?
+        relation_write_target_pair(space, project_path, column)?
     else {
         return Ok(());
     };
@@ -919,7 +967,7 @@ fn update_reverse_pair_name_with_project(
         return Ok(());
     };
     let Some((target_space, relation, reverse_scope)) =
-        relation_target_pair(space, project_path, old_column)?
+        relation_write_target_pair(space, project_path, old_column)?
     else {
         return Ok(());
     };
@@ -961,7 +1009,8 @@ fn detach_two_way_relation_with_project(
     let Some(reverse_name) = column.two_way.as_deref() else {
         return Ok(());
     };
-    let Some((target_space, relation, _)) = relation_target_pair(space, project_path, column)?
+    let Some((target_space, relation, _)) =
+        relation_write_target_pair(space, project_path, column)?
     else {
         return Ok(());
     };
@@ -1973,6 +2022,7 @@ pub fn update_relation_item_field(
     let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
     let reverse_name = column.two_way.clone();
     let reverse_scope = if reverse_name.is_some() {
+        ensure_relation_target_in_space(space, column)?;
         validate_physical_two_way_relation_scope(space, project_path, column)?;
         reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?
     } else {
@@ -2182,6 +2232,7 @@ fn prepare_relation_field_update(
             mutation_paths: Vec::new(),
         }));
     };
+    ensure_relation_target_in_space(space, column)?;
     validate_physical_two_way_relation_scope(space, project_path, column)?;
     let reverse_scope =
         reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?;
@@ -2276,6 +2327,7 @@ pub fn relation_field_target_mutation_paths_for_value_with_project(
     if column.type_ != PropertyType::Relation || column.two_way.is_none() {
         return Ok(Vec::new());
     }
+    ensure_relation_target_in_space(space, column)?;
     let relation = column
         .relation
         .as_deref()
@@ -2763,7 +2815,7 @@ pub fn relation_repair_mutation_paths_with_project(
         .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
     {
         if let Some((target_space, relation, _)) =
-            relation_target_pair(space, project_path, column)?
+            relation_write_target_pair(space, project_path, column)?
         {
             paths.push(collection_dir(&target_space, &relation).join(SCHEMA_FILE));
             paths.extend(collection_markdown_files(&target_space, &relation)?);
@@ -2810,7 +2862,7 @@ pub fn repair_two_way_relation_with_project(
         .as_deref()
         .ok_or_else(|| schema_error(format!("relation column '{column_name}' is not two-way")))?;
     let Some((target_space, relation, _reverse_scope)) =
-        relation_target_pair(space, project_path, &column)?
+        relation_write_target_pair(space, project_path, &column)?
     else {
         return Err(schema_error(format!(
             "relation column '{column_name}' requires relation"
@@ -2923,7 +2975,7 @@ fn choose_two_way_reverse_column(
         column.clone()
     };
     let Some((target_space, relation, reverse_scope)) =
-        relation_target_pair(space, project_path, &column_snapshot)?
+        relation_write_target_pair(space, project_path, &column_snapshot)?
     else {
         return Err(schema_error(format!(
             "relation column '{column_name}' requires relation"
@@ -2976,7 +3028,7 @@ fn create_two_way_reverse_column(
         column.clone()
     };
     let Some((target_space, relation, reverse_scope)) =
-        relation_target_pair(space, project_path, &column_snapshot)?
+        relation_write_target_pair(space, project_path, &column_snapshot)?
     else {
         return Err(schema_error(format!(
             "relation column '{column_name}' requires relation"
@@ -3048,7 +3100,7 @@ fn detach_current_two_way_relation(
     };
     write_schema_with_project(space, collection_path, &schema, project_path)?;
     let Some((target_space, relation, reverse_scope)) =
-        relation_target_pair(space, project_path, &column_snapshot)?
+        relation_write_target_pair(space, project_path, &column_snapshot)?
     else {
         return Ok(());
     };

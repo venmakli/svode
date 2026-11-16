@@ -119,6 +119,9 @@ pub fn prepare_initial_collection_schema(
     }
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
+    for column in &schema.columns {
+        ensure_relation_target_in_space(space, column)?;
+    }
     for view in &schema.views {
         crate::collections::schema_validation::reject_multi_value_contains_in_view(&schema, view)?;
     }
@@ -165,6 +168,7 @@ pub fn prepare_add_schema_column(
     project_path: Option<&str>,
 ) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     ensure_paths_in_space(space, &[collection_path])?;
+    ensure_relation_target_in_space(space, &column)?;
     let paths = schema_column_mutation_paths_with_project(
         space,
         collection_path,

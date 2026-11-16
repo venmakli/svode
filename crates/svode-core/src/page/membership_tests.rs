@@ -3,7 +3,9 @@
 //! and every prepared schema mutation of `collections::engine` refuses a
 //! source, parent, destination, Collection or item path that the child
 //! owns, before its first write, and the inventory keeps new write
-//! operations under the rule.
+//! operations under the rule. A relation without `relation_scope` targets
+//! a Collection of its own Space: a write that sets such a target in the
+//! child, or follows a stored one to write there, is refused the same way.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -1362,6 +1364,389 @@ fn schema_mutations_through_the_child_space_and_on_root_collections_still_succee
         let notes = fs::read_to_string(root.join("Notes/schema.yaml")).unwrap();
         assert!(notes.contains("name: Extra"), "{kind:?}: {notes}");
         assert!(root.join("NotesBoard/schema.yaml").is_file(), "{kind:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Relation targets without scope
+// ---------------------------------------------------------------------------
+
+fn relation_column(text: &str) -> engine::Column {
+    serde_norway::from_str(text).unwrap()
+}
+
+fn assert_relation_refused<T>(operation: &str, result: Result<T, CollectionError>) {
+    match result {
+        Err(CollectionError::RelationTargetInOtherSpace { path, space_id })
+            if space_id == "eng" && path.to_lowercase().ends_with("tasks") => {}
+        Err(error) => {
+            panic!("{operation}: expected RelationTargetInOtherSpace of eng, got {error:?}")
+        }
+        Ok(_) => {
+            panic!("{operation}: expected RelationTargetInOtherSpace of eng, but it succeeded")
+        }
+    }
+}
+
+fn assert_page_relation_refused<T>(operation: &str, result: Result<T, PageError>) {
+    match result {
+        Err(PageError::RelationTargetInOtherSpace { space_id, .. }) if space_id == "eng" => {}
+        Err(error) => {
+            panic!("{operation}: expected RelationTargetInOtherSpace of eng, got {error:?}")
+        }
+        Ok(_) => {
+            panic!("{operation}: expected RelationTargetInOtherSpace of eng, but it succeeded")
+        }
+    }
+}
+
+/// Root Collection `Notes` with an item, a view and relation columns whose
+/// targets the tests change: `Cycle` to the root Collection `Cycles`,
+/// `Scoped` to `Tasks` of Space `eng` through `relation_scope`, and
+/// `Rooted` to `eng/Tasks` through the root scope. `stored` adds the
+/// columns a project written before this rule may hold: the two-way
+/// `Task` and the one-way `Ref`, both to `eng/Tasks` without scope.
+fn relation_fixture(root: &Path, stored: bool) {
+    let stored_columns = if stored {
+        "  - { name: Task, type: relation, relation: eng/Tasks, two_way: Notes }
+  - { name: Ref, type: relation, relation: eng/Tasks }
+"
+    } else {
+        ""
+    };
+    write_tree(
+        root,
+        &[
+            (
+                "Notes/schema.yaml",
+                &format!(
+                    "columns:
+  - {{ name: Status, type: text }}
+  - {{ name: Cycle, type: relation, relation: Cycles }}
+  - {{ name: Scoped, type: relation, relation: Tasks, relation_scope: {{ type: space, id: eng }} }}
+  - {{ name: Rooted, type: relation, relation: eng/Tasks, relation_scope: {{ type: root }} }}
+{stored_columns}views:
+  - {{ type: table, name: Table }}
+"
+                ),
+            ),
+            ("Notes/README.md", "---\ntitle: Notes\n---\n"),
+            ("Notes/First.md", "---\ntitle: First\nStatus: Open\n---\n"),
+            ("Cycles/schema.yaml", "columns: []\nviews: []\n"),
+            ("Cycles/README.md", "---\ntitle: Cycles\n---\n"),
+        ],
+    );
+}
+
+/// Every write that sets the target of a relation through the root Space
+/// at `space` to `target`, a Collection of the child Space `eng`, without
+/// `relation_scope`.
+fn refuse_every_relation_target(space: &str, project: &str, target: &str) {
+    let project = Some(project);
+    for column in [
+        format!("{{ name: Task, type: relation, relation: {target} }}"),
+        format!("{{ name: Task, type: relation, relation: {target}, two_way: Notes }}"),
+    ] {
+        assert_relation_refused(
+            "engine::prepare_add_schema_column",
+            engine::prepare_add_schema_column(space, "Notes", relation_column(&column), project),
+        );
+    }
+    for patch in [
+        format!("relation: {target}"),
+        format!("{{ relation: {target}, two_way: Notes }}"),
+    ] {
+        assert_relation_refused(
+            "engine::prepare_update_schema_column (target)",
+            engine::prepare_update_schema_column(space, "Notes", "Cycle", yaml(&patch), project),
+        );
+    }
+    assert_relation_refused(
+        "engine::prepare_update_schema_column (target and scope)",
+        engine::prepare_update_schema_column(
+            space,
+            "Notes",
+            "Scoped",
+            yaml(&format!("{{ relation: {target}, relation_scope: null }}")),
+            project,
+        ),
+    );
+    if target == "eng/Tasks" {
+        assert_relation_refused(
+            "engine::prepare_update_schema_column (scope)",
+            engine::prepare_update_schema_column(
+                space,
+                "Notes",
+                "Rooted",
+                yaml("relation_scope: null"),
+                project,
+            ),
+        );
+    }
+    assert_relation_refused(
+        "engine::prepare_change_schema_type",
+        engine::prepare_change_schema_type(
+            space,
+            "Notes",
+            "Status",
+            engine::PropertyType::Relation,
+            Some(yaml(&format!("relation: {target}"))),
+            project,
+        ),
+    );
+    let mut schema = engine::default_collection_schema();
+    schema.columns.push(relation_column(&format!(
+        "{{ name: Task, type: relation, relation: {target} }}"
+    )));
+    assert_relation_refused(
+        "engine::prepare_initial_collection_schema",
+        engine::prepare_initial_collection_schema(space, "Fresh", schema, project),
+    );
+}
+
+#[tokio::test]
+async fn a_relation_target_of_a_child_space_without_scope_is_refused() {
+    for kind in CHILD_REPOSITORIES {
+        let temp = project(kind);
+        let root = temp.path().canonicalize().unwrap();
+        let space = root.to_str().unwrap();
+        relation_fixture(&root, false);
+        let before = tree_snapshot(&root);
+
+        refuse_every_relation_target(space, space, "eng/Tasks");
+
+        let index = IndexRuntimeState::default();
+        let sink = RecordingSink::default();
+        let mut create = collection_create(space, "", space);
+        create.schema.columns.push(relation_column(
+            "{ name: Task, type: relation, relation: eng/Tasks }",
+        ));
+        assert_page_relation_refused(
+            "structure::create_collection",
+            structure::create_collection(create, structure_runtime(&index, &sink), authorize).await,
+        );
+
+        assert_eq!(tree_snapshot(&root), before, "{kind:?}");
+        assert!(sink.0.lock().unwrap().is_empty(), "{kind:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_relation_target_through_a_symlink_into_a_child_space_is_refused() {
+    let temp = project(ChildRepository::Independent);
+    let root = temp.path().canonicalize().unwrap();
+    let space = root.to_str().unwrap();
+    relation_fixture(&root, false);
+    std::os::unix::fs::symlink(root.join("eng/Tasks"), root.join("Area/link")).unwrap();
+    let before = tree_snapshot(&root);
+
+    let column = "{ name: Task, type: relation, relation: Area/link, two_way: Notes }";
+    match engine::prepare_add_schema_column(space, "Notes", relation_column(column), Some(space)) {
+        Err(CollectionError::RelationTargetInOtherSpace { space_id, .. }) if space_id == "eng" => {}
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+
+    assert_eq!(tree_snapshot(&root), before);
+}
+
+#[test]
+fn another_letter_case_of_a_relation_target_in_a_child_space_is_refused() {
+    let temp = project(ChildRepository::Inline);
+    let root = temp.path().canonicalize().unwrap();
+    if !root.join("ENG").exists() {
+        // A case-sensitive file system has no such path to protect.
+        return;
+    }
+    let space = root.to_str().unwrap();
+    relation_fixture(&root, false);
+    let before = tree_snapshot(&root);
+
+    refuse_every_relation_target(space, space, "ENG/tasks");
+
+    assert_eq!(tree_snapshot(&root), before);
+}
+
+#[test]
+fn a_two_way_relation_to_a_child_space_through_relation_scope_still_works() {
+    for kind in CHILD_REPOSITORIES {
+        let temp = project(kind);
+        let root = temp.path().canonicalize().unwrap();
+        let space = root.to_str().unwrap();
+        relation_fixture(&root, false);
+
+        engine::prepare_add_schema_column(
+            space,
+            "Notes",
+            relation_column(
+                "{ name: Task, type: relation, relation: Tasks, relation_scope: { type: space, id: eng }, two_way: Notes }",
+            ),
+            Some(space),
+        )
+        .unwrap()
+        .apply()
+        .unwrap();
+
+        let tasks =
+            engine::read_collection_schema(root.join("eng").to_str().unwrap(), "Tasks").unwrap();
+        let reverse = tasks.column("Notes").expect("reverse column");
+        assert_eq!(reverse.relation.as_deref(), Some("Notes"), "{kind:?}");
+        assert!(
+            matches!(
+                reverse.relation_scope,
+                Some(engine::RelationScope::Root { .. })
+            ),
+            "{kind:?}: {:?}",
+            reverse.relation_scope
+        );
+        assert_eq!(reverse.two_way.as_deref(), Some("Task"), "{kind:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_stored_relation_without_scope_blocks_only_writes_that_follow_it() {
+    for kind in CHILD_REPOSITORIES {
+        let temp = project(kind);
+        let root = temp.path().canonicalize().unwrap();
+        let space = root.to_str().unwrap();
+        let project = Some(space);
+        relation_fixture(&root, true);
+        let eng = root.join("eng");
+        let eng_before = tree_snapshot(&eng);
+        let index = IndexRuntimeState::default();
+        let nonces = WriteNonceRegistry::default();
+
+        // Writes that do not follow the stored relations.
+        let notes_before = tree_snapshot(&root.join("Notes"));
+        for (name, outcome) in [
+            (
+                "view",
+                engine::prepare_update_view(space, "Notes", "Table", yaml("name: Grid"))
+                    .and_then(engine::PreparedCollectionMutation::apply)
+                    .map(|_| ()),
+            ),
+            (
+                "add column",
+                engine::prepare_add_schema_column(space, "Notes", text_column("Extra"), project)
+                    .and_then(engine::PreparedCollectionMutation::apply)
+                    .map(|_| ()),
+            ),
+            (
+                "rename column",
+                engine::prepare_rename_schema_column(space, "Notes", "Status", "State", project)
+                    .and_then(engine::PreparedCollectionMutation::apply)
+                    .map(|_| ()),
+            ),
+            (
+                "update one-way",
+                engine::prepare_update_schema_column(
+                    space,
+                    "Notes",
+                    "Ref",
+                    yaml("limit: one"),
+                    project,
+                )
+                .and_then(engine::PreparedCollectionMutation::apply)
+                .map(|_| ()),
+            ),
+            (
+                "rename one-way",
+                engine::prepare_rename_schema_column(space, "Notes", "Ref", "Reference", project)
+                    .and_then(engine::PreparedCollectionMutation::apply)
+                    .map(|_| ()),
+            ),
+        ] {
+            outcome.unwrap_or_else(|error| panic!("{kind:?} {name}: {error:?}"));
+        }
+        let values = BTreeMap::from([("Reference".to_string(), serde_json::json!("Item.md"))]);
+        fields::update(
+            fields::PageFieldUpdate {
+                space,
+                path: "Notes/First.md",
+                project,
+                values: &values,
+                intent: ItemFieldBatchIntent::Literal,
+            },
+            page_runtime(&index, &nonces),
+            authorize,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{kind:?} one-way value: {error:?}"));
+        engine::prepare_delete_schema_column(space, "Notes", "Reference", true, project)
+            .and_then(engine::PreparedCollectionMutation::apply)
+            .unwrap_or_else(|error| panic!("{kind:?} delete one-way: {error:?}"));
+        assert_ne!(tree_snapshot(&root.join("Notes")), notes_before, "{kind:?}");
+        assert_eq!(tree_snapshot(&eng), eng_before, "{kind:?}");
+
+        // Writes that follow the two-way relation into the child Space.
+        let before = tree_snapshot(&root);
+        assert_relation_refused(
+            "rename two-way",
+            engine::prepare_rename_schema_column(space, "Notes", "Task", "Job", project),
+        );
+        assert_relation_refused(
+            "delete two-way",
+            engine::prepare_delete_schema_column(space, "Notes", "Task", true, project),
+        );
+        assert_relation_refused(
+            "update two-way",
+            engine::prepare_update_schema_column(
+                space,
+                "Notes",
+                "Task",
+                yaml("limit: one"),
+                project,
+            ),
+        );
+        assert_relation_refused(
+            "change type of two-way",
+            engine::prepare_change_schema_type(
+                space,
+                "Notes",
+                "Task",
+                engine::PropertyType::Text,
+                None,
+                project,
+            ),
+        );
+        assert_relation_refused(
+            "repair two-way",
+            engine::prepare_repair_two_way_relation(
+                space,
+                "Notes",
+                "Task",
+                "from_this_side",
+                None,
+                project,
+            ),
+        );
+        let values = BTreeMap::from([("Task".to_string(), serde_json::json!("Item.md"))]);
+        assert_page_relation_refused(
+            "two-way value",
+            fields::update(
+                fields::PageFieldUpdate {
+                    space,
+                    path: "Notes/First.md",
+                    project,
+                    values: &values,
+                    intent: ItemFieldBatchIntent::Literal,
+                },
+                page_runtime(&index, &nonces),
+                authorize,
+            )
+            .await,
+        );
+        assert_page_relation_refused(
+            "store::update_field two-way value",
+            store::update_field(
+                space,
+                project,
+                "Notes/First.md",
+                "Task",
+                serde_json::json!("Item.md"),
+            ),
+        );
+        assert_eq!(tree_snapshot(&root), before, "{kind:?}");
     }
 }
 

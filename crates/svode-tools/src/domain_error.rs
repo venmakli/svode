@@ -145,6 +145,20 @@ fn path_in_other_space(path: String, space_id: String) -> ToolError {
     .with_evidence("spaceId", serde_json::Value::String(space_id))
 }
 
+/// Refusal of a relation without `relation_scope` whose target Collection a
+/// registered child Space owns: the same code as any path of another Space,
+/// with the `relation_scope` that names that Space.
+fn relation_target_in_other_space(path: String, space_id: String) -> ToolError {
+    ToolError::new(
+        "PATH_IN_OTHER_SPACE",
+        format!(
+            "Relation target {path} belongs to Space {space_id}, not to the Space this operation addressed, and nothing changed; a relation without relation_scope targets a Collection of its own Space, so set relation_scope {{\"type\": \"space\", \"id\": \"{space_id}\"}} and give the target path relative to Space {space_id}."
+        ),
+    )
+    .with_evidence("path", serde_json::Value::String(path))
+    .with_evidence("spaceId", serde_json::Value::String(space_id))
+}
+
 fn name_conflict() -> ToolError {
     ToolError::new(
         "PAGE_NAME_CONFLICT",
@@ -360,6 +374,9 @@ impl From<PageError> for ToolError {
             PageError::UnsupportedRenameTarget { path } => unsupported_rename_target(path),
             PageError::UnsupportedMoveParent { path } => unsupported_move_parent(path),
             PageError::PathInOtherSpace { path, space_id } => path_in_other_space(path, space_id),
+            PageError::RelationTargetInOtherSpace { path, space_id } => {
+                relation_target_in_other_space(path, space_id)
+            }
             PageError::General(message) => general(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),
@@ -475,6 +492,9 @@ impl From<CollectionError> for ToolError {
             CollectionError::PathInOtherSpace { path, space_id } => {
                 path_in_other_space(path, space_id)
             }
+            CollectionError::RelationTargetInOtherSpace { path, space_id } => {
+                relation_target_in_other_space(path, space_id)
+            }
         }
     }
 }
@@ -544,6 +564,22 @@ mod tests {
             (CollectionError::Schema("bad".into()).into(), SVODE_ERROR),
             (
                 CollectionError::PathInOtherSpace {
+                    path: "eng/Tasks".into(),
+                    space_id: "eng".into(),
+                }
+                .into(),
+                "PATH_IN_OTHER_SPACE",
+            ),
+            (
+                CollectionError::RelationTargetInOtherSpace {
+                    path: "eng/Tasks".into(),
+                    space_id: "eng".into(),
+                }
+                .into(),
+                "PATH_IN_OTHER_SPACE",
+            ),
+            (
+                PageError::RelationTargetInOtherSpace {
                     path: "eng/Tasks".into(),
                     space_id: "eng".into(),
                 }
@@ -656,6 +692,26 @@ mod tests {
         let busy: ToolError =
             ProjectError::Registry(RegistryError::Busy("/c/spaces.json".into())).into();
         assert_eq!(busy.evidence["path"], "/c/spaces.json");
+    }
+
+    #[test]
+    fn a_relation_target_of_another_space_names_its_relation_scope() {
+        let refused: ToolError = CollectionError::RelationTargetInOtherSpace {
+            path: "eng/Tasks".into(),
+            space_id: "eng".into(),
+        }
+        .into();
+        assert_eq!(refused.code, "PATH_IN_OTHER_SPACE");
+        assert_eq!(refused.evidence["path"], "eng/Tasks");
+        assert_eq!(refused.evidence["spaceId"], "eng");
+        assert!(
+            refused.message.contains("Space eng")
+                && refused
+                    .message
+                    .contains(r#"relation_scope {"type": "space", "id": "eng"}"#),
+            "{}",
+            refused.message
+        );
     }
 
     #[test]

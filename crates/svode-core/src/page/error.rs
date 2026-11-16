@@ -52,6 +52,10 @@ pub enum PageError {
     UnsupportedMoveParent { path: String },
     #[error("{path} belongs to Space {space_id}; run the operation in that Space")]
     PathInOtherSpace { path: String, space_id: String },
+    #[error(
+        "relation target {path} belongs to Space {space_id}; set relation_scope of that Space for the relation"
+    )]
+    RelationTargetInOtherSpace { path: String, space_id: String },
     #[error("{0}")]
     General(String),
     #[error(transparent)]
@@ -111,6 +115,9 @@ impl From<CollectionError> for PageError {
             CollectionError::Recovery { cause, paths } => Self::Recovery { cause, paths },
             CollectionError::PathInOtherSpace { path, space_id } => {
                 Self::PathInOtherSpace { path, space_id }
+            }
+            CollectionError::RelationTargetInOtherSpace { path, space_id } => {
+                Self::RelationTargetInOtherSpace { path, space_id }
             }
         }
     }

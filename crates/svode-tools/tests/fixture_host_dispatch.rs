@@ -2886,6 +2886,82 @@ async fn schema_changes_through_the_root_space_refuse_a_collection_of_a_child_sp
     );
 }
 
+/// A relation of a root Collection to a Collection of the registered child
+/// Space without `relation_scope` is refused with PATH_IN_OTHER_SPACE and a
+/// `relation_scope` hint before any write; through `relation_scope` the
+/// two-way relation applies with its reverse column in the child Space.
+#[tokio::test]
+async fn a_relation_without_scope_to_a_child_space_collection_is_refused() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    write(
+        &project.join("child/board/schema.yaml"),
+        "columns: []\nviews: []\n",
+    );
+    write(
+        &project.join("child/board/README.md"),
+        "---\ntitle: Board\n---\n",
+    );
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let before = source_snapshot(project);
+
+    for (name, args) in [
+        (
+            "add_collection_column",
+            json!({
+                "collectionPath": "tasks",
+                "column": { "name": "Card", "type": "relation", "relation": "child/board", "two_way": "Tasks" }
+            }),
+        ),
+        (
+            "update_collection_column",
+            json!({ "collectionPath": "tasks", "columnName": "Sprint", "patch": { "relation": "child/board" } }),
+        ),
+    ] {
+        let result = call_tool(&host, Some(&target), name, args.clone()).await;
+        assert_eq!(error_code(&result), "PATH_IN_OTHER_SPACE", "{name} {args}");
+        let message = format!("{result:?}");
+        assert!(
+            message.contains("Space child") && message.contains("relation_scope"),
+            "{name}: {message}"
+        );
+    }
+    let after = source_snapshot(project);
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|entry| !before.contains(entry))
+        .chain(before.iter().filter(|entry| !after.contains(entry)))
+        .map(|(path, _)| path.clone())
+        // The repository write lock is a local runtime file, not content.
+        .filter(|path| !path.ends_with(".svode/write.lock"))
+        .collect();
+    assert!(changed.is_empty(), "{changed:?}");
+
+    let result = call_tool(
+        &host,
+        Some(&target),
+        "add_collection_column",
+        json!({
+            "collectionPath": "tasks",
+            "column": {
+                "name": "Card",
+                "type": "relation",
+                "relation": "board",
+                "relation_scope": { "type": "space", "id": "child" },
+                "two_way": "Tasks"
+            }
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{:?}", result.structured_content);
+    let board = fs::read_to_string(project.join("child/board/schema.yaml")).unwrap();
+    assert!(
+        board.contains("name: Tasks") && board.contains("relation_scope: root"),
+        "{board}"
+    );
+}
+
 #[tokio::test]
 async fn structural_actions_in_a_submodule_space_need_the_parent_gitlink_repository() {
     let fixture = structure_fixture();

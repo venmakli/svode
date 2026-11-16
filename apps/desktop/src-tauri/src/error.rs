@@ -44,9 +44,11 @@ impl From<svode_core::collections::CollectionError> for AppError {
             svode_core::collections::CollectionError::Recovery { cause, paths } => {
                 Self::PageWriteRecovery { cause, paths }
             }
-            svode_core::collections::CollectionError::PathInOtherSpace { path, space_id } => {
-                Self::PathInOtherSpace { path, space_id }
-            }
+            svode_core::collections::CollectionError::PathInOtherSpace { path, space_id }
+            | svode_core::collections::CollectionError::RelationTargetInOtherSpace {
+                path,
+                space_id,
+            } => Self::PathInOtherSpace { path, space_id },
         }
     }
 }
@@ -414,7 +416,8 @@ impl From<svode_core::page::PageError> for AppError {
             }
             PageError::UnsupportedRenameTarget { path } => Self::UnsupportedRenameTarget { path },
             PageError::UnsupportedMoveParent { path } => Self::UnsupportedMoveParent { path },
-            PageError::PathInOtherSpace { path, space_id } => {
+            PageError::PathInOtherSpace { path, space_id }
+            | PageError::RelationTargetInOtherSpace { path, space_id } => {
                 Self::PathInOtherSpace { path, space_id }
             }
             PageError::General(message) => Self::General(message),
@@ -1003,6 +1006,23 @@ mod tests {
             schema_other_space["message"],
             "eng/Tasks belongs to Space eng; run the operation in that Space"
         );
+        for relation_target in [
+            AppError::from(
+                svode_core::collections::CollectionError::RelationTargetInOtherSpace {
+                    path: "eng/Tasks".into(),
+                    space_id: "eng".into(),
+                },
+            ),
+            AppError::from(svode_core::page::PageError::RelationTargetInOtherSpace {
+                path: "eng/Tasks".into(),
+                space_id: "eng".into(),
+            }),
+        ] {
+            let relation_target = serde_json::to_value(relation_target).unwrap();
+            assert_eq!(relation_target["kind"], "path_in_other_space");
+            assert_eq!(relation_target["path"], "eng/Tasks");
+            assert_eq!(relation_target["spaceId"], "eng");
+        }
 
         let parent = serde_json::to_value(AppError::from(
             svode_core::page::PageError::UnsupportedMoveParent {

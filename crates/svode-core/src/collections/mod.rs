@@ -53,6 +53,13 @@ pub enum CollectionError {
     /// first write.
     #[error("{path} belongs to Space {space_id}; run the operation in that Space")]
     PathInOtherSpace { path: String, space_id: String },
+    /// The target Collection of a relation without `relation_scope`, which
+    /// belongs to the Space of the operation, that a registered child Space
+    /// owns, refused by the same rule before the first write.
+    #[error(
+        "relation target {path} belongs to Space {space_id}; set relation_scope of that Space for the relation"
+    )]
+    RelationTargetInOtherSpace { path: String, space_id: String },
 }
 
 impl From<crate::page::frontmatter::FrontmatterError> for CollectionError {
