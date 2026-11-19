@@ -309,6 +309,9 @@ impl AgentState {
     {
         let key = self.object_key(oid);
         progress::report(out, &self.progress, oid, size, async {
+            if self.stored(&key, size).await {
+                return Ok(());
+            }
             let mut blob = tokio::fs::File::open(path)
                 .await
                 .with_context(|| format!("reading staged blob {path}"))?;
@@ -325,6 +328,18 @@ impl AgentState {
             sent
         })
         .await
+    }
+
+    /// Whether the bucket already holds the object at `key` with `size`
+    /// bytes. Git LFS hands a standalone agent every object of a push, also
+    /// the ones a `git lfs push` before it sent (DF-369 R2); the key names
+    /// the content and an S3 object appears only whole. A failed check only
+    /// means the object is sent.
+    async fn stored(&self, key: &str, size: u64) -> bool {
+        self.op
+            .stat(key)
+            .await
+            .is_ok_and(|meta| meta.content_length() == size)
     }
 
     async fn handle_download<W>(&self, out: &mut W, oid: &str, size: u64) -> Result<Result<String>>

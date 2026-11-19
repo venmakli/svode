@@ -51,6 +51,8 @@ def git(repo, *args, **kwargs):
 class S3(http.server.BaseHTTPRequestHandler):
     objects = {KEY: BLOB}
     reads = []
+    # Object paths of every PUT, of whole objects and of parts.
+    writes = []
     # upload id -> {part number: bytes}; completed uploads keep their part sizes.
     uploads = {}
     completed = {}
@@ -102,9 +104,17 @@ class S3(http.server.BaseHTTPRequestHandler):
             self.wfile.write(data[start:start + 64 * 1024])
             self.pause(64 * 1024)
 
+    def do_HEAD(self):
+        path, _ = self.target()
+        data = self.objects.get(path)
+        self.send_response(404 if data is None else 200)
+        self.send_header("Content-Length", str(0 if data is None else len(data)))
+        self.end_headers()
+
     def do_PUT(self):
         path, query = self.target()
         data = self.body()
+        self.writes.append(path)
         if "uploadId" in query:
             self.uploads[query["uploadId"]][int(query["partNumber"])] = data
             self.reply(200, headers=[("ETag", f'"part-{query["partNumber"]}"')])
@@ -378,6 +388,18 @@ def exercise_large(root, binary, repo):
             parts = S3.completed[upload]
             assert len(parts) == 17 and all(size >= PART for size in parts[:-1]), parts
             print(f"PASS upload in {len(parts)} parts: {slow_progress(session.progress, len(LARGE))}")
+            # An object already stored is confirmed without being written again (DF-369 R2).
+            writes = len(S3.writes)
+            result = session.upload(oid, len(LARGE), staged)
+            assert result == {"event": "complete", "oid": oid}, result
+            assert len(S3.writes) == writes and set(S3.completed) - before == {upload}
+            check_progress(session.progress, len(LARGE))
+            # A stored object of another size is written again.
+            S3.objects[key] = LARGE[:PART]
+            result = session.upload(oid, len(LARGE), staged)
+            assert result == {"event": "complete", "oid": oid}, result
+            assert S3.objects[key] == LARGE and len(S3.writes) > writes
+            print("PASS stored object confirmed without a write, another size written again")
             response = session.download(oid, len(LARGE))
             assert "error" not in response
             assert Path(response["path"]).read_bytes() == LARGE
