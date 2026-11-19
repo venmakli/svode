@@ -4,9 +4,10 @@
 //! Readiness is the live evidence a managed import needs before it routes a
 //! file to Git LFS, and every host asks the same probe:
 //! - Local / InGit → `NotApplicable` (no LFS in play).
-//! - LfsS3 → `Ready` iff the saved agent config matches the S3 target, its
-//!   credentials resolve from the OS keychain and the managed `svode-lfs`
-//!   registration is current (repaired when needed), else `MissingCreds`.
+//! - LfsS3 → `Ready` iff Git LFS is installed, the saved agent config matches
+//!   the S3 target, its credentials resolve from the device store and the
+//!   managed `svode-lfs` registration is current (repaired when needed), else
+//!   `MissingCreds`.
 //! - LfsRemote → `git lfs fetch --dry-run origin` succeeds, else
 //!   `MissingCreds` (conservative: the repair affordance wins over pretending
 //!   everything is fine).
@@ -18,8 +19,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use super::config::{AssetsSpaceConfig, AssetsStrategy};
-use super::s3::AgentConfig;
+use super::config::AssetsSpaceConfig;
+use super::connection::{LfsNotReady, check_readiness};
 use crate::attachments::import::LfsReadiness;
 use crate::git::GitError;
 use crate::git::cli::{GitCli, hide_window};
@@ -62,65 +63,36 @@ pub enum LfsState {
     Pulling,
 }
 
-/// Current LFS readiness of the assets strategy `config` of `repo_dir`.
+/// Current LFS readiness of the assets strategy `config` of `repo_dir`,
+/// repairing a stale `svode-lfs` registration of a connected S3 scope; every
+/// reason a route is not ready is `MissingCreds` (see
+/// [`check_readiness`](super::connection::check_readiness)).
 pub async fn probe_readiness(
     git: &GitRuntime,
     repo_dir: &Path,
     config: &AssetsSpaceConfig,
 ) -> LfsState {
-    match config.strategy {
-        // An unknown strategy gets no LFS readiness check or repair.
-        AssetsStrategy::Local | AssetsStrategy::InGit | AssetsStrategy::Unknown(_) => {
-            LfsState::NotApplicable
-        }
-        AssetsStrategy::LfsS3 => {
-            let Some(target) = config.s3.clone() else {
-                return LfsState::MissingCreds;
-            };
-            let repo = repo_dir.to_path_buf();
-            let present = tokio::task::spawn_blocking(move || {
-                AgentConfig::read_for_target(&repo, &target)
-                    .and_then(|config| config.resolve())
-                    .is_ok()
-            })
-            .await
-            .unwrap_or(false);
-            if !present {
-                return LfsState::MissingCreds;
-            }
-            // Managed readiness before transfer: ensure Git spawns the current
-            // svode-lfs sidecar, migrating a previous install's lfs-dal
-            // registration. A repair failure must not be reported as a ready
-            // S3 strategy, so surface the repair affordance instead.
-            match repair_managed_registration(git, repo_dir).await {
-                Ok(_) => LfsState::Ready,
-                Err(error) => {
-                    tracing::warn!("svode-lfs registration repair failed: {error}");
-                    LfsState::MissingCreds
-                }
-            }
-        }
-        AssetsStrategy::LfsRemote => {
-            let Some(cli) = git.detected() else {
-                return LfsState::MissingCreds;
-            };
-            match cli.exec(repo_dir, REMOTE_PROBE_ARGS).await {
-                Ok(out) if out.exit_code == 0 => LfsState::Ready,
-                _ => LfsState::MissingCreds,
-            }
-        }
-    }
+    check_readiness(git, repo_dir, config, true)
+        .await
+        .unwrap_or(LfsState::MissingCreds)
 }
 
 /// A managed import of every host answers its Git LFS route with the live
-/// readiness probe.
+/// readiness check, and refuses with its reason.
 impl LfsReadiness for GitRuntime {
     fn lfs_ready<'a>(
         &'a self,
         repo_dir: &'a Path,
         config: &'a AssetsSpaceConfig,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move { probe_readiness(self, repo_dir, config).await == LfsState::Ready })
+    ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>> {
+        Box::pin(async move {
+            match check_readiness(self, repo_dir, config, true).await? {
+                LfsState::Ready => Ok(()),
+                _ => Err(LfsNotReady::StrategyMismatch {
+                    strategy: config.strategy.as_str().to_string(),
+                }),
+            }
+        })
     }
 }
 
@@ -136,7 +108,7 @@ pub enum RegistrationOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RepairAction {
+pub(super) enum RepairAction {
     None,
     Foreign,
     Migrate,
@@ -349,7 +321,10 @@ async fn repair_managed_registration_with(
     }
 }
 
-async fn inspect_registration(cli: &GitCli, repo_dir: &Path) -> Result<RepairAction, LfsError> {
+pub(super) async fn inspect_registration(
+    cli: &GitCli,
+    repo_dir: &Path,
+) -> Result<RepairAction, LfsError> {
     let agent = read_local_config(cli, repo_dir, "lfs.standalonetransferagent").await?;
     let current_path = read_local_config(
         cli,
@@ -524,7 +499,8 @@ fn rustc_host_triple() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::config::AssetsS3Config;
+    use crate::storage::config::{AssetsS3Config, AssetsStrategy};
+    use crate::storage::s3::AgentConfig;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -933,7 +909,7 @@ mod tests {
             probe_readiness(&git, repo, &config).await,
             LfsState::NotApplicable
         );
-        assert!(!git.lfs_ready(repo, &config).await);
+        assert!(git.lfs_ready(repo, &config).await.is_err());
         assert_eq!(std::fs::read(repo.join(".git/config")).ok(), git_config);
         Ok(())
     }
@@ -952,7 +928,7 @@ mod tests {
                 probe_readiness(&git, repo, &config).await,
                 LfsState::NotApplicable
             );
-            assert!(!git.lfs_ready(repo, &config).await);
+            assert!(git.lfs_ready(repo, &config).await.is_err());
         }
 
         // S3 without a saved agent config for this target is not ready and

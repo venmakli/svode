@@ -33,6 +33,7 @@ tempfile = "3"
 url = "2.5.8"
 jsonc-parser = { version = "0.34", features = ["serde"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+opendal = { version = "0.58.1", features = ["services-s3"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

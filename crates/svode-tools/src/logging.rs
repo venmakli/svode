@@ -25,9 +25,9 @@ const WORKSPACE_TARGETS: [&str; 6] = [
 
 /// The log filter of a standalone process. A valid `RUST_LOG` replaces it
 /// entirely; an unset or invalid one gives the workspace crates `level` and
-/// no third-party targets.
+/// no third-party targets. The targets that log S3 credentials stay off.
 fn env_filter(rust_log: Option<&str>, level: Level) -> EnvFilter {
-    rust_log
+    let filter = rust_log
         .and_then(|directives| EnvFilter::try_new(directives).ok())
         .unwrap_or_else(|| {
             let directives = WORKSPACE_TARGETS
@@ -35,6 +35,11 @@ fn env_filter(rust_log: Option<&str>, level: Level) -> EnvFilter {
                 .map(|target| format!("{target}={level}"))
                 .collect::<Vec<_>>();
             EnvFilter::new(directives.join(","))
+        });
+    svode_core::storage::s3::CREDENTIAL_LOG_TARGETS
+        .iter()
+        .fold(filter, |filter, target| {
+            filter.add_directive(format!("{target}=off").parse().expect("valid directive"))
         })
 }
 
@@ -212,5 +217,24 @@ mod tests {
             assert!(!enabled(&subscriber, "svode_tools", Level::ERROR));
             assert!(!enabled(&subscriber, "svode_cli", Level::ERROR));
         }
+    }
+
+    #[test]
+    fn the_s3_signer_never_logs_whatever_rust_log_asks() {
+        for rust_log in [
+            None,
+            Some("trace"),
+            Some("reqsign_core=trace,reqsign_aws_v4=debug"),
+        ] {
+            let subscriber = subscriber(rust_log, Level::INFO);
+            for target in svode_core::storage::s3::CREDENTIAL_LOG_TARGETS {
+                assert!(!enabled(&subscriber, target, Level::ERROR), "{rust_log:?}");
+            }
+        }
+        assert!(enabled(
+            &subscriber(Some("trace"), Level::INFO),
+            "opendal",
+            Level::TRACE
+        ));
     }
 }

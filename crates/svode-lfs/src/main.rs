@@ -12,8 +12,10 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use opendal::{Operator, services::S3};
+use opendal::Operator;
 use serde::{Deserialize, Serialize};
+use svode_core::storage::connection::LfsNotReady;
+use svode_core::storage::s3::{AgentConfig, Credentials};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 mod download;
@@ -112,13 +114,13 @@ async fn run() -> Result<()> {
                     state = Some(s);
                     write_line(&mut stdout, &InitResponse::default()).await?;
                 }
-                Err(e) => {
+                Err(reason) => {
                     write_line(
                         &mut stdout,
                         &InitResponse {
                             error: Some(LfsError {
                                 code: 2,
-                                message: format!("init failed: {e:#}"),
+                                message: init_failure(&reason),
                             }),
                         },
                     )
@@ -194,6 +196,19 @@ fn complete_for(oid: &str, path: Option<String>, result: Result<()>) -> Complete
     }
 }
 
+/// `init` answer of a repository this device cannot transfer for: the stable
+/// code, the reason and the next step, as `svode storage status` shows them.
+fn init_failure(reason: &LfsNotReady) -> String {
+    let mut message = format!("init failed: {reason}");
+    if let Some(code) = reason.code() {
+        message = format!("{message} [{code}]");
+    }
+    if let Some(hint) = reason.hint() {
+        message.push_str(&format!("; next step: {hint}"));
+    }
+    message
+}
+
 async fn write_line<W, T>(out: &mut W, value: &T) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,
@@ -212,35 +227,35 @@ struct AgentState {
 }
 
 impl AgentState {
-    async fn load() -> Result<Self> {
-        Self::load_with(PathBuf::from("."), |cfg| cfg.resolve()).await
+    async fn load() -> std::result::Result<Self, LfsNotReady> {
+        Self::load_with(PathBuf::from("."), |cfg| {
+            cfg.resolve_or_refuse().map_err(LfsNotReady::Secret)
+        })
+        .await
     }
 
     async fn load_with(
         repo: PathBuf,
-        resolve: impl FnOnce(
-            &svode_core::storage::s3::AgentConfig,
-        )
-            -> std::result::Result<svode_core::storage::s3::Credentials, String>
+        resolve: impl FnOnce(&AgentConfig) -> std::result::Result<Credentials, LfsNotReady>
         + Send
         + 'static,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, LfsNotReady> {
         let (cfg, secrets) = tokio::task::spawn_blocking(move || {
-            let cfg =
-                svode_core::storage::s3::AgentConfig::read(&repo).map_err(anyhow::Error::msg)?;
-            let secrets = resolve(&cfg).map_err(anyhow::Error::msg)?;
-            Ok::<_, anyhow::Error>((cfg, secrets))
+            // Without the agent config of this device the repository is not
+            // connected to its S3 storage.
+            let cfg = AgentConfig::read(&repo)
+                .map_err(|_| LfsNotReady::S3NotConnected { detail: None })?;
+            let secrets = resolve(&cfg)?;
+            Ok::<_, LfsNotReady>((cfg, secrets))
         })
-        .await??;
+        .await
+        .map_err(|error| LfsNotReady::S3NotConnected {
+            detail: Some(format!("the agent config was not read: {error}")),
+        })??;
 
-        let builder = S3::default()
-            .bucket(&cfg.bucket)
-            .region(&cfg.region)
-            .endpoint(&cfg.endpoint)
-            .access_key_id(&secrets.access_key)
-            .secret_access_key(&secrets.secret_key);
-
-        let op = Operator::new(builder)?;
+        let op =
+            svode_core::storage::s3::operator(&cfg.endpoint, &cfg.bucket, &cfg.region, &secrets)
+                .map_err(|detail| LfsNotReady::S3CheckFailed { detail })?;
 
         let prefix = cfg
             .prefix
@@ -307,6 +322,11 @@ mod tests {
             unreachable!()
         }
     }
+    fn detail(detail: String) -> LfsNotReady {
+        LfsNotReady::S3NotConnected {
+            detail: Some(detail),
+        }
+    }
     #[tokio::test]
     async fn standalone_session_resolves_shared_secrets_and_preserves_object_keys() {
         let repo = tempfile::tempdir().unwrap();
@@ -344,6 +364,7 @@ mod tests {
                 assert!(name.starts_with("secret:"));
                 Ok(Some("fixture-value".into()))
             }))
+            .map_err(detail)
         })
         .await
         .unwrap();
@@ -356,21 +377,21 @@ mod tests {
                     Ok(Some("access".into()))
                 }
             }))
+            .map_err(detail)
         })
         .await;
         assert!(result.err().unwrap().to_string().contains("Secret Key"));
         std::fs::write(repo.path().join(svode_core::storage::s3::CONFIG_REL), r#"{"endpoint":"https://s3.example.test","bucket":"assets","region":"us-east-1","keychainAccount":"old"}"#).unwrap();
         let result = AgentState::load_with(repo.path().into(), |cfg| {
             cfg.resolve_with_store(&Store(|_| panic!("must not read old credentials")))
+                .map_err(detail)
         })
         .await;
-        assert!(
-            result
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("Configure S3 again")
-        );
+        let reason = result.err().unwrap();
+        assert_eq!(reason, LfsNotReady::S3NotConnected { detail: None });
+        let message = init_failure(&reason);
+        assert!(message.contains("[S3_NOT_CONNECTED]"), "{message}");
+        assert!(message.contains("svode storage s3 connect"), "{message}");
     }
     /// The agent Git starts reads the device store of the config directory
     /// the bindings were made in: with its secrets file active, the values
@@ -411,23 +432,25 @@ mod tests {
             },
         };
         config.write(repo.path()).unwrap();
-        let missing = AgentState::load_with(repo.path().into(), |cfg| cfg.resolve()).await;
-        assert!(
-            missing
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("Variable value is missing")
-        );
+        let missing = AgentState::load_with(repo.path().into(), |cfg| {
+            cfg.resolve_or_refuse().map_err(LfsNotReady::Secret)
+        })
+        .await;
+        let message = init_failure(&missing.err().unwrap());
+        assert!(message.contains("Variable value is missing"), "{message}");
+        assert!(message.contains("[SECRET_NOT_FOUND]"), "{message}");
+        assert!(message.contains("svode secret set ACCESS"), "{message}");
         store
             .set("secret:01ARZ3NDEKTSV4RRFFQ69G5FAV", "access")
             .unwrap();
         store
             .set("secret:01ARZ3NDEKTSV4RRFFQ69G5FAW", "secret")
             .unwrap();
-        let state = AgentState::load_with(repo.path().into(), |cfg| cfg.resolve())
-            .await
-            .unwrap();
+        let state = AgentState::load_with(repo.path().into(), |cfg| {
+            cfg.resolve_or_refuse().map_err(LfsNotReady::Secret)
+        })
+        .await
+        .unwrap();
         assert_eq!(state.object_key("abcdef"), "lfs/ab/cd/abcdef");
     }
 }

@@ -5,3 +5,4 @@
 pub mod commands;
 pub mod harness;
 pub mod process;
+pub mod s3;

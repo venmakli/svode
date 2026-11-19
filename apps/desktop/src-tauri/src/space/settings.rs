@@ -927,8 +927,7 @@ mod tests {
             move || {
                 start.wait();
                 for owner in owners {
-                    crate::space::app_variables::register_s3_owner(&path, &owner)
-                        .expect("register owner");
+                    svode_core::storage::s3::register_owner(&path, &owner).expect("register owner");
                 }
             }
         });

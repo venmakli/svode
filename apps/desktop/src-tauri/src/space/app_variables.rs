@@ -1,6 +1,6 @@
 use crate::AppError;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use svode_core::apps::environment;
 use svode_core::variables::{
@@ -582,35 +582,12 @@ fn resolve_references(
     })
 }
 
-pub(crate) fn register_s3_owner(config: &Path, owner: &Path) -> Result<(), AppError> {
-    let _guard = core::files::lock(config).map_err(storage_error)?;
-    core::files::check_pending(config).map_err(storage_error)?;
-    let path = config.join("settings.json");
-    let mut root = core::files::read(&path, false).map_err(storage_error)?;
-    let mut owners: BTreeSet<PathBuf> = root
-        .get("s3VariableOwners")
-        .cloned()
-        .map(serde_json::from_value)
-        .transpose()?
-        .unwrap_or_default();
-    if owners.insert(owner.to_path_buf()) {
-        root["s3VariableOwners"] = serde_json::to_value(owners)?;
-        core::files::atomic_write(&path, &root).map_err(storage_error)?;
-    }
-    Ok(())
-}
 fn s3_usage(
     config: &Path,
     scope: Option<&VariableScope>,
     reference: &SourceReference,
 ) -> Result<Vec<AppVariableUsage>, AppError> {
-    let root = core::files::read(&config.join("settings.json"), false).map_err(storage_error)?;
-    let owners: BTreeSet<PathBuf> = root
-        .get("s3VariableOwners")
-        .cloned()
-        .map(serde_json::from_value)
-        .transpose()?
-        .unwrap_or_default();
+    let owners = svode_core::storage::s3::owners(config).map_err(storage_error)?;
     let mut usage = Vec::new();
     for owner in owners {
         if let Ok(agent) = svode_core::storage::s3::AgentConfig::read(&owner) {

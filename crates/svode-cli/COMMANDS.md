@@ -133,7 +133,7 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 - `--git-type`: `inline` (default) is a folder in the Project repository, `independent` its own repository (`git init`, a line in the Project `.gitignore`, the local Git identity of the Project copied when set), `submodule` its own repository registered as a submodule of the Project. A repository Space gets its own storage block (local strategy, binary routing with no Git LFS extensions and a 10 MB threshold); an inline Space inherits the storage of the Project.
 - `<folder>` is one segment of ASCII letters, digits, `-` and `_` in the Project root and must not exist yet.
 - Every affected repository is authorized before the first write, and a failure removes everything the command created; a rollback that could not remove everything names the paths left in `remaining`.
-- The command never commits or syncs. The result names per repository who commits the creation: `commit.by` `desktop` with the `message` the desktop app commits with, when structural commits are on for the Project, or `manual` with `reason` `structural_commits_off` or `new_repository`. Remote, storage strategy, Git LFS and commit settings are changed in Svode Desktop → Settings → Git / Storage; `svode` has no command for them.
+- The command never commits or syncs. The result names per repository who commits the creation: `commit.by` `desktop` with the `message` the desktop app commits with, when structural commits are on for the Project, or `manual` with `reason` `structural_commits_off` or `new_repository`. Remote, storage strategy and commit settings are changed in Svode Desktop → Settings → Git / Storage; `svode` has no command for them. This device is connected to the S3 storage of a Project that uses `lfs-s3` with `svode storage s3 connect` (see `storage`).
 - JSON result: `space` (`id`, `name`, `folder`, `gitType`, `icon`, `description`), `repositories` (`path` relative to the Project with `.` for the Project repository, `created`, `initialBranch`, `upstream`, `commit`), `storage` (`inherited`, `strategy`, `binaryRouting`), `settings` and `changedPaths` relative to the Project.
 - Failures: `INVALID_PATH` (folder), `FILE_ALREADY_EXISTS` (folder taken or registered), `PATH_NOT_ACCESSIBLE`, `GIT_NOT_FOUND` (independent or submodule without Git), `REPOSITORY_ACCESS_DENIED`, `SOURCE_BUSY` (another writer holds the Project config), `INVALID_PROJECT_CONFIG`; a submodule in a Project without a Git repository is `SVODE_ERROR`. A refusal changes nothing.
 - Human output: the summary line, `spaceId`, one line per repository with who commits the creation, `settings`, then each changed path.
@@ -148,7 +148,7 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 - Storage: the Project owns its storage policy: local strategy, binary routing with no Git LFS extensions and a 10 MB threshold.
 - The Project is registered in the project list of this device, the one the desktop app reads (see `SVODE_PRODUCT_IDENTIFIER` above), so an open desktop app shows it on Home and in the recent projects menu without a restart. Without an OS config directory it stays unregistered with a hint to open the folder in the desktop app.
 - A failure removes everything the command created; a rollback that could not remove everything names the paths left in `remaining`.
-- The command never commits or syncs: a new Project commits manually until its commit settings change in Svode Desktop → Settings → Git / Storage, where remote and storage are set too; `svode` has no command for them.
+- The command never commits or syncs: a new Project commits manually until its commit settings change in Svode Desktop → Settings → Git / Storage, where remote and storage strategy are set too; `svode` has no command for them.
 - Later commands address the new Project from its folder or with `--project <path>`; `session` in the result says so.
 - JSON result: `project` (`id` in the device list or `null`, `name`, `path`, `icon`, `description`), `registration` (`registered`, else `reason` `no_device_directory` and `hint`), `repositories` (`path` `.`, `created`, `initialBranch`, `upstream` of an existing repository, `commit` with `by` `manual` and `reason` `new_repository` or `structural_commits_off`), `gitNotFound`, `storage` (`inherited`, `strategy`, `binaryRouting`), `session` (`addressing` `per_command`, `addressesCreatedProject`, `hint`), `settings` and `changedPaths` relative to the Project. Through MCP the same capability `create_project` takes an absolute `path` and answers the same result, with `session` saying whether the next calls of that MCP session address the new Project.
 - Failures: `PROJECT_ALREADY_EXISTS` (the folder already holds `.svode/config.json`), `PROJECT_NESTED` (the folder lies inside another Svode Project: `project` names it and `hint` says to create a Space there with `space create` instead), `PATH_NOT_ACCESSIBLE` (not a folder or not writable), `REPOSITORY_ACCESS_DENIED` (an existing repository with a remote whose write access is not verified on this device: `git access verify` needs a Project, so the `hint` says to create the project in the desktop app with Open folder, which creates and registers it, or to ask the user), `GIT_NOT_FOUND` (an existing repository cannot be prepared without Git), `SOURCE_BUSY` (another Svode process holds the project list past the bounded wait). A refusal changes nothing.
@@ -156,11 +156,11 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 
 ## Assets and Apps
 
-`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. Readiness is the same live check the desktop app runs: an S3-backed route needs the S3 setup saved for this device with its credentials in the Secret store of this device (see `secret`), a remote route needs Git LFS to reach `origin`. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
+`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. Readiness is the same live check the desktop app and `svode storage status` run: an S3-backed route needs Git LFS, this device connected to the S3 storage of the Project (`svode storage s3 connect`) and both bound Secrets readable from the Secret store of this device (see `secret`); a remote route needs Git LFS to reach `origin`. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
 
 - JSON result: `spaceId`, canonical `contentPath` (use it for the next command), `attachmentPath` and `coverPath` relative to the Space, `markdownUrl` relative to the content, `fileName`, `mime`, `sizeBytes`, `changedPaths`.
 - Human output: the summary line, `contentPath`, `attachmentPath`, `markdownUrl`, `coverPath`, then each changed path.
-- Failures keep the codes of the shared operation: `INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE` (missing content, missing or non-regular source), `REPOSITORY_ACCESS_DENIED`, `SVODE_ERROR` with a `Storage:` message for an unsupported format or a Git LFS route that is not ready.
+- Failures keep the codes of the shared operation: `INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE` (missing content, missing or non-regular source), `REPOSITORY_ACCESS_DENIED`, `SVODE_ERROR` with a `Storage:` message for an unsupported format or a remote Git LFS route that is not ready. An S3-backed route that is not ready fails with the message `Storage: Git LFS route is not ready: <reason>` and the code and `hint` of its reason from the table of `storage`.
 
 `app list` lists the Apps of the selected Space: every directory owner with a direct `app.yaml` that the Space tree shows — the Space root as `.`, Pages, Collections and App-only directories — with the visibility and traversal of the tree: a marker hidden by Git ignore or Space settings gives no App, ordinary source directories inside an App are not walked, child Spaces are listed with their own `--space`. JSON result: `apps` in owner path order, each with `ownerPath`, `runtimeType` (`null` for an invalid manifest), `valid`, `diagnosticCount`, `hasReadme`. Human output: one line per App with the owner path, the runtime type or `invalid`, and `readme` or `no readme`.
 
@@ -251,6 +251,37 @@ A refusal exits 1 with a stable `code` and a `hint` with the next step, and neve
 | `SECRET_VALUES_PRESENT` | `svode secret store use system --delete-values` |
 
 Security: any process running under the same OS account can read the secrets file, and the file goes into backups of the home directory. Give an S3 key access to one bucket only, and run agents under a separate OS account when that matters. Updating and removing Svode keep the file; removal names it so you can delete it yourself.
+
+## storage
+
+`svode [--project <path>] [--space <root|space-id>] storage <status|s3 connect> [--json]` shows and sets up the file storage of the selected Space on this device without the desktop app. Storage applies by the rules of the desktop app: an inline Space uses the storage of the Project, a repository Space its own (`repository` and `inheritedFromProject` in the result). These commands exist only in the CLI: `svode-mcp` has no tool for them. Secrets are named; values never appear in arguments, output, `--json` or logs.
+
+- `storage status` reports the `strategy`, the S3 address of the Project (`s3`: `endpoint`, `bucket`, `region`, `prefix`, from `.svode/config.json`), the Secrets this device binds for it (`bindings`: `accessKey` and `secretKey` with `name` and `owner`, without values), the Git LFS state (`lfs`: `ready`, `n/a` or `missing-creds`), `ready`, and for a storage that is not ready the `problem` (`code`, `message`, `hint`) and `nextStep`. It only reads: the bound Secrets and the `svode-lfs` registration are checked, S3 is not contacted, and a problem is part of the result (exit 0).
+- `storage s3 connect --access-key <NAME> --secret-key <NAME> [--owner device|project|space]` connects this device to the S3 storage of a Project that already uses `lfs-s3`. `--owner` names the owner of both Secrets as in `secret` (`device` by default; in an inline Space `space` is the Project). It authorizes the repository first, then checks Git LFS and `svode-lfs`, reads both Secrets and writes, reads and deletes a probe object under `.svode-probe/` with them. Only then it runs `git lfs install --local`, registers `svode-lfs` as the Git LFS transfer agent of the repository, records the repository in the device settings and writes `.svode/lfs-s3-agent.json`, which Git ignores and which names the device config directory, so `svode-lfs` reads the same Secret store. A failed check leaves the previous setup unchanged; a repeat with the same Secrets changes no file. Nothing is committed. JSON result: `storage` (as in `status`), `changedPaths` (relative to the Project, absolute outside it) and `committed` `false`.
+- A clone with an `origin` needs verified repository access before `connect`: run `svode git access verify` once (see `git access verify`).
+
+Preparing a server for an existing Project:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone <repository> project && cd project
+svode git access verify
+svode secret store use file
+svode secret set S3_ACCESS_KEY
+svode secret set S3_SECRET_KEY
+svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY
+git lfs pull
+```
+
+A refusal of `storage s3 connect`, of `asset import` on an S3-backed route and the `init` answer of `svode-lfs` name the same reason. `connect` exits 1 with the stable `code` and a `hint`; the Secret codes of `secret` apply as well:
+
+| Code | Next step in `hint` |
+|---|---|
+| `S3_NOT_CONNECTED` | `svode storage s3 connect --access-key <NAME> --secret-key <NAME>` |
+| `STORAGE_STRATEGY_MISMATCH` | `svode storage s3 enable …`, or keep the strategy the Project chose |
+| `S3_CHECK_FAILED` | check the endpoint, bucket and region and that the key may write, read and delete objects in the bucket |
+| `LFS_TOOLING_UNAVAILABLE` | install `git-lfs`, or reinstall Svode to restore `svode-lfs` |
+
+Enabling `lfs-s3` in a Project is done in Svode Desktop → Settings → Storage.
 
 ## Codes
 

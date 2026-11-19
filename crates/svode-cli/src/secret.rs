@@ -77,7 +77,7 @@ pub fn diagnostics() -> Value {
     })
 }
 
-fn config_dir() -> Result<PathBuf, CliError> {
+pub(crate) fn config_dir() -> Result<PathBuf, CliError> {
     svode_core::runtime::device::config_dir().ok_or_else(|| {
         let mut failure = CliError::operation(
             SECRET_STORE_UNAVAILABLE,

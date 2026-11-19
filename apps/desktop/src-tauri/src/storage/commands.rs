@@ -332,21 +332,21 @@ pub async fn set_assets_strategy(
                 }
             },
         };
-        let variable_scope = crate::space::app_variables::VariableScope {
-            project_path: project_path.clone(),
-            space_id: space_id.clone(),
-        };
         let directory = catalog_dir.clone();
         let target = cfg.clone();
+        let variables_project = project.clone();
+        let variables_space = space_id.clone();
         next_agent_config = Some(
             run_locked(&settings_state, move || {
-                super::bindings::prepare(
+                svode_core::storage::s3::AgentConfig::prepare(
                     &directory,
-                    &variable_scope,
+                    &variables_project,
+                    variables_space.as_deref(),
                     &target,
                     bindings,
                     &svode_core::variables::DeviceSecretStore::new(&directory),
                 )
+                .map_err(AppError::Storage)
             })
             .await?,
         );
@@ -378,12 +378,13 @@ pub async fn set_assets_strategy(
     if let Some(agent_config) = next_agent_config {
         let repo = scope.repo_dir.clone();
         run_locked(&settings_state, move || {
-            super::bindings::publish(
-                &catalog_dir,
-                &repo,
-                &agent_config,
-                &svode_core::variables::DeviceSecretStore::new(&catalog_dir),
-            )
+            agent_config
+                .publish(
+                    &catalog_dir,
+                    &repo,
+                    &svode_core::variables::DeviceSecretStore::new(&catalog_dir),
+                )
+                .map_err(AppError::Storage)
         })
         .await?;
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());

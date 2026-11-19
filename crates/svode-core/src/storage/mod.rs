@@ -1,4 +1,5 @@
 pub mod config;
+pub mod connection;
 pub mod lfs;
 pub mod lfs_declaration;
 pub mod local_release;
@@ -9,6 +10,8 @@ pub mod routes;
 pub mod s3;
 pub mod scope;
 
+#[cfg(test)]
+mod connection_tests;
 #[cfg(test)]
 mod lfs_declaration_tests;
 #[cfg(test)]

@@ -403,6 +403,11 @@ impl From<svode_core::page::PageError> for AppError {
             PageError::Index(message) => Self::Index(message),
             PageError::Db(error) => Self::Db(error),
             PageError::Storage(message) => Self::Storage(message),
+            // Desktop keeps its refusal text; it shows the reason through the
+            // LFS state of the Space and its repair affordance.
+            PageError::LfsNotReady(_) => Self::Storage(
+                svode_core::storage::connection::LfsNotReady::RemoteUnreachable.import_message(),
+            ),
             PageError::DocumentNameConflict(conflict) => Self::DocumentNameConflict(conflict),
             PageError::Recovery { cause, paths } => Self::PageWriteRecovery { cause, paths },
             PageError::InvalidEncoding(path) => Self::Io(std::io::Error::new(

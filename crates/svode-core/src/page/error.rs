@@ -32,6 +32,9 @@ pub enum PageError {
     Db(#[from] sqlx::Error),
     #[error("Storage: {0}")]
     Storage(String),
+    /// A Git LFS route of a managed import is not ready on this device.
+    #[error("Storage: {}", .0.import_message())]
+    LfsNotReady(crate::storage::connection::LfsNotReady),
     #[error("Page name is already used in this container")]
     DocumentNameConflict(DocumentNameConflict),
     #[error("Page write recovery failed after {cause}; unrestored paths: {paths:?}")]

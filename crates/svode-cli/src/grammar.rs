@@ -199,6 +199,54 @@ pub enum Noun {
         #[command(subcommand)]
         verb: SecretVerb,
     },
+    /// File storage of the selected Space on this device: strategy, S3
+    /// connection and Git LFS readiness.
+    #[command(after_help = STORAGE)]
+    Storage {
+        #[command(subcommand)]
+        verb: StorageVerb,
+    },
+}
+
+const STORAGE: &str = "Storage applies to the selected Space by the rules of the desktop app: an inline Space uses the storage of the Project, a repository Space its own. Secret values never appear in arguments, output, --json or logs; Secrets are named, their values come from the device store (see `svode secret`). These commands exist only in the CLI, not in svode-mcp.\n\nExamples:\n  svode storage status\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY";
+
+#[derive(Debug, Subcommand)]
+pub enum StorageVerb {
+    /// Strategy, S3 address, Secret bindings of this device, Git LFS
+    /// readiness and the next step.
+    #[command(
+        after_help = "Read-only: checks the bound Secrets and the svode-lfs registration without changing them and without contacting S3. A storage that is not ready is a result with its `problem` (code, message, hint), exit 0.\n\nExample:\n  svode storage status --json"
+    )]
+    Status,
+    /// S3 storage of a Project with the `lfs-s3` strategy.
+    #[command(
+        name = "s3",
+        after_help = "Example:\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY"
+    )]
+    S3 {
+        #[command(subcommand)]
+        verb: StorageS3Verb,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StorageS3Verb {
+    /// Connect this device to the S3 storage of a Project that already uses
+    /// `lfs-s3`.
+    #[command(after_help = format!("Both Secrets must have a value on this device. The command writes, reads and deletes a probe object with them, then registers svode-lfs in Git and writes .svode/lfs-s3-agent.json, which Git ignores. Any failed check leaves the previous setup unchanged; a repeat with the same Secrets changes no file. Nothing is committed; changed files are listed. {SECRET_OWNER}\n\nExample:\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY --owner project"))]
+    Connect(S3ConnectArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct S3ConnectArgs {
+    /// Secret that holds the access key id.
+    #[arg(long, value_name = "NAME")]
+    pub access_key: String,
+    /// Secret that holds the secret access key.
+    #[arg(long, value_name = "NAME")]
+    pub secret_key: String,
+    #[command(flatten)]
+    pub owner: SecretOwnerArgs,
 }
 
 const SECRET: &str = "A value comes only from stdin: typing in a terminal is hidden, piped input is read to its end, one trailing line break is dropped and an empty value is refused. Values never appear in arguments, output, --json or logs. SVODE_SECRET_<NAME> in the environment overrides the value of a declared Secret and is never stored. These commands exist only in the CLI, not in svode-mcp.\n\nExamples:\n  svode secret store use file\n  svode secret set S3_ACCESS_KEY < access-key.txt\n  svode secret list --owner project --json";

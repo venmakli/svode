@@ -415,7 +415,21 @@ fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
     let photo = elsewhere.join("photo.png");
     let photo = photo.to_str().unwrap();
 
-    for root in [&remote, &unset, &unresolved] {
+    let lfs = Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    // The reason, its code and next step of each route that is not ready.
+    let reasons = [
+        (&remote, "SVODE_ERROR", None),
+        (&unset, "S3_NOT_CONNECTED", Some("svode storage s3 connect")),
+        (
+            &unresolved,
+            "SECRET_NOT_FOUND",
+            Some("svode secret set S3_KEY"),
+        ),
+    ];
+    for (root, expected, step) in reasons {
         let before = sources(root);
         let head = git(root, &["rev-parse", "HEAD"]);
         let (exit, refused) = json(
@@ -433,6 +447,18 @@ fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
             "{refused}"
         );
         assert_eq!(refused["error"]["target"]["path"], "notes.md");
+        if lfs {
+            assert_eq!(refused["error"]["code"], expected, "{refused}");
+            if let Some(step) = step {
+                let hint = refused["error"]["hint"].as_str().unwrap_or_default();
+                assert!(hint.contains(step), "{refused}");
+            }
+        } else {
+            assert_eq!(
+                refused["error"]["code"], "LFS_TOOLING_UNAVAILABLE",
+                "{refused}"
+            );
+        }
         assert_eq!(sources(root), before, "{}", root.display());
         assert_eq!(git(root, &["rev-parse", "HEAD"]), head);
         // The probe never registers a transfer agent for an unready route.

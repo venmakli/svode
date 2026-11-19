@@ -42,11 +42,16 @@ fn default_directives() -> String {
 
 /// The Desktop log filter. A valid `RUST_LOG` replaces it entirely; an unset
 /// or invalid one gives Desktop `debug`, workspace crates `info` and no
-/// third-party targets.
+/// third-party targets. The targets that log S3 credentials stay off.
 fn env_filter(rust_log: Option<&str>) -> EnvFilter {
-    rust_log
+    let filter = rust_log
         .and_then(|directives| EnvFilter::try_new(directives).ok())
-        .unwrap_or_else(|| EnvFilter::new(default_directives()))
+        .unwrap_or_else(|| EnvFilter::new(default_directives()));
+    svode_core::storage::s3::CREDENTIAL_LOG_TARGETS
+        .iter()
+        .fold(filter, |filter, target| {
+            filter.add_directive(format!("{target}=off").parse().expect("valid directive"))
+        })
 }
 
 /// Desktop events go to stdout and, once [`open_log_files`] succeeds, to the
@@ -246,6 +251,16 @@ mod tests {
             assert!(!enabled(&subscriber, "svode_lib", Level::TRACE));
             for third_party in ["tao", "sqlx"] {
                 assert!(!enabled(&subscriber, third_party, Level::ERROR));
+            }
+        }
+    }
+
+    #[test]
+    fn the_s3_signer_never_logs_whatever_rust_log_asks() {
+        for rust_log in [None, Some("trace"), Some("reqsign_core=trace")] {
+            let subscriber = subscriber(rust_log);
+            for target in svode_core::storage::s3::CREDENTIAL_LOG_TARGETS {
+                assert!(!enabled(&subscriber, target, Level::ERROR), "{rust_log:?}");
             }
         }
     }

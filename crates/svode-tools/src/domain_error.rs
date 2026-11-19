@@ -73,6 +73,19 @@ fn general(message: impl Into<String>) -> ToolError {
     ToolError::new(SVODE_ERROR, message)
 }
 
+/// A Git LFS route that is not ready: the stable code of its reason with the
+/// next step, or the general code for a reason without one.
+fn lfs_not_ready(
+    message: String,
+    reason: &svode_core::storage::connection::LfsNotReady,
+) -> ToolError {
+    let error = ToolError::new(reason.code().unwrap_or(SVODE_ERROR), message);
+    match reason.hint() {
+        Some(hint) => error.with_evidence("hint", serde_json::Value::String(hint)),
+        None => error,
+    }
+}
+
 fn recovery(cause: String, paths: Vec<String>) -> ToolError {
     ToolError::new(
         "PAGE_WRITE_RECOVERY_FAILED",
@@ -365,6 +378,7 @@ impl From<PageError> for ToolError {
             PageError::Index(message) => index(message),
             PageError::Db(error) => database(error),
             PageError::Storage(message) => general(format!("Storage: {message}")),
+            PageError::LfsNotReady(reason) => lfs_not_ready(message, &reason),
             PageError::DocumentNameConflict(_) => name_conflict(),
             PageError::Recovery { cause, paths } => recovery(cause, paths),
             PageError::InvalidEncoding(path) => invalid_encoding(path),

@@ -562,7 +562,8 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         | Noun::Guide
         | Noun::Doctor
         | Noun::Integration { .. }
-        | Noun::Secret { .. } => return Ok(None),
+        | Noun::Secret { .. }
+        | Noun::Storage { .. } => return Ok(None),
     }))
 }
 

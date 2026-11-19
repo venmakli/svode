@@ -27,6 +27,7 @@ use svode_core::routines::model::{
 };
 use svode_core::routines::store_state::RoutineStoreState;
 use svode_core::storage::config::AssetsSpaceConfig;
+use svode_core::storage::connection::LfsNotReady;
 use svode_tools::catalog;
 use svode_tools::dispatch::{call_tool, check_tool, served_definitions};
 use svode_tools::error::ToolError;
@@ -289,10 +290,10 @@ impl LfsReadiness for FixtureHost {
         &'a self,
         repo_dir: &'a Path,
         _config: &'a AssetsSpaceConfig,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>> {
         self.lfs_probes.lock().unwrap().push(repo_dir.to_path_buf());
         let ready = self.lfs_ready.unwrap_or(false);
-        Box::pin(async move { ready })
+        Box::pin(async move { ready.then_some(()).ok_or(LfsNotReady::RemoteUnreachable) })
     }
 }
 

@@ -7,49 +7,9 @@ use tauri::{AppHandle, Manager, State};
 use crate::AppError;
 use crate::commands::app_variables::run_locked;
 use crate::index::IndexState;
-use crate::space::app_variables::{self, SecretStore};
 use crate::space::settings::AppSettingsState;
 use crate::space::types::AssetsS3Config;
 use svode_core::variables::DeviceSecretStore;
-
-pub(crate) fn prepare(
-    catalog_dir: &Path,
-    scope: &crate::space::app_variables::VariableScope,
-    target: &AssetsS3Config,
-    bindings: SecretBindings,
-    secrets: &dyn SecretStore,
-) -> Result<AgentConfig, AppError> {
-    let config = AgentConfig {
-        version: 2,
-        endpoint: target.endpoint.clone(),
-        bucket: target.bucket.clone(),
-        region: target.region.clone(),
-        prefix: Some(target.prefix.clone()),
-        bindings,
-        global_directory: catalog_dir.to_path_buf(),
-        project_path: PathBuf::from(&scope.project_path),
-        space_id: scope.space_id.clone(),
-    };
-    config
-        .resolve_with_store(secrets)
-        .map_err(AppError::Storage)?;
-    Ok(config)
-}
-
-pub(crate) fn publish(
-    catalog_dir: &Path,
-    repo: &Path,
-    config: &AgentConfig,
-    secrets: &dyn SecretStore,
-) -> Result<(), AppError> {
-    config
-        .resolve_with_store(secrets)
-        .map_err(AppError::Storage)?;
-    // Usage stores only the owner location. Both roles are always read from
-    // the single atomically published agent config, including after a failure.
-    app_variables::register_s3_owner(catalog_dir, repo)?;
-    config.write(repo).map_err(AppError::Storage)
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,32 +77,30 @@ pub(crate) async fn check_s3_bindings(
         return Err(AppError::StrategyInherited);
     }
     let catalog_dir = catalog_dir(&app)?;
-    let variable_scope = crate::space::app_variables::VariableScope {
-        project_path,
-        space_id,
-    };
     let draft_target = target.clone();
     let credentials = run_locked(&state, move || {
         let secrets = DeviceSecretStore::new(&catalog_dir);
-        prepare(
+        AgentConfig::prepare(
             &catalog_dir,
-            &variable_scope,
+            Path::new(&project_path),
+            space_id.as_deref(),
             &draft_target,
             bindings,
             &secrets,
-        )?
-        .resolve_with_store(&secrets)
+        )
+        .and_then(|config| config.resolve_with_store(&secrets))
         .map_err(AppError::Storage)
     })
     .await?;
-    super::s3::check_connection(
-        target.endpoint,
-        target.bucket,
-        target.region,
-        credentials.access_key,
-        credentials.secret_key,
+    svode_core::storage::s3::check_connection(
+        &target.endpoint,
+        &target.bucket,
+        &target.region,
+        &credentials,
     )
     .await
+    .map_err(AppError::Storage)?;
+    Ok(true)
 }
 
 pub(crate) fn catalog_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -154,7 +112,9 @@ pub(crate) fn catalog_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::app_variables::{AppVariableKind, AppVariableOwnerContext, VariableScope};
+    use crate::space::app_variables::{
+        self, AppVariableKind, AppVariableOwnerContext, SecretStore, VariableScope,
+    };
     use std::collections::BTreeMap;
     use std::sync::Mutex;
     use svode_core::variables::{
@@ -244,16 +204,18 @@ mod tests {
         if !path.exists() {
             std::fs::write(path, "{}").unwrap();
         }
-        super::prepare(
-            config,
-            &VariableScope {
-                project_path: project.to_str().unwrap().into(),
-                space_id: None,
-            },
-            target,
-            bindings,
-            secrets,
-        )
+        AgentConfig::prepare(config, &project, None, target, bindings, secrets)
+            .map_err(AppError::Storage)
+    }
+    fn publish(
+        catalog_dir: &Path,
+        repo: &Path,
+        config: &AgentConfig,
+        secrets: &dyn SecretStore,
+    ) -> Result<(), AppError> {
+        config
+            .publish(catalog_dir, repo, secrets)
+            .map_err(AppError::Storage)
     }
     fn pair() -> SecretBindings {
         SecretBindings {
@@ -484,9 +446,10 @@ mod tests {
                 owner: SourceOwner::Project,
                 name: "KEY".into(),
             };
-            let config = super::prepare(
+            let config = AgentConfig::prepare(
                 dir.path(),
-                &scope,
+                &project,
+                scope.space_id.as_deref(),
                 &target(),
                 SecretBindings {
                     access_key: source.clone(),

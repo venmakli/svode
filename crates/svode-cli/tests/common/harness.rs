@@ -24,6 +24,7 @@ use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineLiveEvidence};
 use svode_core::routines::store_state::RoutineStoreState;
 use svode_core::storage::config::AssetsSpaceConfig;
+use svode_core::storage::connection::LfsNotReady;
 use svode_tools::error::ToolError;
 use svode_tools::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
 
@@ -171,10 +172,10 @@ impl LfsReadiness for WriteHost {
         &'a self,
         repo_dir: &'a Path,
         _config: &'a AssetsSpaceConfig,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>> {
         self.lfs_probes.lock().unwrap().push(repo_dir.to_path_buf());
         let ready = self.lfs_ready.unwrap_or(false);
-        Box::pin(async move { ready })
+        Box::pin(async move { ready.then_some(()).ok_or(LfsNotReady::RemoteUnreachable) })
     }
 }
 

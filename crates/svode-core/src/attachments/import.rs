@@ -33,6 +33,7 @@ use crate::page::store;
 use crate::page::write::SourceSnapshot;
 use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 use crate::storage::config::AssetsSpaceConfig;
+use crate::storage::connection::LfsNotReady;
 use crate::storage::managed_route::apply_managed_import_route;
 use crate::storage::policy::{self, ManagedBinaryRoute};
 use crate::storage::scope::resolve_assets_scope_for_key;
@@ -50,15 +51,15 @@ pub enum MutationOrigin {
 }
 
 /// Live Git LFS readiness evidence of a route. Every host answers it with
-/// the core probe of its Git runtime (`storage::lfs`); the operation asks
-/// instead of probing itself, so fixtures can stand in for the keychain and
-/// the remote.
+/// the core check of its Git runtime (`storage::connection`); the operation
+/// asks instead of probing itself, so fixtures can stand in for the device
+/// store and the remote. A route that is not ready answers its reason.
 pub trait LfsReadiness: Sync {
     fn lfs_ready<'a>(
         &'a self,
         repo_dir: &'a Path,
         config: &'a AssetsSpaceConfig,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>>;
 }
 
 /// Shared runtime a managed import publishes into.
@@ -357,14 +358,9 @@ pub async fn execute_managed_import(
                     .lfs_ready(&revalidated.repository_path, &revalidated.storage_config)
                     .await
             }
-            None => false,
+            None => Err(LfsNotReady::RemoteUnreachable),
         };
-        if !ready {
-            return Err(PageError::Storage(
-                "Git LFS route is not ready; repair the configured backend before importing"
-                    .to_string(),
-            ));
-        }
+        ready.map_err(PageError::LfsNotReady)?;
     }
 
     let before = fingerprint_candidates(revalidated.affected_paths());

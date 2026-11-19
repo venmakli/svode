@@ -1,11 +1,8 @@
-//! S3 target helpers, agent binary discovery and connection checks through OpenDAL.
-//!
-//! The split between this module and `strategy.rs` keeps strategy.rs focused
-//! on git/.gitattributes wiring while all S3-specific concerns live here.
+//! S3 prefix defaults of the storage settings and removal of the local agent
+//! config; the connection check and the agent config belong to
+//! `svode_core::storage::s3`.
 
 use std::path::Path;
-
-use opendal::{Operator, services::S3};
 
 use crate::error::AppError;
 
@@ -102,60 +99,6 @@ pub fn delete_agent_config(space_dir: &Path) -> Result<(), AppError> {
         std::fs::remove_file(&path)?;
     }
     Ok(())
-}
-
-/// Build an OpenDAL operator from backend-resolved credentials, without the
-/// keychain round-trip.
-pub fn operator_for(
-    endpoint: &str,
-    bucket: &str,
-    region: &str,
-    access_key: &str,
-    secret_key: &str,
-) -> Result<Operator, AppError> {
-    let builder = S3::default()
-        .bucket(bucket)
-        .region(region)
-        .endpoint(endpoint)
-        .access_key_id(access_key)
-        .secret_access_key(secret_key);
-    Operator::new(builder).map_err(|e| AppError::Storage(format!("opendal build: {e}")))
-}
-
-/// Real S3 connection check. Round-trips a 0-byte probe object — write,
-/// stat, delete — under a `.svode-probe/` prefix. We deliberately don't
-/// rely on `op.check()` (which calls `stat ""` and trips on buckets that
-/// disallow listing).
-pub async fn check_connection(
-    endpoint: String,
-    bucket: String,
-    region: String,
-    access_key: String,
-    secret_key: String,
-) -> Result<bool, AppError> {
-    let op = operator_for(&endpoint, &bucket, &region, &access_key, &secret_key)?;
-
-    let probe_key = format!(
-        ".svode-probe/{}",
-        chrono::Utc::now().format("%Y%m%d%H%M%S%f")
-    );
-
-    op.write(&probe_key, b"svode-probe".to_vec())
-        .await
-        .map_err(|e| AppError::Storage(format!("S3 probe write failed: {e}")))?;
-
-    let stat_ok = op.stat(&probe_key).await.is_ok();
-
-    // Best-effort cleanup — if delete fails the probe object is harmless and
-    // the bucket lifecycle (if any) will eventually GC it.
-    let _ = op.delete(&probe_key).await;
-
-    if !stat_ok {
-        return Err(AppError::Storage(
-            "S3 probe object missing after write — bucket likely misconfigured".into(),
-        ));
-    }
-    Ok(true)
 }
 
 #[cfg(test)]
