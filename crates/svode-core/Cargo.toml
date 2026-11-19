@@ -25,7 +25,7 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1.12"
 which = "7"
 thiserror = "2"
-tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync"] }
+tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync", "signal"] }
 tracing = "0.1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 ulid = "1"
@@ -37,6 +37,19 @@ opendal = { version = "0.58.1", features = ["services-s3"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[features]
+# Probes of `process::probes` for the tests of other crates.
+test-support = []
 
 [dev-dependencies]
 svode-testkit = { path = "../svode-testkit" }

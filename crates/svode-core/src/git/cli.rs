@@ -5,12 +5,13 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::GitError;
 use super::version::{GitVersion, release_label};
+use crate::process::ProcessTree;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -51,6 +52,15 @@ fn hide_tokio_window(command: &mut Command) {
     command.creation_flags(CREATE_NO_WINDOW);
     #[cfg(not(windows))]
     let _ = command;
+}
+
+/// Everything a child writes to `pipe` until it closes.
+async fn read_pipe<R: AsyncRead + Unpin>(pipe: Option<&mut R>) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(pipe) = pipe {
+        pipe.read_to_end(&mut bytes).await?;
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -323,16 +333,17 @@ impl GitCli {
             .env("LC_ALL", "C.UTF-8")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .stderr(Stdio::piped());
         for (key, value) in extra_env {
             cmd.env(key, value);
         }
 
         let _slot = process_slot().await;
-        let mut child = cmd
-            .spawn()
+        // Hooks, git-lfs and SSH end with `git` when the deadline passes or
+        // the call is dropped, and none of them waits on a terminal (DF-370).
+        let mut tree = ProcessTree::spawn_without_terminal(&mut cmd)
             .map_err(|error| GitError::GitCommandFailed(format!("Failed to spawn git: {error}")))?;
+        let child = tree.child();
         if let Some(mut stdin) = child.stdin.take() {
             if let Some(payload) = stdin_payload {
                 stdin.write_all(payload.as_bytes()).await.map_err(|error| {
@@ -344,17 +355,27 @@ impl GitCli {
             }
         }
 
-        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        let (mut stdout, mut stderr) = (child.stdout.take(), child.stderr.take());
+        let finished = tokio::time::timeout(timeout, async {
+            let (stdout, stderr) =
+                tokio::try_join!(read_pipe(stdout.as_mut()), read_pipe(stderr.as_mut()))?;
+            Ok::<_, std::io::Error>((stdout, stderr, tree.wait().await?))
+        })
+        .await;
+        let (stdout, stderr, status) = match finished {
             Ok(result) => result.map_err(|error| {
                 GitError::GitCommandFailed(format!("Failed to wait for git: {error}"))
             })?,
-            Err(_) => return Ok(GitOutput::timed_out(timeout)),
+            Err(_) => {
+                tree.kill().await;
+                return Ok(GitOutput::timed_out(timeout));
+            }
         };
 
         Ok(GitOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&stdout).to_string(),
+            stderr: String::from_utf8_lossy(&stderr).to_string(),
+            exit_code: status.code().unwrap_or(-1),
         })
     }
 

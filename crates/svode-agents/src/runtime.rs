@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::value::RawValue;
 use svode_core::agent_adapters::AgentAdapterKind;
+use svode_core::process::{ProcessTree, TreeStop};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
@@ -35,7 +36,7 @@ use crate::drafts::{AgentDeclaration, DraftHost, DraftSession, LastDeclarations,
 use crate::error::{AgentRuntimeError, SettingRefusal};
 use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
-use crate::process::{self, ProcessTree, TreeStop};
+use crate::process;
 use crate::projection::Projection;
 use crate::prompt::{self, PromptPart};
 use crate::registry::AdapterRuntimeRegistry;

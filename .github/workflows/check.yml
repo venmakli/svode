@@ -208,10 +208,11 @@ jobs:
       # The other tests of the agent runtime still assume Unix paths.
       - name: Native stores and identities of the agent descriptions
         run: cargo test -p svode-agents -- identity::tests registry::tests::an_agent_without_a_description registry::tests::cursor_lists registry::tests::grok_build_declares registry::tests::hermes_lists registry::tests::opencode_declares registry::tests::qwen_code_runs_its_acp_flag
-      # The process tree of an agent connection in a Job Object (DF-218):
-      # killing or dropping it ends the agent with the processes it started.
-      - name: Agent process tree
-        run: cargo test -p svode-agents -- process::tests
+      # The process tree in a Job Object (DF-218, DF-370): killing or dropping
+      # it ends an agent connection or a bounded Git call with the processes
+      # it started, also at the deadline of the Git call.
+      - name: Process tree
+        run: cargo test -p svode-core --lib -- process::tests git::sensitive_tree_tests
       # The launcher through which the Codex adapter runs Codex (DF-213):
       # `app-server` unloads threads at once, every other call passes as is.
       - name: Codex launcher

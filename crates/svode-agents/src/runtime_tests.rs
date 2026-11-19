@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use serde_json::{Value, json};
+#[cfg(unix)]
+use svode_core::process::probes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf};
 
 use super::*;
@@ -4246,12 +4248,9 @@ async fn tree_pids(pids: &Path) -> (u32, u32) {
 /// descendant ends with it.
 #[cfg(unix)]
 async fn assert_tree_ended((agent, descendant): (u32, u32)) {
+    assert!(!probes::exists(agent), "the agent was not waited for");
     assert!(
-        !process::tests::exists(agent),
-        "the agent was not waited for"
-    );
-    assert!(
-        process::tests::ends(descendant).await,
+        probes::ends(descendant).await,
         "the descendant of the agent still runs"
     );
 }
@@ -4268,7 +4267,7 @@ async fn an_idle_connection_ends_the_agent_with_its_descendants() {
     let lease = runtime.acquire(tree_agent(&pids)).await.unwrap();
     let id = lease.connection();
     let tree = tree_pids(&pids).await;
-    assert!(process::tests::exists(tree.0) && process::tests::exists(tree.1));
+    assert!(probes::exists(tree.0) && probes::exists(tree.1));
 
     drop(lease);
     for _ in 0..250 {
@@ -4359,7 +4358,7 @@ async fn killing_the_process_trees_ends_the_agents_with_their_descendants_withou
     runtime.kill_process_trees();
     assert!(started.elapsed() < Duration::from_millis(500));
     assert!(
-        process::tests::ends(descendant).await,
+        probes::ends(descendant).await,
         "the descendant of the agent still runs"
     );
 
@@ -4377,7 +4376,7 @@ async fn killing_the_process_trees_ends_the_agents_with_their_descendants_withou
     );
     assert_tree_ended((agent, descendant)).await;
     // The agent leads its own group.
-    assert!(process::tests::group_ends(agent).await);
+    assert!(probes::group_ends(agent).await);
     drop(lease);
 }
 
