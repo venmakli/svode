@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -27,7 +27,12 @@ fn temporary_directory(repo: &Path) -> Result<PathBuf> {
     Ok(directory.join("lfs/tmp/svode-lfs"))
 }
 
-pub(super) fn stage(repo: &Path, mut contents: impl Read) -> Result<String> {
+/// Writes the object into a new file Git LFS takes over, chunk by chunk as
+/// `chunks` yields them; a failed chunk or write leaves no file behind.
+pub(super) fn stage<B: AsRef<[u8]>>(
+    repo: &Path,
+    chunks: impl IntoIterator<Item = Result<B>>,
+) -> Result<String> {
     let directory = temporary_directory(repo)?;
     std::fs::create_dir_all(&directory).context("creating LFS download directory")?;
     let mut file =
@@ -37,7 +42,10 @@ pub(super) fn stage(repo: &Path, mut contents: impl Read) -> Result<String> {
         .to_str()
         .context("non-utf8 temp path")?
         .to_owned();
-    std::io::copy(&mut contents, &mut file).context("writing LFS download file")?;
+    for chunk in chunks {
+        file.write_all(chunk?.as_ref())
+            .context("writing LFS download file")?;
+    }
     file.flush().context("flushing LFS download file")?;
     // Close before handing ownership to Git LFS; failed writes retain RAII cleanup.
     file.into_temp_path()

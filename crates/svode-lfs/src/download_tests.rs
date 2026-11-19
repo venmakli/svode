@@ -65,7 +65,15 @@ fn real_git_layouts_preserve_metadata_and_keep_independent_handoffs() {
         let gitfile = std::fs::read(repo.join(".git")).ok();
         let paths = std::thread::scope(|scope| {
             (0..8)
-                .map(|_| scope.spawn(|| stage(&repo, b"same OID bytes".as_slice()).unwrap()))
+                .map(|_| {
+                    scope.spawn(|| {
+                        stage(
+                            &repo,
+                            [Ok(b"same OID ".as_slice()), Ok(b"bytes".as_slice())],
+                        )
+                        .unwrap()
+                    })
+                })
                 .collect::<Vec<_>>()
                 .into_iter()
                 .map(|task| task.join().unwrap())
@@ -90,30 +98,23 @@ fn real_git_layouts_preserve_metadata_and_keep_independent_handoffs() {
 #[test]
 fn failed_resolution_creation_and_partial_copy_allow_retry() {
     let repo = tempfile::tempdir().unwrap();
-    assert!(stage(repo.path(), b"blob".as_slice()).is_err());
+    assert!(stage(repo.path(), [Ok(b"blob")]).is_err());
     assert_eq!(std::fs::read_dir(repo.path()).unwrap().count(), 0);
     git(repo.path(), &["init"]);
     let directory = temporary_directory(repo.path()).unwrap();
     std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
     std::fs::write(&directory, b"obstruction").unwrap();
-    assert!(stage(repo.path(), b"blob".as_slice()).is_err());
+    assert!(stage(repo.path(), [Ok(b"blob")]).is_err());
     assert_eq!(std::fs::read(&directory).unwrap(), b"obstruction");
     std::fs::remove_file(&directory).unwrap();
-    let handed_off = stage(repo.path(), b"keep me".as_slice()).unwrap();
-    struct Partial(bool);
-    impl Read for Partial {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.0 {
-                return Err(std::io::Error::other("injected partial-copy failure"));
-            }
-            self.0 = true;
-            buf[0] = b'x';
-            Ok(1)
-        }
-    }
-    assert!(stage(repo.path(), Partial(false)).is_err());
+    let handed_off = stage(repo.path(), [Ok(b"keep me")]).unwrap();
+    let partial = [
+        Ok(b"x".as_slice()),
+        Err(anyhow::anyhow!("injected partial-copy failure")),
+    ];
+    assert!(stage(repo.path(), partial).is_err());
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
     assert_eq!(std::fs::read(handed_off).unwrap(), b"keep me");
-    let retried = stage(repo.path(), b"retry".as_slice()).unwrap();
+    let retried = stage(repo.path(), [Ok(b"retry")]).unwrap();
     assert_eq!(std::fs::read(retried).unwrap(), b"retry");
 }

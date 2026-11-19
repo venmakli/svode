@@ -4,21 +4,28 @@
 //!
 //! Implements the line-delimited JSON protocol described in
 //! <https://github.com/git-lfs/git-lfs/blob/main/docs/custom-transfers.md>
-//! and ships LFS blobs to/from an S3-compatible bucket via OpenDAL.
+//! and ships LFS blobs to/from an S3-compatible bucket via OpenDAL, in
+//! parts and with `progress` events while the bytes move.
 //!
 //! Configuration is read from the repository's ignored local agent config.
 //! Each session resolves two Variables Secrets directly, without Desktop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use opendal::Operator;
+use futures::StreamExt;
+use opendal::{HttpTransporter, Operator, Writer};
 use serde::{Deserialize, Serialize};
 use svode_core::storage::connection::LfsNotReady;
 use svode_core::storage::s3::{AgentConfig, Credentials};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 mod download;
+mod progress;
+mod transport;
+
+/// Size of the pieces an upload reads from the staged blob.
+const READ_CHUNK: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "event", rename_all = "lowercase")]
@@ -129,14 +136,14 @@ async fn run() -> Result<()> {
             },
             Request::Upload { oid, size, path } => {
                 let resp = match state.as_ref() {
-                    Some(s) => s.handle_upload(&oid, size, &path).await,
+                    Some(s) => s.handle_upload(&mut stdout, &oid, size, &path).await?,
                     None => Err(anyhow!("upload received before successful init")),
                 };
                 write_line(&mut stdout, &complete_for(&oid, None, resp)).await?;
             }
             Request::Download { oid, size } => {
                 let resp = match state.as_ref() {
-                    Some(s) => s.handle_download(&oid, size).await,
+                    Some(s) => s.handle_download(&mut stdout, &oid, size).await?,
                     None => Err(anyhow!("download received before successful init")),
                 };
                 match resp {
@@ -224,6 +231,7 @@ where
 struct AgentState {
     op: Operator,
     prefix: String,
+    progress: progress::Counter,
 }
 
 impl AgentState {
@@ -256,6 +264,12 @@ impl AgentState {
         let op =
             svode_core::storage::s3::operator(&cfg.endpoint, &cfg.bucket, &cfg.region, &secrets)
                 .map_err(|detail| LfsNotReady::S3CheckFailed { detail })?;
+        let progress = progress::Counter::new();
+        let base = op.base_context().clone();
+        let counting =
+            transport::UploadCounting::new(base.http_transport().clone(), progress.clone())
+                .map_err(|detail| LfsNotReady::S3CheckFailed { detail })?;
+        let op = op.with_context(base.with_http_transport(HttpTransporter::new(counting)));
 
         let prefix = cfg
             .prefix
@@ -264,7 +278,11 @@ impl AgentState {
             .trim_matches('/')
             .to_string();
 
-        Ok(Self { op, prefix })
+        Ok(Self {
+            op,
+            prefix,
+            progress,
+        })
     }
 
     fn object_key(&self, oid: &str) -> String {
@@ -279,31 +297,101 @@ impl AgentState {
         }
     }
 
-    async fn handle_upload(&self, oid: &str, _size: u64, path: &str) -> Result<()> {
-        let bytes = tokio::fs::read(path)
-            .await
-            .with_context(|| format!("reading staged blob {path}"))?;
+    async fn handle_upload<W>(
+        &self,
+        out: &mut W,
+        oid: &str,
+        size: u64,
+        path: &str,
+    ) -> Result<Result<()>>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
         let key = self.object_key(oid);
-        self.op
-            .write(&key, bytes)
+        progress::report(out, &self.progress, oid, size, async {
+            let mut blob = tokio::fs::File::open(path)
+                .await
+                .with_context(|| format!("reading staged blob {path}"))?;
+            let mut writer = self
+                .op
+                .writer(&key)
+                .await
+                .with_context(|| format!("S3 upload {key}"))?;
+            let sent = upload(&mut blob, &mut writer, &key, path).await;
+            if sent.is_err() {
+                // Do not leave the parts of an unfinished multipart upload.
+                let _ = writer.abort().await;
+            }
+            sent
+        })
+        .await
+    }
+
+    async fn handle_download<W>(&self, out: &mut W, oid: &str, size: u64) -> Result<Result<String>>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let key = self.object_key(oid);
+        progress::report(out, &self.progress, oid, size, async {
+            let mut stream = self
+                .op
+                .reader(&key)
+                .await
+                .with_context(|| format!("S3 download {key}"))?
+                .into_bytes_stream(..)
+                .await
+                .with_context(|| format!("S3 download {key}"))?;
+            let received = self.progress.clone();
+            let runtime = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || {
+                // Each chunk is written as it arrives, so the object is never
+                // held in memory whole.
+                let chunks = std::iter::from_fn(|| runtime.block_on(stream.next())).map(|chunk| {
+                    let chunk = chunk.with_context(|| format!("S3 download {key}"))?;
+                    received.add(chunk.len() as u64);
+                    Ok(chunk)
+                });
+                download::stage(Path::new("."), chunks)
+            })
+            .await?
+        })
+        .await
+    }
+}
+
+async fn upload(
+    blob: &mut tokio::fs::File,
+    writer: &mut Writer,
+    key: &str,
+    path: &str,
+) -> Result<()> {
+    loop {
+        let mut chunk = vec![0; READ_CHUNK];
+        let mut filled = 0;
+        while filled < READ_CHUNK {
+            let read = blob
+                .read(&mut chunk[filled..])
+                .await
+                .with_context(|| format!("reading staged blob {path}"))?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        if filled == 0 {
+            break;
+        }
+        chunk.truncate(filled);
+        writer
+            .write(chunk)
             .await
             .with_context(|| format!("S3 upload {key}"))?;
-        Ok(())
     }
-
-    async fn handle_download(&self, oid: &str, _size: u64) -> Result<String> {
-        let key = self.object_key(oid);
-        let buf = self
-            .op
-            .read(&key)
-            .await
-            .with_context(|| format!("S3 download {key}"))?;
-
-        tokio::task::spawn_blocking(move || {
-            download::stage(std::path::Path::new("."), buf.to_vec().as_slice())
-        })
-        .await?
-    }
+    writer
+        .close()
+        .await
+        .with_context(|| format!("S3 upload {key}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
