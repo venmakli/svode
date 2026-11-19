@@ -5,6 +5,37 @@ export type SpaceStatusDto = "ready" | "missing" | "broken";
 
 export type LfsStateDto = "n/a" | "ready" | "missing-creds" | "pulling";
 
+/** An LFS file of the current version, relative to its repository. */
+export interface LfsFileDto {
+  path: string;
+  size: number;
+}
+
+/** Why the last LFS download stopped with files still missing. */
+export type LfsDownloadStopDto =
+  | { kind: "no-access" }
+  | { kind: "unreachable" }
+  | { kind: "stalled" }
+  | { kind: "not-on-server" }
+  | { kind: "other"; detail: string };
+
+/** The files the last LFS download left without content and why. */
+export interface LfsMissingDto {
+  files: LfsFileDto[];
+  bytes: number;
+  stop: LfsDownloadStopDto;
+}
+
+/**
+ * LFS status of a repository: `pulling` while a download runs,
+ * `missing-creds` without access; with `ready`, `missing` set means not
+ * every file is downloaded.
+ */
+export interface LfsStatusDto {
+  state: LfsStateDto;
+  missing: LfsMissingDto | null;
+}
+
 export type LfsRemoteDiagnosticReasonDto =
   | "ready"
   | "git-lfs-missing"

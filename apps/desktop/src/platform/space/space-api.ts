@@ -12,8 +12,10 @@ import type {
   BinaryRoutingConfigDto,
   EffectiveAssetsConfigDto,
   LfsPolicyDiagnosticDto,
+  LfsMissingDto,
   LfsRemoteDiagnosticDto,
   LfsStateDto,
+  LfsStatusDto,
   EnterProjectResultDto,
   ProjectWindowRequestDto,
   SpaceDirtyEventDto,
@@ -75,6 +77,7 @@ export interface LfsStateChangedEventDto {
   projectPath: string;
   spaceId: string | null;
   state: LfsStateDto;
+  missing: LfsMissingDto | null;
 }
 
 export type SpaceFileEventName =
@@ -274,6 +277,10 @@ export function applyAssetsStrategy(
 
 export function getLfsState(input: SpacePoolInputDto): Promise<LfsStateDto> {
   return invokeCommand<LfsStateDto>("get_lfs_state", input);
+}
+
+export function getLfsStatus(input: SpacePoolInputDto): Promise<LfsStatusDto> {
+  return invokeCommand<LfsStatusDto>("get_lfs_status", input);
 }
 
 export function diagnoseLfsRemote(

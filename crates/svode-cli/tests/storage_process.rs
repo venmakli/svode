@@ -18,6 +18,9 @@ mod unix {
 
     use super::common::process::{BIN, ROUTINE_CALLER_TOKEN, TEST_IDENTIFIER, code};
     use super::common::s3::S3Stand;
+    use svode_core::git::cli::GitCli;
+    use svode_core::git::state::GitRuntime;
+    use svode_core::storage::lfs_download::{DownloadStop, LfsFile, download, missing_files};
 
     const ACCESS: &str = "fixture-access";
     /// Values the tests set; none may appear in any output.
@@ -671,6 +674,90 @@ mod unix {
         assert_eq!(
             stand.get(&object_key(&new_oid)).unwrap(),
             fs::read(&new).unwrap()
+        );
+    }
+
+    /// DF-368 R1 for `lfs-s3`: a fresh clone whose sync brings nothing in
+    /// gets the content of its LFS files from the download Svode runs after
+    /// every sync, through svode-lfs and the S3 stand.
+    #[test]
+    fn a_fresh_lfs_s3_clone_downloads_its_content_after_a_sync_without_incoming_changes() {
+        if !tools_available() {
+            return;
+        }
+        let stand = S3Stand::start(ACCESS);
+        let device = Device::new();
+        let photo = (0..=255u8).cycle().take(16 * 1024).collect::<Vec<_>>();
+        let clone = cloned(&device, assets(&stand.endpoint), Some(&photo));
+        let blob = device.base().join("blob.png");
+        let (pointer, oid) = device.pointer(&blob);
+        stand.put(&object_key(&oid), &photo);
+        device.ok(&clone, &["secret", "store", "use", "file"]);
+        device.set_secret(&clone, "S3_ACCESS_KEY", VALUES[0]);
+        device.set_secret(&clone, "S3_SECRET_KEY", VALUES[1]);
+        device.ok(&clone, &connect("S3_ACCESS_KEY", "S3_SECRET_KEY"));
+
+        // The sync brings nothing in, and the file stays a pointer.
+        let head = device.git(&clone, &["rev-parse", "HEAD"]);
+        device.git(&clone, &["pull", "-q", "--ff-only"]);
+        assert_eq!(device.git(&clone, &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            fs::read_to_string(clone.join("photo.png")).unwrap(),
+            pointer
+        );
+
+        // The Git of the device: its home, secrets file and Git config.
+        let git = device.base().join("git-device");
+        svode_testkit::write_executable(
+            &git,
+            format!(
+                "#!/bin/sh\nunset XDG_CONFIG_HOME\nexport HOME='{home}' GIT_CONFIG_NOSYSTEM=1 SVODE_PRODUCT_IDENTIFIER='{TEST_IDENTIFIER}'\nexec '{real}' \"$@\"\n",
+                home = device.home.display(),
+                real = which_git().display(),
+            ),
+        )
+        .unwrap();
+        let cli = GitCli::for_test(git);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let run = || {
+            runtime.block_on(async {
+                let missing = missing_files(&cli, &clone).await.unwrap();
+                assert_eq!(
+                    missing.files(),
+                    vec![LfsFile {
+                        path: "photo.png".into(),
+                        size: photo.len() as u64,
+                    }]
+                );
+                download(&GitRuntime::new(), &cli, &clone, &missing).await
+            })
+        };
+
+        // A key the storage refuses stops the download as no access.
+        device.set_secret(&clone, "S3_ACCESS_KEY", VALUES[2]);
+        let refused = run();
+        assert_eq!(refused.stop, Some(DownloadStop::NoAccess), "{refused:?}");
+        assert_eq!(
+            fs::read_to_string(clone.join("photo.png")).unwrap(),
+            pointer
+        );
+
+        device.set_secret(&clone, "S3_ACCESS_KEY", VALUES[0]);
+        let outcome = run();
+        assert_eq!(outcome.stop, None, "{outcome:?}");
+        assert!(outcome.missing.is_empty());
+        assert_eq!(fs::read(clone.join("photo.png")).unwrap(), photo);
+        assert_eq!(device.git(&clone, &["status", "--porcelain"]), "");
+        assert!(
+            stand
+                .requests()
+                .iter()
+                .any(|request| request.starts_with("GET ") && request.contains(&oid)),
+            "{:?}",
+            stand.requests()
         );
     }
 

@@ -499,6 +499,7 @@ pub fn run() {
             storage::lfs::diagnose_lfs_remote,
             storage::lfs::repair_lfs,
             storage::lfs::get_lfs_state,
+            storage::lfs::get_lfs_status,
             terminal::commands::terminal_spawn,
             terminal::commands::terminal_resize,
             terminal::commands::terminal_kill,

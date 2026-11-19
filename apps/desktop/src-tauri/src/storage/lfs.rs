@@ -1,32 +1,32 @@
 //! LFS-side runtime state and helpers for repository storage.
 //!
-//! - `LfsState` (core) is the per-pool runtime indicator the frontend uses to
-//!   show whether LFS-backed files in this storage scope are loadable now.
-//! - `is_lfs_pointer` is a cheap inspector for repository files that lets
-//!   sync/watcher code detect an LFS placeholder without shelling out to git.
-//! - `probe_lfs` runs the core readiness probe for the effective scope.
-//! - `repair_lfs` is the user-gesture IPC: probe + `git lfs pull` under the
-//!   git lock, transitioning `Pulling → Ready` on success.
+//! - `LfsStatus` (core) is the per-pool runtime indicator the frontend uses to
+//!   show whether LFS-backed files in this storage scope are loadable and on
+//!   this device.
+//! - `download_in_background` runs the core download of the missing LFS files
+//!   after a clone or a sync (DF-368 R1), one per repository (R5).
+//! - `repair_lfs` is the "Download files" gesture: the same download.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use svode_core::storage::lfs::{LfsState, REMOTE_PROBE_ARGS, probe_readiness};
+use svode_core::storage::lfs_download::{
+    DownloadPlan, LfsStatus, MissingFiles, download, plan_download,
+};
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::index::{IndexKey, IndexState};
-use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::AssetsStrategy;
 use svode_core::git::ops;
 
 use super::scope::{
     AssetsStorageScope, resolve_effective_storage_scope, resolve_effective_storage_scope_for_key,
 };
-
-const LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
-const LFS_POINTER_MAX_BYTES: u64 = 200;
 
 fn strategy_uses_lfs_runtime(strategy: &AssetsStrategy) -> bool {
     matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3)
@@ -64,58 +64,6 @@ pub struct LfsRemoteDiagnostic {
     pub remote_url: Option<String>,
     pub terminal_command: Option<String>,
     pub detail: Option<String>,
-}
-
-/// Detect whether `path` is an LFS pointer file. Reads up to 256 bytes; the
-/// file must be under 200 bytes total AND start with the canonical pointer
-/// version header. Read errors fall back to `false` (conservative — non-LFS
-/// behaviour wins).
-pub fn is_lfs_pointer(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !meta.is_file() || meta.len() >= LFS_POINTER_MAX_BYTES {
-        return false;
-    }
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    use std::io::Read;
-    let mut buf = [0u8; 256];
-    let n = match file.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return false,
-    };
-    let head = String::from_utf8_lossy(&buf[..n]);
-    let first_line = head.lines().next().unwrap_or("");
-    first_line == LFS_POINTER_PREFIX
-}
-
-fn changed_paths_contain_lfs_pointer(repo_dir: &Path, changed_rel_paths: &[String]) -> bool {
-    changed_rel_paths
-        .iter()
-        .filter_map(|path| normalize_repo_relative(path, RootMode::Reject).ok())
-        .any(|path| is_lfs_pointer(&repo_dir.join(path)))
-}
-
-/// Probe the LFS state of the effective storage scope for `key` with the
-/// core readiness probe.
-pub async fn probe_lfs(
-    app: &AppHandle,
-    project: &Path,
-    key: &IndexKey,
-    _target_dir: &Path,
-) -> LfsState {
-    let index_state = app.state::<IndexState>();
-    let scope =
-        match resolve_effective_storage_scope_for_key(&index_state, project, key.clone()).await {
-            Ok(scope) => scope,
-            Err(e) => {
-                tracing::warn!("probe_lfs: effective storage scope resolution failed: {e}");
-                return LfsState::NotApplicable;
-            }
-        };
-    probe_lfs_scope(app, &scope).await
 }
 
 async fn probe_lfs_scope(app: &AppHandle, scope: &AssetsStorageScope) -> LfsState {
@@ -349,92 +297,141 @@ fn ssh_probe_command(remote_url: &str) -> Option<String> {
     }
 }
 
-/// Called after `git_sync` completes successfully. If any normalized repository
-/// path from `changed_rel_paths` is currently an LFS pointer and the strategy is
-/// LFS-flavoured, probe credentials and — on success — spawn `git lfs pull` in
-/// the background, with state transitioning `Pulling → Ready` (or
-/// `MissingCreds` on probe/pull failure). Detecting actual pointers keeps this
-/// compatible with both Svode-managed and user-defined LFS rules.
-///
-/// Returns immediately; the actual pull runs on a tokio task so it does
-/// not block the sync IPC response.
-pub fn maybe_auto_pull_after_sync(
-    app: &AppHandle,
-    key: &IndexKey,
-    target_dir: &Path,
-    changed_rel_paths: &[String],
-) {
-    if !changed_paths_contain_lfs_pointer(target_dir, changed_rel_paths) {
-        return;
+/// The repositories with a running LFS download (DF-368 R5): a reason to
+/// download during a download marks it to run again once it ends.
+#[derive(Default)]
+pub struct LfsDownloads(Mutex<HashMap<PathBuf, bool>>);
+
+/// The right to run the download of one repository; dropping it releases
+/// the repository.
+struct DownloadSlot<'a> {
+    downloads: &'a LfsDownloads,
+    repo_dir: PathBuf,
+    released: bool,
+}
+
+impl LfsDownloads {
+    /// The slot of `repo_dir` when no download of it runs; otherwise the
+    /// running one is marked to run again.
+    fn begin(&self, repo_dir: &Path) -> Option<DownloadSlot<'_>> {
+        let mut running = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(again) = running.get_mut(repo_dir) {
+            *again = true;
+            return None;
+        }
+        running.insert(repo_dir.to_path_buf(), false);
+        Some(DownloadSlot {
+            downloads: self,
+            repo_dir: repo_dir.to_path_buf(),
+            released: false,
+        })
     }
+}
 
+impl DownloadSlot<'_> {
+    /// Whether a reason to download came during the run; otherwise the
+    /// repository is released in the same step, so no reason is lost.
+    fn again(&mut self) -> bool {
+        let mut running = self
+            .downloads
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if running.get(&self.repo_dir) == Some(&true) {
+            running.insert(self.repo_dir.clone(), false);
+            return true;
+        }
+        running.remove(&self.repo_dir);
+        self.released = true;
+        false
+    }
+}
+
+impl Drop for DownloadSlot<'_> {
+    fn drop(&mut self) {
+        if !self.released {
+            self.downloads
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&self.repo_dir);
+        }
+    }
+}
+
+/// Download the missing LFS files of the effective storage scope of `key` in
+/// the background (DF-368 R1): after a clone through Svode and after every
+/// successful sync.
+pub fn download_in_background(app: &AppHandle, key: IndexKey) {
     let app = app.clone();
-    let key = key.clone();
-    let project = key.project().to_path_buf();
     tauri::async_runtime::spawn(async move {
-        let state = app.state::<IndexState>();
-        let scope =
-            match resolve_effective_storage_scope_for_key(&state, &project, key.clone()).await {
-                Ok(scope) => scope,
-                Err(e) => {
-                    tracing::warn!("auto-pull (post-sync): effective storage scope failed: {e}");
-                    return;
-                }
-            };
-        if !strategy_uses_lfs_runtime(&scope.config.strategy) {
-            reset_lfs_state_if_needed(&app, &state, &scope.pool_key).await;
-            return;
-        }
-
-        let probed = probe_lfs_scope(&app, &scope).await;
-        if !matches!(probed, LfsState::Ready) {
-            state
-                .set_lfs_state_with(&app, &scope.pool_key, probed)
-                .await;
-            return;
-        }
-        let git_state = app.state::<GitState>();
-        let Some(cli) = git_state.detected().cloned() else {
-            state
-                .set_lfs_state_with(&app, &scope.pool_key, LfsState::MissingCreds)
-                .await;
-            return;
-        };
-        state
-            .set_lfs_state_with(&app, &scope.pool_key, LfsState::Pulling)
-            .await;
-        let lock = git_state.get_lock(&scope.repo_dir).await;
-        let _guard = lock.lock().await;
-        let result = cli.exec(&scope.repo_dir, &["lfs", "pull"]).await;
-        drop(_guard);
-        let next = match result {
-            Ok(out) if out.exit_code == 0 => LfsState::Ready,
-            Ok(out) => {
-                tracing::warn!(
-                    "auto-pull (post-sync): git lfs pull failed ({}): {}",
-                    out.exit_code,
-                    out.stderr.trim()
-                );
-                LfsState::MissingCreds
-            }
-            Err(e) => {
-                tracing::warn!("auto-pull (post-sync): git lfs pull errored: {e}");
-                LfsState::MissingCreds
-            }
-        };
-        state.set_lfs_state_with(&app, &scope.pool_key, next).await;
+        download_missing(&app, key).await;
     });
 }
 
-/// IPC: user-triggered "Repair LFS" — probe, then run `git lfs pull` under
-/// the target_dir's git lock. Emits `lfs_state_changed` for `Pulling` →
-/// `Ready` (or back to `MissingCreds` on failure).
+/// The download of the missing LFS files of the scope of `key`, unless one
+/// of its repository runs: then that one runs again after it, downloading
+/// only when files went missing meanwhile (R5). The LFS status of the scope
+/// follows the plan and the outcome.
+async fn download_missing(app: &AppHandle, key: IndexKey) {
+    let index = app.state::<IndexState>();
+    let project = key.project().to_path_buf();
+    let scope = match resolve_effective_storage_scope_for_key(&index, &project, key).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            tracing::warn!("LFS download: effective storage scope failed: {error}");
+            return;
+        }
+    };
+    let repository = std::fs::canonicalize(&scope.repo_dir).unwrap_or(scope.repo_dir.clone());
+    let Some(mut slot) = index.lfs_downloads().begin(&repository) else {
+        return;
+    };
+    let git = app.state::<GitState>().runtime().clone();
+    let Some(cli) = git.detected().cloned() else {
+        return;
+    };
+    let cli = cli.reporting_transfers_to(crate::git::delivery::host(app));
+    let mut previous: Option<MissingFiles> = None;
+    loop {
+        match plan_download(&git, &scope.repo_dir, &scope.config).await {
+            Err(error) => tracing::warn!("LFS download: planning failed: {error}"),
+            Ok(DownloadPlan::Download(missing))
+                if previous
+                    .as_ref()
+                    .is_some_and(|known| !missing.adds_to(known)) => {}
+            Ok(plan) => {
+                let status = index.get_lfs_status(&scope.pool_key).await.planned(&plan);
+                index.set_lfs_status(app, &scope.pool_key, status).await;
+                if let DownloadPlan::Download(missing) = plan {
+                    let outcome = download(&git, &cli, &scope.repo_dir, &missing).await;
+                    if let Some(stop) = &outcome.stop {
+                        tracing::warn!(
+                            "LFS download stopped with {} files missing: {stop:?}",
+                            outcome.missing.files().len()
+                        );
+                    }
+                    index
+                        .set_lfs_status(app, &scope.pool_key, LfsStatus::downloaded(&outcome))
+                        .await;
+                    previous = Some(missing);
+                }
+            }
+        }
+        if !slot.again() {
+            break;
+        }
+    }
+}
+
+/// IPC: the "Download files" gesture of Settings → Storage — the download of
+/// the missing LFS files of the scope (DF-368 R1). While one runs, it runs
+/// again after it. Returns the LFS state the download left.
 #[tauri::command]
 pub async fn repair_lfs(
     app: AppHandle,
     project_path: String,
     space_id: Option<String>,
-    git_state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
 ) -> Result<LfsState, AppError> {
     let project = PathBuf::from(&project_path);
@@ -444,37 +441,9 @@ pub async fn repair_lfs(
         reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
         return Ok(LfsState::NotApplicable);
     }
-
-    let cli = git_state.detected().cloned().ok_or(AppError::GitNotFound)?;
-
-    index_state
-        .set_lfs_state_with(&app, &scope.pool_key, LfsState::Pulling)
-        .await;
-
-    let lock = git_state.get_lock(&scope.repo_dir).await;
-    let _guard = lock.lock().await;
-    let out = cli
-        .exec(&scope.repo_dir, &["lfs", "pull"])
-        .await
-        .map_err(|e| AppError::Storage(format!("git lfs pull errored: {e}")))?;
-    drop(_guard);
-
-    let new_state = if out.exit_code == 0 {
-        // Re-probe to confirm — pull may have succeeded but the underlying
-        // strategy could still be in a degraded state (e.g. partial fetch).
-        probe_lfs_scope(&app, &scope).await
-    } else {
-        tracing::warn!(
-            "repair_lfs: git lfs pull failed ({}): {}",
-            out.exit_code,
-            out.stderr.trim()
-        );
-        LfsState::MissingCreds
-    };
-    index_state
-        .set_lfs_state_with(&app, &scope.pool_key, new_state)
-        .await;
-    Ok(new_state)
+    app.state::<GitState>().require_cli()?;
+    download_missing(&app, scope.pool_key.clone()).await;
+    Ok(index_state.get_lfs_state(&scope.pool_key).await)
 }
 
 /// S3 readiness resolves the current Variables snapshot on every read.
@@ -486,30 +455,52 @@ pub async fn get_lfs_state(
     space_id: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<LfsState, AppError> {
-    let project = PathBuf::from(&project_path);
-    let scope =
-        resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    Ok(lfs_status(&app, &index_state, &project_path, space_id)
+        .await?
+        .state)
+}
+
+/// IPC: [`get_lfs_state`] with the files the last download left without
+/// content and why it stopped (DF-368 R6).
+#[tauri::command]
+pub async fn get_lfs_status(
+    app: AppHandle,
+    project_path: String,
+    space_id: Option<String>,
+    index_state: State<'_, IndexState>,
+) -> Result<LfsStatus, AppError> {
+    lfs_status(&app, &index_state, &project_path, space_id).await
+}
+
+async fn lfs_status(
+    app: &AppHandle,
+    index_state: &IndexState,
+    project_path: &str,
+    space_id: Option<String>,
+) -> Result<LfsStatus, AppError> {
+    let project = PathBuf::from(project_path);
+    let scope = resolve_effective_storage_scope(index_state, &project, space_id.as_deref()).await?;
 
     // Only probe if the strategy is LFS-flavoured — otherwise NotApplicable
     // is correct and re-probing would be wasted work.
     if !strategy_uses_lfs_runtime(&scope.config.strategy) {
-        reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
-        return Ok(LfsState::NotApplicable);
+        reset_lfs_state_if_needed(app, index_state, &scope.pool_key).await;
+        return Ok(LfsStatus::default());
     }
 
-    let cached = index_state.get_lfs_state(&scope.pool_key).await;
-    if matches!(cached, LfsState::Pulling)
+    let cached = index_state.get_lfs_status(&scope.pool_key).await;
+    if matches!(cached.state, LfsState::Pulling)
         || (!matches!(scope.config.strategy, AssetsStrategy::LfsS3)
-            && !matches!(cached, LfsState::NotApplicable))
+            && !matches!(cached.state, LfsState::NotApplicable))
     {
         return Ok(cached);
     }
 
-    let probed = probe_lfs_scope(&app, &scope).await;
+    let probed = probe_lfs_scope(app, &scope).await;
     index_state
-        .set_lfs_state_with(&app, &scope.pool_key, probed)
+        .set_lfs_state_with(app, &scope.pool_key, probed)
         .await;
-    Ok(probed)
+    Ok(index_state.get_lfs_status(&scope.pool_key).await)
 }
 
 async fn reset_lfs_state_if_needed(app: &AppHandle, index_state: &IndexState, key: &IndexKey) {
@@ -525,48 +516,25 @@ async fn reset_lfs_state_if_needed(app: &AppHandle, index_state: &IndexState, ke
 mod tests {
     use super::*;
 
-    const TEST_LFS_POINTER: &str = "version https://git-lfs.github.com/spec/v1\n\
-oid sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\
-size 42\n";
-
     #[test]
-    fn post_sync_detects_lfs_pointer_outside_managed_assets() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let media = temp.path().join("presentations/demo.mp4");
-        std::fs::create_dir_all(media.parent().expect("media parent")).expect("media dir");
-        std::fs::write(&media, TEST_LFS_POINTER).expect("LFS pointer");
-
-        assert!(changed_paths_contain_lfs_pointer(
-            temp.path(),
-            &["presentations/demo.mp4".to_string()],
-        ));
-    }
-
-    #[test]
-    fn post_sync_ignores_ordinary_media_file() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let media = temp.path().join("presentations/demo.mp4");
-        std::fs::create_dir_all(media.parent().expect("media parent")).expect("media dir");
-        std::fs::write(&media, b"ordinary media bytes").expect("media file");
-
-        assert!(!changed_paths_contain_lfs_pointer(
-            temp.path(),
-            &["presentations/demo.mp4".to_string()],
-        ));
-    }
-
-    #[test]
-    fn post_sync_rejects_traversal_path_to_lfs_pointer() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let repo = temp.path().join("repo");
-        std::fs::create_dir_all(&repo).expect("repo dir");
-        std::fs::write(temp.path().join("outside.psd"), TEST_LFS_POINTER)
-            .expect("outside LFS pointer");
-
-        assert!(!changed_paths_contain_lfs_pointer(
-            &repo,
-            &["../outside.psd".to_string()],
-        ));
+    fn a_reason_to_download_during_a_download_runs_it_once_more() {
+        let downloads = LfsDownloads::default();
+        let repo = Path::new("/projects/a");
+        let other = Path::new("/projects/b");
+        let mut slot = downloads.begin(repo).expect("the first download runs");
+        // Another repository downloads on its own.
+        assert!(downloads.begin(other).is_some());
+        // Two reasons during the run: no second download, one more run.
+        assert!(downloads.begin(repo).is_none());
+        assert!(downloads.begin(repo).is_none());
+        assert!(slot.again());
+        assert!(!slot.again());
+        drop(slot);
+        // Released: the next reason runs a download again.
+        let slot = downloads.begin(repo).expect("released");
+        drop(slot);
+        // A run that ended without `again` (a panic) releases as well.
+        assert!(downloads.begin(repo).is_some());
     }
 
     #[test]

@@ -695,12 +695,9 @@ pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, pat
         emit_sync_domain_invalidations(&app, &index_state, &key, &path, changed).await;
     }
     emit_space_synced(&app, &key);
-    // Explicit-trigger LFS auto-pull: if the merge brought in pointer
-    // files under `.assets/` and credentials are present, fetch the
-    // bytes in the background (Stage 3.5 Phase 8 §8.5 / Q8c).
-    if let Some(changed) = changed {
-        crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
-    }
+    // Every successful sync downloads the LFS files still missing,
+    // whatever it brought in (DF-368 R1).
+    crate::storage::lfs::download_in_background(app, key);
 }
 
 #[tauri::command]

@@ -12,7 +12,7 @@ use crate::error::AppError;
 use crate::git::access::{RepositoryAccessSnapshot, require_repository_mutation};
 use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy};
 use crate::git::{GitState, require_cli};
-use crate::index::IndexState;
+use crate::index::{IndexKey, IndexState};
 use crate::project_runtime::ProjectRuntimeState;
 use crate::routines::RoutineSchedulerState;
 use crate::space::{config, content_tree, project, settings, types::*};
@@ -841,6 +841,17 @@ pub async fn register_cloned_space(
     }
 
     reconcile_spaces(&app, &project_runtime, path).await;
+    // The end of `git_clone_space`: the clone keeps LFS pointers
+    // (`GIT_LFS_SKIP_SMUDGE=1`); their content downloads in the background
+    // once the Space is known (DF-368 R1).
+    match app
+        .state::<IndexState>()
+        .key_for_project_space_id(path, Some(&info.id))
+        .await
+    {
+        Ok(key) => crate::storage::lfs::download_in_background(&app, key),
+        Err(e) => tracing::warn!("post-clone LFS download: key resolution failed: {e}"),
+    }
 
     Ok(info)
 }
@@ -911,6 +922,9 @@ pub async fn project_clone(
     }
 
     crate::git::delivery::repair_project(&app, &path).await;
+    // The clone keeps LFS pointers (`GIT_LFS_SKIP_SMUDGE=1`); their content
+    // downloads in the background (DF-368 R1).
+    crate::storage::lfs::download_in_background(&app, IndexKey::Root(path.clone()));
 
     Ok(root_project_info(id, &path, &cfg, None, config_unreadable))
 }
@@ -1166,31 +1180,16 @@ pub async fn clone_missing_space(
 
     reconcile_spaces(&app, &project_runtime, &parent).await;
 
-    // Spawn a background LFS probe — if the cloned space uses an LFS-flavoured
-    // strategy, the frontend will see the right CTA without polling. We
-    // deliberately do NOT run `git lfs pull` here; that's the user gesture
-    // wired up via `storage::lfs::repair_lfs`.
-    let app_handle = app.clone();
-    let project_for_probe = parent.clone();
-    let space_id_for_probe = space_id.clone();
-    let target_dir = space_dir.clone();
-    tauri::async_runtime::spawn(async move {
-        let state = app_handle.state::<IndexState>();
-        let key = match state
-            .key_for_project_space_id(&project_for_probe, Some(&space_id_for_probe))
-            .await
-        {
-            Ok(k) => k,
-            Err(e) => {
-                tracing::warn!("post-clone probe: key resolution failed: {e}");
-                return;
-            }
-        };
-        let probed =
-            crate::storage::lfs::probe_lfs(&app_handle, &project_for_probe, &key, &target_dir)
-                .await;
-        state.set_lfs_state_with(&app_handle, &key, probed).await;
-    });
+    // The clone keeps LFS pointers (`GIT_LFS_SKIP_SMUDGE=1`); their content
+    // downloads in the background (DF-368 R1).
+    match app
+        .state::<IndexState>()
+        .key_for_project_space_id(&parent, Some(&space_id))
+        .await
+    {
+        Ok(key) => crate::storage::lfs::download_in_background(&app, key),
+        Err(e) => tracing::warn!("post-clone LFS download: key resolution failed: {e}"),
+    }
 
     Ok(())
 }

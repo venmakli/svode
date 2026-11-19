@@ -22,7 +22,10 @@ use crate::space::types::SpaceStatus;
 use svode_core::index::backlinks::BacklinkIndex;
 use svode_core::index::backlinks::{is_external_or_anchor_url, markdown_url_path};
 use svode_core::storage::lfs::LfsState;
+use svode_core::storage::lfs_download::LfsStatus;
 use svode_core::system_path;
+
+use crate::storage::lfs::LfsDownloads;
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
 pub(crate) fn normalize_rel(path: &str) -> String {
@@ -107,10 +110,12 @@ impl SpacesChange {
 #[derive(Clone)]
 pub struct IndexState {
     pub(crate) core: svode_core::index::state::IndexRuntimeState,
-    /// Per-key LFS runtime state. Initial value for any key is
+    /// Per-key LFS runtime status. Initial state for any key is
     /// `NotApplicable`; the actual probe is lazy (triggered by user gestures
-    /// or post-clone/sync events). See `storage/lfs.rs`.
-    lfs_states: Arc<Mutex<HashMap<IndexKey, LfsState>>>,
+    /// or post-clone/sync downloads). See `storage/lfs.rs`.
+    lfs_states: Arc<Mutex<HashMap<IndexKey, LfsStatus>>>,
+    /// The running LFS downloads, one per repository.
+    lfs_downloads: Arc<LfsDownloads>,
 }
 
 impl IndexState {
@@ -118,6 +123,7 @@ impl IndexState {
         Self {
             core: svode_core::index::state::IndexRuntimeState::default(),
             lfs_states: Arc::new(Mutex::new(HashMap::new())),
+            lfs_downloads: Arc::default(),
         }
     }
 
@@ -143,18 +149,41 @@ impl IndexState {
     /// Read the cached LFS state for `key`. Defaults to `NotApplicable` for
     /// unknown keys — callers should treat this as "not probed yet".
     pub async fn get_lfs_state(&self, key: &IndexKey) -> LfsState {
-        let map = self.lfs_states.lock().await;
-        map.get(key).copied().unwrap_or_default()
+        self.get_lfs_status(key).await.state
     }
 
-    /// Cache the LFS state for `key` and emit `space:lfs_state_changed` via
-    /// the provided `AppHandle`. All setters route through this so the
-    /// frontend never misses a transition.
+    /// The cached LFS status for `key`: its state and the files the last
+    /// download left without content.
+    pub async fn get_lfs_status(&self, key: &IndexKey) -> LfsStatus {
+        let map = self.lfs_states.lock().await;
+        map.get(key).cloned().unwrap_or_default()
+    }
+
+    /// Cache what a readiness check outside a download said for `key` (a
+    /// running download keeps its state, missing files stay listed) and
+    /// emit `space:lfs_state_changed`.
     pub async fn set_lfs_state_with(&self, app: &AppHandle, key: &IndexKey, state: LfsState) {
-        {
+        let status = {
             let mut map = self.lfs_states.lock().await;
-            map.insert(key.clone(), state);
-        }
+            let status = map.get(key).cloned().unwrap_or_default().probed(state);
+            map.insert(key.clone(), status.clone());
+            status
+        };
+        self.emit_lfs_status(app, key, &status);
+    }
+
+    /// Cache the LFS status a download gave `key` and emit
+    /// `space:lfs_state_changed`. All setters emit, so the frontend never
+    /// misses a transition.
+    pub async fn set_lfs_status(&self, app: &AppHandle, key: &IndexKey, status: LfsStatus) {
+        self.lfs_states
+            .lock()
+            .await
+            .insert(key.clone(), status.clone());
+        self.emit_lfs_status(app, key, &status);
+    }
+
+    fn emit_lfs_status(&self, app: &AppHandle, key: &IndexKey, status: &LfsStatus) {
         let project_path = system_path::user_facing_path(key.project());
         let space_id = Self::space_id_for_key(key);
         let _ = app.emit(
@@ -162,9 +191,14 @@ impl IndexState {
             serde_json::json!({
                 "projectPath": project_path,
                 "spaceId": space_id,
-                "state": state,
+                "state": status.state,
+                "missing": status.missing,
             }),
         );
+    }
+
+    pub(crate) fn lfs_downloads(&self) -> &LfsDownloads {
+        &self.lfs_downloads
     }
 
     /// Resolve an absolute path into the owning `IndexKey` and rel-path.

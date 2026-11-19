@@ -37,9 +37,9 @@ pub async fn clone_with_progress(
 
     // Re-build the command manually since we need stdio piping.
     //
-    // `GIT_LFS_SKIP_SMUDGE=1` keeps LFS pointers as plain text on clone — we
-    // defer the actual content fetch to the explicit Repair LFS gesture or
-    // post-clone probe in `storage/lfs.rs`. Without this, a missing/wrong
+    // `GIT_LFS_SKIP_SMUDGE=1` keeps LFS pointers as plain text on clone — the
+    // content downloads in the background once the clone is registered
+    // (`storage::lfs::download_in_background`). Without this, a missing/wrong
     // LFS credential would fail the entire clone.
     let mut cmd = Command::new(cli.git_path());
     process::hide_tokio_window(&mut cmd);

@@ -163,6 +163,10 @@ impl GitCli {
     pub(crate) fn transfer_observer(&self) -> Option<&dyn TransferObserver> {
         self.transfer_observer.as_deref()
     }
+
+    pub(crate) fn transfer_observer_handle(&self) -> Option<Arc<dyn TransferObserver>> {
+        self.transfer_observer.clone()
+    }
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, GitError> {
         Ok(Self::detect_at(resolve_git_binary()?))
