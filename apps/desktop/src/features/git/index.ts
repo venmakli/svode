@@ -31,6 +31,8 @@ export {
   type GitConflictKinds,
 } from "./hooks/use-git-conflict-kinds";
 export { gitConflictKindLabel } from "./ui/git-sync-stop-copy";
+export { gitTransferLabel } from "./ui/git-transfer-copy";
+export { transferMegabytes } from "./lib/transfer-size";
 export {
   conflictEditedSide,
   conflictInPageEditor,

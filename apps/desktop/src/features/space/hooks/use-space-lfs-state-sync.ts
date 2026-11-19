@@ -17,7 +17,9 @@ export function useSpaceLfsStateSync(projectPath: string | null): void {
 
       useSpaceStore.setState((state) => ({
         spaces: state.spaces.map((space) =>
-          space.id === targetId ? { ...space, lfsState: event.state } : space,
+          space.id === targetId
+            ? { ...space, lfsState: event.state, lfsMissing: event.missing }
+            : space,
         ),
       }));
     }).then((dispose) => {

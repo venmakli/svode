@@ -9,12 +9,18 @@ import {
   saveSpaceConfig,
 } from "@/platform/space/space-api";
 import { listen } from "@/platform/native/events";
-import type { LfsState, SpaceConfig, SpaceGitType } from "../model/types";
+import type {
+  LfsMissing,
+  LfsState,
+  SpaceConfig,
+  SpaceGitType,
+} from "../model/types";
 
 export interface SpaceLfsStateChanged {
   projectPath: string;
   spaceId: string | null;
   state: LfsState;
+  missing: LfsMissing | null;
 }
 
 export interface SpaceCloneProgress {

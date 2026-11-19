@@ -12,6 +12,7 @@ import { emit } from "@/platform/native/events";
 import { variableFixture, catalogFixture } from "../model/testing/variables";
 import { sameSource, type VariableSource } from "../model/app-variables";
 import type { AppVariableEntry } from "../model";
+import type { LfsMissing } from "@/features/space";
 import type { UseSpaceStorageSettingsResult } from "./use-space-storage-settings";
 
 if (process.env.SVODE_S3_TEST !== "1") {
@@ -98,6 +99,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       projectStrategy: null as "local" | "in-git" | null,
       projectReads: 0,
       localFiles: 0 as number | "fail",
+      lfsMissing: null as LfsMissing | null,
     };
     mockNativeIpc(
       async (command, rawArgs = {}) => {
@@ -129,18 +131,22 @@ if (process.env.SVODE_S3_TEST !== "1") {
         }
         if (command === "git_check_availability")
           return { git: true, gitLfs: true };
-        if (command === "get_lfs_state")
-          return fixture.bindings &&
-            Object.values(fixture.bindings).every((source) =>
-              fixture.entries.some(
-                (entry) =>
-                  sameSource(entry.source, source) &&
-                  entry.kind === "secret" &&
-                  entry.hasValue,
-              ),
-            )
-            ? "ready"
-            : "missing-creds";
+        if (command === "get_lfs_status")
+          return {
+            state:
+              fixture.bindings &&
+              Object.values(fixture.bindings).every((source) =>
+                fixture.entries.some(
+                  (entry) =>
+                    sameSource(entry.source, source) &&
+                    entry.kind === "secret" &&
+                    entry.hasValue,
+                ),
+              )
+                ? "ready"
+                : "missing-creds",
+            missing: fixture.lfsMissing,
+          };
         if (command === "diagnose_lfs_policy")
           return {
             managedPolicyCurrent: true,
@@ -666,6 +672,42 @@ if (process.env.SVODE_S3_TEST !== "1") {
       });
       expect(h.state.s3.canSubmit).toBe(false);
       expect(h.state.s3.editor!.draft.value).toBe("draft");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("the LFS status reads the files left and follows the event of its repository", async () => {
+    const missing: LfsMissing = {
+      files: [{ path: "clips/video.mov", size: 104_857_600 }],
+      bytes: 104_857_600,
+      stop: { kind: "unreachable" },
+    };
+    const h = await setup(true);
+    const report = (spaceId: string | null, next: LfsMissing | null) =>
+      act(async () => {
+        await emit("space:lfs_state_changed", {
+          projectPath: "/repo",
+          spaceId,
+          state: "ready",
+          missing: next,
+        });
+        await tick();
+      });
+    try {
+      expect(h.state.lfsState).toBe("ready");
+      expect(h.state.lfsMissing).toBe(null);
+      await report(null, missing);
+      expect(h.state.lfsMissing).toEqual(missing);
+      await report("other-space", null);
+      expect(h.state.lfsMissing).toEqual(missing);
+      await report(null, null);
+      expect(h.state.lfsMissing).toBe(null);
+
+      h.fixture.lfsMissing = missing;
+      await h.render("docs");
+      expect(h.state.lfsState).toBe("ready");
+      expect(h.state.lfsMissing).toEqual(missing);
     } finally {
       await h.cleanup();
     }

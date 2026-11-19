@@ -11,7 +11,7 @@ import {
   diagnoseLfsRemote as diagnosePlatformLfsRemote,
   getAssetsConfig as getPlatformAssetsConfig,
   getS3Bindings as getPlatformS3Bindings,
-  getLfsState as getPlatformLfsState,
+  getLfsStatus as getPlatformLfsStatus,
   hasS3Credentials as hasPlatformS3Credentials,
   listenLfsStateChanged as listenPlatformLfsStateChanged,
   repairLfs as repairPlatformLfs,
@@ -20,6 +20,7 @@ import {
 import type {
   AssetsS3Config,
   AssetsStrategy,
+  LfsMissing,
   LfsState,
 } from "@/features/space";
 
@@ -74,10 +75,15 @@ export interface EffectiveAssetsConfig {
   };
 }
 
-export interface LfsStateChangedEvent {
+/** With `state` `ready`, `missing` set means not every file is downloaded. */
+export interface LfsStatus {
+  state: LfsState;
+  missing: LfsMissing | null;
+}
+
+export interface LfsStateChangedEvent extends LfsStatus {
   projectPath: string;
   spaceId: string | null;
-  state: LfsState;
 }
 
 export type LfsRemoteDiagnosticReason =
@@ -132,8 +138,8 @@ export function getAssetsConfig(
   return getPlatformAssetsConfig(input);
 }
 
-export function getLfsState(input: SpacePoolInput): Promise<LfsState> {
-  return getPlatformLfsState(input);
+export function getLfsStatus(input: SpacePoolInput): Promise<LfsStatus> {
+  return getPlatformLfsStatus(input);
 }
 
 export function diagnoseLfsRemote(

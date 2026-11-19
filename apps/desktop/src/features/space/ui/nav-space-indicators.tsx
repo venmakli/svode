@@ -1,4 +1,4 @@
-import { CloudOff, TriangleAlert } from "lucide-react";
+import { CloudDownload, CloudOff, TriangleAlert } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -9,7 +9,8 @@ import { SidebarMenuItem, SidebarMenuSub } from "@/components/ui/sidebar";
 import * as m from "@/paraglide/messages.js";
 import { GitTransferIcon, useGitTransfer } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
-import type { LfsState } from "../model";
+import type { LfsMissing, LfsState } from "../model";
+import { lfsMissingDescription } from "./lfs-missing-copy";
 
 export function TreeLoadingRows() {
   return (
@@ -33,26 +34,58 @@ export function TreeLoadingRows() {
   );
 }
 
-/** The LFS place of a Space row: one icon, a running transfer before no access. */
+/**
+ * The LFS place of a Space row: one icon, a running transfer before no
+ * access before files left without content.
+ */
 export function LfsIndicatorIcon({
   lfsState,
+  lfsMissing,
   spacePath,
 }: {
   lfsState: LfsState;
+  lfsMissing: LfsMissing | null;
   spacePath: string;
 }) {
   const transfer = useGitTransfer(spacePath);
   if (transfer) return <GitTransferIcon transfer={transfer} />;
-  if (lfsState !== "missing-creds") return null;
+  if (lfsState === "missing-creds") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <CloudOff className="text-destructive" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {m.storage_lfs_banner_missing_remote_title()}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  if (lfsState === "ready" && lfsMissing) {
+    return <LfsMissingIcon missing={lfsMissing} />;
+  }
+  return null;
+}
+
+/** A calm static cloud: not every LFS file is on this device, and why. */
+function LfsMissingIcon({ missing }: { missing: LfsMissing }) {
+  const label = lfsMissingDescription(missing);
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="inline-flex">
-          <CloudOff className="text-destructive" />
+        <span
+          className="inline-flex size-4 shrink-0 items-center justify-center"
+          role="img"
+          aria-label={label}
+          data-lfs-missing=""
+        >
+          <CloudDownload className="size-3! text-muted-foreground" />
         </span>
       </TooltipTrigger>
-      <TooltipContent side="right">
-        {m.storage_lfs_banner_missing_remote_title()}
+      <TooltipContent side="right" className="[overflow-wrap:anywhere]">
+        {label}
       </TooltipContent>
     </Tooltip>
   );

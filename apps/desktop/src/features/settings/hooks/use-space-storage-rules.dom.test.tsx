@@ -66,8 +66,8 @@ if (process.env.SVODE_STORAGE_RULES_TEST !== "1") {
             return 0;
           case "git_check_availability":
             return { git: true, gitLfs: true, gitLfsVersion: "3.7.1" };
-          case "get_lfs_state":
-            return "ready";
+          case "get_lfs_status":
+            return { state: "ready", missing: null };
           case "diagnose_lfs_remote":
             return {
               state: "ready",

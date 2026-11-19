@@ -1297,10 +1297,30 @@
   "storage_project_setting_s3_hint": "Настройка проекта заполнит Endpoint, Bucket и Region; ключи S3 для этого репозитория выберите отдельно.",
   "storage_project_setting_loaded": "Настройка проекта загружена: проверьте «Хранилище S3» и выберите ключи.",
   "storage_project_setting_missing_s3": "S3-настройки проекта неполные.",
-  "storage_repair_lfs": "Скачать бинарники",
-  "storage_repair_lfs_pulling": "Скачивание бинарников…",
+  "storage_lfs_download": "Скачать файлы",
+  "storage_lfs_downloading": "Скачивание файлов…",
   "storage_lfs_objects": "LFS-объекты",
-  "storage_lfs_objects_ready": "Передача файлов настроена.",
+  "storage_lfs_objects_downloaded": "Все файлы скачаны.",
+  "storage_lfs_missing_files": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Не скачан {count} файл",
+        "countPlural=few": "Не скачано {count} файла",
+        "countPlural=many": "Не скачано {count} файлов",
+        "countPlural=*": "Не скачано {count} файла"
+      }
+    }
+  ],
+  "storage_lfs_missing_size": "{size} МБ",
+  "storage_lfs_stop_no_access": "Нет доступа к хранилищу",
+  "storage_lfs_stop_unreachable": "Сервер недоступен",
+  "storage_lfs_stop_stalled": "2 минуты не было передачи данных",
+  "storage_lfs_stop_not_on_server": "Файла нет на сервере",
+  "storage_lfs_files_show": "Показать файлы",
+  "storage_lfs_files_hide": "Скрыть файлы",
+  "storage_lfs_files_list": "Нескачанные файлы",
   "storage_lfs_objects_missing_s3": "Нужны ключи S3: выберите их в группе «Хранилище S3» и сохраните.",
   "storage_lfs_objects_missing_remote": "Нет доступа к Git LFS remote — проверьте его ниже.",
   "storage_lfs_banner_missing_remote_title": "Git LFS server требует аутентификации",

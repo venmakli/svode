@@ -1,4 +1,6 @@
 import type {
+  LfsDownloadStopDto,
+  LfsMissingDto,
   MoveContentResultDto,
   ProjectWindowRequestDto,
   SpaceConfigUnreadableDto,
@@ -9,6 +11,12 @@ export type SpaceGitType = "inline" | "independent" | "submodule";
 export type SpaceStatus = "ready" | "missing" | "broken";
 
 export type LfsState = "n/a" | "ready" | "missing-creds" | "pulling";
+
+/** The files the last LFS download left without content and why it stopped. */
+export type LfsMissing = LfsMissingDto;
+
+/** Why the last LFS download stopped with files still missing. */
+export type LfsDownloadStop = LfsDownloadStopDto;
 
 export type WindowOpenIntent =
   | { kind: "home" }
@@ -38,6 +46,8 @@ export interface SpaceInfo {
   lastOpened: string | null;
   status: SpaceStatus;
   lfsState: LfsState;
+  /** With `lfsState` `ready`, set when not every LFS file is downloaded. */
+  lfsMissing?: LfsMissing | null;
   /** Its spaces and settings stay hidden until the config reads again. */
   configUnreadable?: SpaceConfigUnreadable;
 }

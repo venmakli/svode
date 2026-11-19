@@ -7,6 +7,7 @@ import type { GitAuthChallenge } from "@/features/git";
 import type {
   AssetsS3Config,
   AssetsStrategy,
+  LfsMissing,
   LfsState,
 } from "@/features/space";
 import { useSpaceStorageConfig } from "./use-space-storage-config";
@@ -86,6 +87,8 @@ export interface UseSpaceStorageSettingsResult {
   s3Region: string;
   s3Prefix: string;
   lfsState: LfsState;
+  // With `lfsState` `ready`: the files the last download left and why.
+  lfsMissing: LfsMissing | null;
   lfsRepairInFlight: boolean;
   lfsRemoteDiagnostic: LfsRemoteDiagnostic | null;
   lfsRemoteDiagnosticInFlight: boolean;
@@ -215,6 +218,7 @@ export function useSpaceStorageSettings({
     lfsAvailabilityLoaded,
     lfsVersion,
     lfsState,
+    lfsMissing,
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,
@@ -649,6 +653,7 @@ export function useSpaceStorageSettings({
     s3Region,
     s3Prefix,
     lfsState,
+    lfsMissing,
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,

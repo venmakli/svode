@@ -164,6 +164,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       s3Region: "eu-1",
       s3Prefix: "svode/abc",
       lfsState: "ready",
+      lfsMissing: null,
       lfsRepairInFlight: false,
       lfsRemoteDiagnostic: null,
       lfsRemoteDiagnosticInFlight: false,
@@ -642,7 +643,8 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
         "No access to the Git LFS remote — check it below.",
       ),
     ).toBe(true);
-    expect(buttons("Download binaries", health).length).toBe(0);
+    expect(buttons("Download files", health).length).toBe(0);
+    expect(buttons("Retry", health).length).toBe(0);
     expect(health.textContent?.includes("Repository LFS policy")).toBe(true);
     expect(health.textContent?.includes("Up to date")).toBe(true);
     expect(
@@ -671,7 +673,121 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     );
     const ready = group("Status");
     expect(ready.textContent?.includes("Git LFS remote")).toBe(false);
-    await press(buttons("Download binaries", ready)[0]);
+    expect(ready.textContent?.includes("All files downloaded.")).toBe(true);
+    expect(buttons("Download files", ready).length).toBe(0);
+  });
+
+  test("LFS objects: all downloaded, the download with its progress, files left with their cause and list, no access", async () => {
+    const { useGitStore } = await import("@/features/git");
+    const lfsS3 = {
+      assetsStrategy: "lfs-s3",
+      savedAssetsStrategy: "lfs-s3",
+    } as const;
+    const objectsRow = () =>
+      Array.from(
+        group("Status").querySelectorAll<HTMLElement>('[data-slot="item"]'),
+      ).find((item) => item.textContent?.startsWith("LFS objects"))!;
+    const files = Array.from({ length: 60 }, (_, index) => ({
+      path: `media/very/long/folder/name/that/keeps/going/clip-${index}.mov`,
+      size: 2 * 1024 * 1024,
+    }));
+    const missing = {
+      files,
+      bytes: 120 * 1024 * 1024,
+      stop: { kind: "not-on-server" as const },
+    };
+
+    // All downloaded: the state, no action, no setup wording.
+    await render(storageFixture(lfsS3));
+    expect(objectsRow().textContent).toContain("All files downloaded.");
+    expect(objectsRow().querySelectorAll("button").length).toBe(0);
+    expect(document.body.textContent).not.toContain("File transfer is set up.");
+
+    // Files left: count, size and cause, the files on request, one action.
+    await render(storageFixture({ ...lfsS3, lfsMissing: missing }));
+    expect(objectsRow().textContent).toContain(
+      "60 files not downloaded · 120 MB. The file is not on the server.",
+    );
+    expect(document.body.textContent).not.toContain("All files downloaded.");
+    expect(document.body.textContent).not.toContain("File transfer is set up.");
+    expect(objectsRow().querySelector("ul")).toBe(null);
+    const download = buttons("Download files", objectsRow())[0];
+    expect(download.disabled).toBe(false);
+    await press(buttons("Show files", objectsRow())[0]);
+    const list = objectsRow().querySelector("ul")!;
+    expect(list.getAttribute("aria-label")).toBe("Files not downloaded");
+    const items = Array.from(list.querySelectorAll("li"));
+    expect(items.length).toBe(51);
+    expect(items[0].textContent).toBe(`${files[0].path}2 MB`);
+    expect(items[49].textContent).toContain(files[49].path);
+    expect(list.textContent).not.toContain(files[50].path);
+    expect(items[50].textContent).toBe("And 10 more.");
+    await press(buttons("Hide files", objectsRow())[0]);
+    expect(objectsRow().querySelector("ul")).toBe(null);
+    await press(buttons("Download files", objectsRow())[0]);
+    expect(calls).toEqual(["repairLfs"]);
+
+    // A short list shows every file without a remainder.
+    await render(
+      storageFixture({
+        ...lfsS3,
+        lfsMissing: { ...missing, files: files.slice(0, 3) },
+      }),
+    );
+    expect(objectsRow().textContent).toContain("3 files not downloaded");
+    await press(buttons("Show files", objectsRow())[0]);
+    expect(objectsRow().querySelectorAll("li").length).toBe(3);
+
+    // The gesture in flight: the action waits.
+    await render(
+      storageFixture({
+        ...lfsS3,
+        lfsMissing: missing,
+        lfsRepairInFlight: true,
+      }),
+    );
+    expect(buttons("Download files", objectsRow())[0].disabled).toBe(true);
+
+    // Downloading: the progress of the transfer, the action unavailable.
+    await render(
+      storageFixture({ ...lfsS3, lfsState: "pulling", lfsMissing: missing }),
+    );
+    expect(objectsRow().textContent).toContain("Downloading files…");
+    expect(buttons("Download files", objectsRow())[0].disabled).toBe(true);
+    expect(buttons("Show files", objectsRow()).length).toBe(0);
+    try {
+      await act(async () =>
+        useGitStore.getState().setTransfer("/project", {
+          direction: "download",
+          file: 2,
+          files: 6,
+          path: "photos/photo.jpg",
+          bytes: 314_573,
+          size: 419_430,
+        }),
+      );
+      expect(objectsRow().textContent).toContain(
+        "Downloading 2 of 6 · photo.jpg · 0.3 of 0.4 MB",
+      );
+      expect(objectsRow().textContent).not.toContain("Downloading files…");
+    } finally {
+      await act(async () =>
+        useGitStore.getState().setTransfer("/project", null),
+      );
+    }
+
+    // No access keeps its texts and Retry, not the download.
+    await render(
+      storageFixture({
+        ...lfsS3,
+        lfsState: "missing-creds",
+        lfsMissing: missing,
+      }),
+    );
+    expect(objectsRow().textContent).toContain("S3 keys are needed");
+    expect(objectsRow().textContent).not.toContain("not downloaded");
+    expect(buttons("Download files", objectsRow()).length).toBe(0);
+    await press(buttons("Retry", objectsRow())[0]);
     expect(calls).toEqual(["repairLfs"]);
   });
 

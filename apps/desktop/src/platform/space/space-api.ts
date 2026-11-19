@@ -275,10 +275,6 @@ export function applyAssetsStrategy(
   );
 }
 
-export function getLfsState(input: SpacePoolInputDto): Promise<LfsStateDto> {
-  return invokeCommand<LfsStateDto>("get_lfs_state", input);
-}
-
 export function getLfsStatus(input: SpacePoolInputDto): Promise<LfsStatusDto> {
   return invokeCommand<LfsStatusDto>("get_lfs_status", input);
 }

@@ -6,10 +6,10 @@ import {
   saveGitRemoteCredentials,
   type GitAuthChallenge,
 } from "@/features/git";
-import type { LfsState } from "@/features/space";
+import type { LfsMissing, LfsState } from "@/features/space";
 import {
   diagnoseLfsRemote as diagnoseLfsRemoteApi,
-  getLfsState,
+  getLfsStatus,
   getSettingsGitAvailability,
   listenLfsStateChanged,
   repairLfs as repairLfsApi,
@@ -33,6 +33,7 @@ export function useSpaceStorageLfs({
   const [lfsAvailabilityLoaded, setLfsAvailabilityLoaded] = useState(false);
   const [lfsVersion, setLfsVersion] = useState<string | null>(null);
   const [lfsState, setLfsState] = useState<LfsState>("n/a");
+  const [lfsMissing, setLfsMissing] = useState<LfsMissing | null>(null);
   const [lfsRepairInFlight, setLfsRepairInFlight] = useState(false);
   const [lfsRemoteDiagnostic, setLfsRemoteDiagnostic] =
     useState<LfsRemoteDiagnostic | null>(null);
@@ -55,16 +56,26 @@ export function useSpaceStorageLfs({
     if (!projectPath) return;
     const request = ++stateReadRef.current;
     try {
-      const state = await getLfsState({
+      const status = await getLfsStatus({
         projectPath,
         spaceId: currentSpaceId,
       });
-      if (ownerKeyRef.current === ownerKey && stateReadRef.current === request)
-        setLfsState(state);
+      if (
+        ownerKeyRef.current === ownerKey &&
+        stateReadRef.current === request
+      ) {
+        setLfsState(status.state);
+        setLfsMissing(status.missing);
+      }
     } catch (err) {
-      console.warn("get_lfs_state failed:", err);
-      if (ownerKeyRef.current === ownerKey && stateReadRef.current === request)
+      console.warn("get_lfs_status failed:", err);
+      if (
+        ownerKeyRef.current === ownerKey &&
+        stateReadRef.current === request
+      ) {
         setLfsState("n/a");
+        setLfsMissing(null);
+      }
     }
   }, [projectPath, currentSpaceId, ownerKey]);
 
@@ -142,6 +153,7 @@ export function useSpaceStorageLfs({
       if ((event.payload.spaceId ?? null) !== currentSpaceId) return;
       const nextState = event.payload.state;
       setLfsState(nextState);
+      setLfsMissing(event.payload.missing);
       setLfsRemoteDiagnostic((current) =>
         current && current.state !== nextState ? null : current,
       );
@@ -230,6 +242,7 @@ export function useSpaceStorageLfs({
     lfsAvailabilityLoaded,
     lfsVersion,
     lfsState,
+    lfsMissing,
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,

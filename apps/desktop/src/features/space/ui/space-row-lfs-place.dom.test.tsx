@@ -28,13 +28,21 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { useSpaceRowGitControls } = await import("./space-row-git-controls");
   type LfsState = import("../model").LfsState;
+  type LfsMissing = import("../model").LfsMissing;
 
   const SPACE = "/df369d-project/media";
   const PROJECT = "/df369d-project";
 
-  function Row({ lfsState }: { lfsState: LfsState }) {
+  function Row({
+    lfsState,
+    lfsMissing,
+  }: {
+    lfsState: LfsState;
+    lfsMissing: LfsMissing | null;
+  }) {
     const controls = useSpaceRowGitControls({
       lfsState,
+      lfsMissing,
       loading: false,
       refreshing: false,
       rootPath: PROJECT,
@@ -48,10 +56,10 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
     );
   }
 
-  const render = (lfsState: LfsState) =>
+  const render = (lfsState: LfsState, lfsMissing: LfsMissing | null = null) =>
     dom.render(
       <TooltipProvider>
-        <Row lfsState={lfsState} />
+        <Row lfsState={lfsState} lfsMissing={lfsMissing} />
       </TooltipProvider>,
     );
   const row = () => doc.querySelector("[data-row]")!;
@@ -61,6 +69,8 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
   const syncingIcon = () =>
     row().querySelector(`[aria-label="${m.git_status_syncing()}"]`);
   const noAccessIcon = () => row().querySelector(".lucide-cloud-off");
+  const missingIcon = () =>
+    row().querySelector<HTMLElement>("[data-lfs-missing]");
   const mockStatus = (repository?: string) =>
     mockNativeIpc(
       (command) =>
@@ -136,9 +146,7 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
       // The end of the transfer clears the place; no download line remains.
       await act(async () => git.setTransfer(SPACE, null));
       expect(transferIcon()).toBe(null);
-      expect(doc.body.textContent).not.toContain(
-        m.storage_repair_lfs_pulling(),
-      );
+      expect(doc.body.textContent).not.toContain(m.storage_lfs_downloading());
       expect(below().querySelector('[data-slot="progress"]')).toBe(null);
       await render("missing-creds");
       expect(!!noAccessIcon()).toBe(true);
@@ -177,6 +185,83 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
       git.setTransfer(PROJECT, null);
       git.clear(SPACE);
       clearNativeMocks();
+    }
+  });
+  test("files left without content take the LFS place last, as a calm icon with count, size and cause", async () => {
+    mockStatus();
+    const git = useGitStore.getState();
+    const previousLocale = getLocale();
+    const missing: LfsMissing = {
+      files: [
+        { path: "photos/a.jpg", size: 104_858 },
+        { path: "photos/b.jpg", size: 419_430 },
+        { path: "clips/video.mov", size: 125_304_832 },
+      ],
+      bytes: 125_829_120,
+      stop: { kind: "unreachable" },
+    };
+    try {
+      await setLocale("ru", { reload: false });
+      git.updateBackendSyncing(SPACE, true);
+
+      await render("ready", missing);
+      const icon = missingIcon()!;
+      expect(icon.getAttribute("role")).toBe("img");
+      expect(icon.getAttribute("aria-label")).toBe(
+        "Не скачано 3 файла · 120 МБ. Сервер недоступен.",
+      );
+      expect(!!icon.querySelector(".lucide-cloud-download")).toBe(true);
+      expect(icon.outerHTML.includes("animate-")).toBe(false);
+      expect(icon.querySelector("svg")!.classList).toContain(
+        "text-muted-foreground",
+      );
+      expect(icon.outerHTML.includes("destructive")).toBe(false);
+      const gitIndicator = syncingIcon()!.closest("span.size-4")!.outerHTML;
+      expect(
+        icon.compareDocumentPosition(syncingIcon()!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      // A running transfer takes the place, then gives it back.
+      await act(async () =>
+        git.setTransfer(SPACE, {
+          direction: "download",
+          file: 3,
+          files: 3,
+          path: "clips/video.mov",
+          bytes: 1_048_576,
+          size: 125_304_832,
+        }),
+      );
+      expect(missingIcon()).toBe(null);
+      expect(transferIcon()?.dataset.gitTransfer).toBe("download");
+      expect(syncingIcon()!.closest("span.size-4")!.outerHTML).toBe(
+        gitIndicator,
+      );
+      await act(async () => git.setTransfer(SPACE, null));
+      expect(!!missingIcon()).toBe(true);
+
+      // No access comes before files left; a download or nothing missing shows none.
+      await render("missing-creds", missing);
+      expect(!!noAccessIcon()).toBe(true);
+      expect(missingIcon()).toBe(null);
+      await render("pulling", missing);
+      expect(missingIcon()).toBe(null);
+      expect(noAccessIcon()).toBe(null);
+      await render("ready", null);
+      expect(missingIcon()).toBe(null);
+      expect(row().querySelector('[role="img"]')).toBe(null);
+
+      await render("ready", { ...missing, stop: { kind: "stalled" } });
+      expect(missingIcon()!.getAttribute("aria-label")).toBe(
+        "Не скачано 3 файла · 120 МБ. 2 минуты не было передачи данных.",
+      );
+    } finally {
+      await dom.render(null);
+      git.setTransfer(SPACE, null);
+      git.clear(SPACE);
+      clearNativeMocks();
+      await setLocale(previousLocale, { reload: false });
     }
   });
 }

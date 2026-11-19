@@ -13,6 +13,7 @@ import {
   SettingsRow,
 } from "./settings-layout";
 import { useStorageAction } from "./storage-actions";
+import { StorageLfsObjectsRow } from "./storage-lfs-objects-row";
 import { StorageLfsPolicyRow } from "./storage-lfs-policy-row";
 
 type RemoteDiagnostic = UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
@@ -29,49 +30,14 @@ export function StorageStateGroup({
   const remote = settings.savedAssetsStrategy === "lfs-remote";
   const state = settings.lfsState;
   const ready = state === "ready";
-  const pulling = state === "pulling";
   const diagnostic = settings.lfsRemoteDiagnostic;
   const checking = settings.lfsRemoteDiagnosticInFlight;
-  const repairing = pulling || settings.lfsRepairInFlight;
 
   return (
     <>
       <SettingsGroup title={m.storage_state_group()}>
         {state === "n/a" ? null : (
-          <SettingsItem
-            key="objects"
-            title={m.storage_lfs_objects()}
-            description={
-              pulling
-                ? m.storage_repair_lfs_pulling()
-                : ready
-                  ? m.storage_lfs_objects_ready()
-                  : remote
-                    ? m.storage_lfs_objects_missing_remote()
-                    : m.storage_lfs_objects_missing_s3()
-            }
-            actions={
-              ready || pulling || !remote ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={repairing}
-                  onClick={() => void settings.repairLfs()}
-                >
-                  {repairing ? (
-                    <LoaderCircle
-                      data-icon="inline-start"
-                      className="animate-spin"
-                    />
-                  ) : null}
-                  {ready || pulling
-                    ? m.storage_repair_lfs()
-                    : m.storage_lfs_retry()}
-                </Button>
-              ) : null
-            }
-          />
+          <StorageLfsObjectsRow key="objects" settings={settings} />
         )}
         <StorageLfsPolicyRow
           key="policy"
