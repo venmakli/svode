@@ -9,6 +9,7 @@ pub mod policy;
 pub mod routes;
 pub mod s3;
 pub mod scope;
+pub mod strategy;
 
 #[cfg(test)]
 mod connection_tests;
@@ -18,3 +19,5 @@ mod lfs_declaration_tests;
 mod policy_tests;
 #[cfg(test)]
 mod s3_tests;
+#[cfg(test)]
+mod strategy_tests;

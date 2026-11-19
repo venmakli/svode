@@ -16,7 +16,11 @@ use super::lfs::{
     resolve_agent_binary, write_managed_registration,
 };
 use super::s3::{AgentConfig, CONFIG_REL, SecretBindings, SecretFailure, check_connection};
+use super::strategy::{
+    self, StrategyError, StrategyRequest, StrategyScope, StrategyWarning, shown_binary_routing,
+};
 use crate::git::GitError;
+use crate::git::autocommit::SystemCommitKind;
 use crate::git::cli::GitCli;
 use crate::git::state::GitRuntime;
 use crate::variables::DeviceSecretStore;
@@ -304,6 +308,9 @@ pub enum ConnectError {
     NotReady(LfsNotReady),
     #[error(transparent)]
     Git(#[from] GitError),
+    /// The strategy change is refused or its apply failed.
+    #[error(transparent)]
+    Strategy(#[from] StrategyError),
     #[error("{0}")]
     Storage(String),
 }
@@ -314,16 +321,22 @@ impl From<LfsNotReady> for ConnectError {
     }
 }
 
-/// Connect this device to the S3 storage of a scope that already uses
-/// `lfs-s3`: both bound Secrets resolve, a probe object is written, read and
-/// deleted with them, then `svode-lfs` is registered in Git and the agent
-/// config is published. Every check runs before the first write, so a
-/// refusal leaves the previous setup as it was; a repeat with the same data
-/// changes no file. Nothing is committed.
-pub async fn connect(
+/// A connection whose checks passed; nothing is written yet.
+struct PreparedConnection {
+    cli: GitCli,
+    agent: AgentConfig,
+    agent_binary: PathBuf,
+    catalog_dir: PathBuf,
+    repo_dir: PathBuf,
+}
+
+/// Every check of a connection, before its first write: the strategy and
+/// S3 address of the scope, `git-lfs` and `svode-lfs`, both bound Secrets
+/// and a probe object written, read and deleted with them.
+async fn prepare(
     git: &GitRuntime,
     request: ConnectRequest<'_>,
-) -> Result<Connected, ConnectError> {
+) -> Result<PreparedConnection, ConnectError> {
     let ConnectRequest {
         catalog_dir,
         project_path,
@@ -359,65 +372,184 @@ pub async fn connect(
     .await
     .map_err(|detail| LfsNotReady::S3CheckFailed { detail })?;
     drop(credentials);
-
-    let watched = watched_files(&cli, repo_dir, catalog_dir).await?;
-    let before = snapshot(&watched);
-    {
-        let lock = git.get_lock(repo_dir).await;
-        let _guard = lock.lock().await;
-        crate::git::ops::ensure_svode_gitignore(repo_dir)?;
-        let installed = cli.exec(repo_dir, &["lfs", "install", "--local"]).await?;
-        if installed.exit_code != 0 {
-            return Err(tooling(format!(
-                "git lfs install failed: {}",
-                installed.stderr.trim()
-            ))
-            .into());
-        }
-        if inspect_registration(&cli, repo_dir)
-            .await
-            .map_err(|error| ConnectError::Storage(error.to_string()))?
-            != RepairAction::None
-        {
-            write_managed_registration(&cli, repo_dir, &agent_binary)
-                .await
-                .map_err(|error| ConnectError::Storage(error.to_string()))?;
-        }
-    }
-    let published = agent.clone();
-    let catalog = catalog_dir.to_path_buf();
-    let repo = repo_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        published.publish(&catalog, &repo, &DeviceSecretStore::new(&catalog))
+    Ok(PreparedConnection {
+        cli,
+        agent,
+        agent_binary,
+        catalog_dir: catalog_dir.to_path_buf(),
+        repo_dir: repo_dir.to_path_buf(),
     })
-    .await
-    .map_err(|error| ConnectError::Storage(format!("S3 config task failed: {error}")))?
-    .map_err(ConnectError::Storage)?;
+}
 
-    let after = snapshot(&watched);
-    let changed = watched
-        .into_iter()
-        .filter(|path| before.get(path) != after.get(path))
-        .collect();
+impl PreparedConnection {
+    /// Register `svode-lfs` in Git and publish the agent config.
+    async fn finish(self, git: &GitRuntime) -> Result<AgentConfig, ConnectError> {
+        let Self {
+            cli,
+            agent,
+            agent_binary,
+            catalog_dir,
+            repo_dir,
+        } = self;
+        {
+            let lock = git.get_lock(&repo_dir).await;
+            let _guard = lock.lock().await;
+            crate::git::ops::ensure_svode_gitignore(&repo_dir)?;
+            let installed = cli.exec(&repo_dir, &["lfs", "install", "--local"]).await?;
+            if installed.exit_code != 0 {
+                return Err(tooling(format!(
+                    "git lfs install failed: {}",
+                    installed.stderr.trim()
+                ))
+                .into());
+            }
+            if inspect_registration(&cli, &repo_dir)
+                .await
+                .map_err(|error| ConnectError::Storage(error.to_string()))?
+                != RepairAction::None
+            {
+                write_managed_registration(&cli, &repo_dir, &agent_binary)
+                    .await
+                    .map_err(|error| ConnectError::Storage(error.to_string()))?;
+            }
+        }
+        let published = agent.clone();
+        tokio::task::spawn_blocking(move || {
+            published.publish(
+                &catalog_dir,
+                &repo_dir,
+                &DeviceSecretStore::new(&catalog_dir),
+            )
+        })
+        .await
+        .map_err(|error| ConnectError::Storage(format!("S3 config task failed: {error}")))?
+        .map_err(ConnectError::Storage)?;
+        Ok(agent)
+    }
+}
+
+/// Connect this device to the S3 storage of a scope that already uses
+/// `lfs-s3`: both bound Secrets resolve, a probe object is written, read and
+/// deleted with them, then `svode-lfs` is registered in Git and the agent
+/// config is published. Every check runs before the first write, so a
+/// refusal leaves the previous setup as it was; a repeat with the same data
+/// changes no file. Nothing is committed.
+pub async fn connect(
+    git: &GitRuntime,
+    request: ConnectRequest<'_>,
+) -> Result<Connected, ConnectError> {
+    let (repo_dir, catalog_dir) = (request.repo_dir, request.catalog_dir);
+    let prepared = prepare(git, request).await?;
+    let watched = watched_files(&prepared.cli, repo_dir, catalog_dir, &[]).await?;
+    let before = snapshot(&watched);
+    let config = prepared.finish(git).await?;
     Ok(Connected {
-        config: agent,
-        changed,
+        config,
+        changed: changed(watched, &before),
+    })
+}
+
+/// Enabling of `lfs-s3` in a storage scope from this device.
+pub struct EnableRequest<'a> {
+    /// Device config directory, as in [`ConnectRequest`].
+    pub catalog_dir: &'a Path,
+    /// Variables context of the bindings.
+    pub project_path: &'a Path,
+    pub space_id: Option<&'a str>,
+    /// Repository of the storage scope.
+    pub repo_dir: &'a Path,
+    pub scope: StrategyScope<'a>,
+    /// Current assets configuration of the scope; its binary routing is
+    /// kept as the storage settings show it.
+    pub current: &'a AssetsSpaceConfig,
+    /// S3 address; an empty prefix takes the default of the scope.
+    pub target: AssetsS3Config,
+    pub bindings: SecretBindings,
+}
+
+#[derive(Debug)]
+pub struct Enabled {
+    /// The assets section written to `.svode/config.json`.
+    pub assets: AssetsSpaceConfig,
+    pub config: AgentConfig,
+    /// Warnings of the strategy apply, as the desktop app reports them.
+    pub warnings: Vec<StrategyWarning>,
+    /// Absolute paths of the files the change wrote, in path order.
+    pub changed: Vec<PathBuf>,
+}
+
+/// Enable `lfs-s3` in a storage scope and connect this device to it. The
+/// strategy change passes the transition rule of the desktop app and the
+/// connection passes every check of [`connect`] before the first write; the
+/// strategy is then applied as the desktop app applies it (managed files,
+/// then `.svode/config.json`) and the device is connected. Nothing is
+/// committed; a repeat with the same data changes no file.
+pub async fn enable(git: &GitRuntime, request: EnableRequest<'_>) -> Result<Enabled, ConnectError> {
+    let EnableRequest {
+        catalog_dir,
+        project_path,
+        space_id,
+        repo_dir,
+        scope,
+        current,
+        target,
+        bindings,
+    } = request;
+    let planned = strategy::plan(
+        scope,
+        StrategyRequest {
+            strategy: AssetsStrategy::LfsS3,
+            binary_routing: shown_binary_routing(current),
+            s3: Some(target),
+        },
+    )?;
+    let assets = planned.assets().clone();
+    let prepared = prepare(
+        git,
+        ConnectRequest {
+            catalog_dir,
+            project_path,
+            space_id,
+            repo_dir,
+            config: &assets,
+            bindings,
+        },
+    )
+    .await?;
+    let strategy_files = SystemCommitKind::AssetsStrategy
+        .paths()
+        .iter()
+        .map(|path| repo_dir.join(path))
+        .collect::<Vec<_>>();
+    let watched = watched_files(&prepared.cli, repo_dir, catalog_dir, &strategy_files).await?;
+    let before = snapshot(&watched);
+    let applied = planned
+        .apply(git, repo_dir, Some(&prepared.agent_binary))
+        .await?;
+    let config = prepared.finish(git).await?;
+    Ok(Enabled {
+        assets,
+        config,
+        warnings: applied.warnings,
+        changed: changed(watched, &before),
     })
 }
 
 /// Files a connection may change: the agent config and `.gitignore` of the
 /// repository, its Git config and Git LFS hooks, and the device settings
-/// that list S3 owners.
+/// that list S3 owners, with the `extra` files of the caller.
 async fn watched_files(
     cli: &GitCli,
     repo_dir: &Path,
     catalog_dir: &Path,
+    extra: &[PathBuf],
 ) -> Result<Vec<PathBuf>, GitError> {
     let mut files = vec![
         repo_dir.join(CONFIG_REL),
         repo_dir.join(".gitignore"),
         catalog_dir.join("settings.json"),
     ];
+    files.extend_from_slice(extra);
     if let Some(config) = git_path(cli, repo_dir, "config").await? {
         files.push(config);
     }
@@ -448,5 +580,14 @@ fn snapshot(files: &[PathBuf]) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
     files
         .iter()
         .map(|path| (path.clone(), std::fs::read(path).ok()))
+        .collect()
+}
+
+/// The `watched` files whose bytes differ from `before`.
+fn changed(watched: Vec<PathBuf>, before: &BTreeMap<PathBuf, Option<Vec<u8>>>) -> Vec<PathBuf> {
+    let after = snapshot(&watched);
+    watched
+        .into_iter()
+        .filter(|path| before.get(path) != after.get(path))
         .collect()
 }

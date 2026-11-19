@@ -467,6 +467,19 @@ impl From<svode_core::storage::policy::StoragePolicyError> for AppError {
     }
 }
 
+impl From<svode_core::storage::strategy::StrategyError> for AppError {
+    fn from(error: svode_core::storage::strategy::StrategyError) -> Self {
+        use svode_core::storage::strategy::StrategyError;
+        match error {
+            StrategyError::Inherited => Self::StrategyInherited,
+            StrategyError::Unsupported(message) => Self::Storage(message),
+            error @ StrategyError::ActiveStrategy { .. } => Self::Storage(error.to_string()),
+            StrategyError::Config(error) => error.into(),
+            StrategyError::Policy(error) => error.into(),
+        }
+    }
+}
+
 impl From<svode_core::storage::lfs::LfsError> for AppError {
     fn from(error: svode_core::storage::lfs::LfsError) -> Self {
         use svode_core::storage::lfs::LfsError;

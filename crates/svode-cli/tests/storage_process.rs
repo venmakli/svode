@@ -1,7 +1,8 @@
-//! `svode storage status` and `svode storage s3 connect` through real
-//! processes (`svode`, `git`, `git-lfs`, `svode-lfs`) against a loopback S3
-//! stand, in a temporary home with the secrets file active: the system
-//! password store and the Git config of the user are never touched.
+//! `svode storage status`, `svode storage s3 connect` and `svode storage s3
+//! enable` through real processes (`svode`, `git`, `git-lfs`, `svode-lfs`)
+//! against a loopback S3 stand, in a temporary home with the secrets file
+//! active: the system password store and the Git config of the user are
+//! never touched.
 
 mod common;
 
@@ -636,6 +637,403 @@ mod unix {
             &[],
             "STORAGE_STRATEGY_MISMATCH",
             "svode storage s3 enable",
+        );
+    }
+
+    fn enable<'a>(endpoint: &'a str, access: &'a str, secret: &'a str) -> Vec<&'a str> {
+        vec![
+            "storage",
+            "s3",
+            "enable",
+            "--endpoint",
+            endpoint,
+            "--bucket",
+            BUCKET,
+            "--region",
+            "us-east-1",
+            "--access-key",
+            access,
+            "--secret-key",
+            secret,
+        ]
+    }
+
+    /// A new `local` Project at `<base>/<parent>/project`, as `svode project
+    /// create` makes it, committed.
+    fn local_project(device: &Device, parent: &str) -> PathBuf {
+        let dir = device.base().join(parent);
+        fs::create_dir_all(&dir).unwrap();
+        device.ok(&dir, &["project", "create", "project", "--name", "Project"]);
+        let project = dir.join("project");
+        device.git(&project, &["add", "-A"]);
+        device.git(&project, &["commit", "-q", "-m", "scaffold"]);
+        project
+    }
+
+    /// Environment of the child that enables `lfs-s3` as the desktop app.
+    const DESKTOP_PROJECT: &str = "SVODE_TEST_DESKTOP_ENABLE_PROJECT";
+    const DESKTOP_ENDPOINT: &str = "SVODE_TEST_DESKTOP_ENABLE_ENDPOINT";
+    const DESKTOP_CATALOG: &str = "SVODE_TEST_DESKTOP_ENABLE_CATALOG";
+
+    /// Runs [`enable_as_desktop`] in a child of this test binary with the
+    /// environment of the `svode` processes, so Git sees the same home.
+    fn run_enable_as_desktop(device: &Device, project: &Path, endpoint: &str) {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        device.env(&mut command);
+        let output = command
+            .args(["--exact", "unix::desktop_enable_child", "--nocapture"])
+            .env(DESKTOP_PROJECT, project)
+            .env(DESKTOP_ENDPOINT, endpoint)
+            .env(DESKTOP_CATALOG, device.config())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{output:?}"
+        );
+    }
+
+    /// The child of [`run_enable_as_desktop`]; a no-op in an ordinary run.
+    #[test]
+    fn desktop_enable_child() {
+        let Some(project) = std::env::var_os(DESKTOP_PROJECT) else {
+            return;
+        };
+        enable_as_desktop(
+            Path::new(&std::env::var_os(DESKTOP_CATALOG).unwrap()),
+            Path::new(&project),
+            &std::env::var(DESKTOP_ENDPOINT).unwrap(),
+        );
+    }
+
+    /// Enables `lfs-s3` in `project` as the desktop command does with the
+    /// input of its storage settings: the effective binary routing shown,
+    /// the address with an empty prefix and the two Secrets; the strategy
+    /// is applied with the svode-lfs next to `svode` and the agent config is
+    /// published, without the S3 check the settings run before saving.
+    fn enable_as_desktop(catalog: &Path, project: &Path, endpoint: &str) {
+        use svode_core::storage::config::{AssetsS3Config, BinaryRoutingConfig};
+        use svode_core::storage::policy::effective_binary_routing;
+        use svode_core::storage::s3::{AgentConfig, SecretBindings};
+        use svode_core::storage::strategy::{self, StrategyRequest, StrategyScope};
+        use svode_core::variables::{DeviceSecretStore, SourceOwner, SourceReference};
+
+        let current = svode_core::space_config::read(project)
+            .unwrap()
+            .assets
+            .unwrap();
+        let shown = effective_binary_routing(&current);
+        let mut lfs_extensions = shown.lfs_extensions;
+        lfs_extensions.sort();
+        let mut local_extensions = shown.local_extensions;
+        local_extensions.sort();
+        let routing = BinaryRoutingConfig {
+            version: 1,
+            lfs_extensions,
+            lfs_threshold_bytes: shown.lfs_threshold_bytes,
+            local_extensions: Some(local_extensions),
+            extensions: Default::default(),
+        };
+        let target = AssetsS3Config {
+            endpoint: endpoint.to_string(),
+            bucket: BUCKET.to_string(),
+            region: "us-east-1".to_string(),
+            prefix: String::new(),
+            extensions: Default::default(),
+        };
+        let reference = |name: &str| SourceReference {
+            owner: SourceOwner::Global,
+            name: name.to_string(),
+        };
+        let bindings = SecretBindings {
+            access_key: reference("S3_ACCESS_KEY"),
+            secret_key: reference("S3_SECRET_KEY"),
+        };
+        let binary = Path::new(BIN).with_file_name("svode-lfs");
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let git = svode_core::git::state::GitRuntime::new();
+                let index = svode_core::index::state::IndexRuntimeState::default();
+                let scope = svode_core::storage::scope::resolve_assets_scope(&index, project, None)
+                    .await
+                    .unwrap();
+                let default_prefix = strategy::default_s3_prefix(project, &scope);
+                let planned = strategy::plan(
+                    StrategyScope {
+                        config_dir: &scope.config_dir,
+                        inherited_from_project: scope.inherited_from_project,
+                        default_s3_prefix: &default_prefix,
+                    },
+                    StrategyRequest {
+                        strategy: svode_core::storage::config::AssetsStrategy::LfsS3,
+                        binary_routing: routing,
+                        s3: Some(target),
+                    },
+                )
+                .unwrap();
+                let agent = AgentConfig::prepare(
+                    catalog,
+                    project,
+                    None,
+                    planned.assets().s3.as_ref().unwrap(),
+                    bindings,
+                    &DeviceSecretStore::new(catalog),
+                )
+                .unwrap();
+                let result = planned
+                    .apply(&git, &scope.repo_dir, Some(&binary))
+                    .await
+                    .unwrap();
+                assert!(result.warnings.is_empty(), "{result:?}");
+                agent
+                    .publish(catalog, project, &DeviceSecretStore::new(catalog))
+                    .unwrap();
+            });
+    }
+
+    /// The agent config of `project` without its absolute `projectPath`.
+    fn agent_config(project: &Path) -> Value {
+        let mut agent: Value =
+            serde_json::from_slice(&fs::read(project.join(".svode/lfs-s3-agent.json")).unwrap())
+                .unwrap();
+        assert_eq!(agent["projectPath"], project.display().to_string());
+        agent.as_object_mut().unwrap().remove("projectPath");
+        agent
+    }
+
+    #[test]
+    fn enable_writes_the_files_of_the_desktop_app_connects_and_a_repeat_changes_nothing() {
+        if !tools_available() {
+            return;
+        }
+        let stand = S3Stand::start(ACCESS);
+        let device = Device::new();
+        device.ok(&device.home, &["secret", "store", "use", "file"]);
+        device.set_secret(&device.home, "S3_ACCESS_KEY", VALUES[0]);
+        device.set_secret(&device.home, "S3_SECRET_KEY", VALUES[1]);
+        device.set_secret(&device.home, "BAD_ACCESS", VALUES[2]);
+        let desktop = local_project(&device, "desktop");
+        let project = local_project(&device, "cli");
+        assert_eq!(
+            fs::read(desktop.join(".svode/config.json")).unwrap(),
+            fs::read(project.join(".svode/config.json")).unwrap()
+        );
+        let head = device.git(&project, &["rev-parse", "HEAD"]);
+
+        // Every failed check leaves the `local` Project as it was.
+        let path = git_without_lfs(&device);
+        for (args, env, expected, step) in [
+            (
+                enable(&stand.endpoint, "S3_ACCESS_KEY", "MISSING_KEY"),
+                vec![],
+                "SECRET_NOT_FOUND",
+                "svode secret set MISSING_KEY",
+            ),
+            (
+                enable(&stand.endpoint, "BAD_ACCESS", "S3_SECRET_KEY"),
+                vec![],
+                "S3_CHECK_FAILED",
+                "bucket",
+            ),
+            (
+                enable(&stand.endpoint, "S3_ACCESS_KEY", "S3_SECRET_KEY"),
+                vec![("PATH", path.as_str())],
+                "LFS_TOOLING_UNAVAILABLE",
+                "install git-lfs",
+            ),
+        ] {
+            refused(&device, &project, &args, &env, expected, step);
+        }
+        assert!(!project.join(".svode/lfs-s3-agent.json").exists());
+        let status = device.ok(&project, &["storage", "status"]);
+        assert_eq!(status["storage"]["strategy"], "local", "{status}");
+
+        run_enable_as_desktop(&device, &desktop, &stand.endpoint);
+        let enabled = device.ok(
+            &project,
+            &enable(&stand.endpoint, "S3_ACCESS_KEY", "S3_SECRET_KEY"),
+        );
+
+        // The managed files are the bytes the desktop command writes; Git LFS
+        // writes the keys of its filter in no fixed order, so the Git config
+        // compares by its entries.
+        let entries = |project: &Path| {
+            let mut entries = device
+                .git(project, &["config", "--local", "--list"])
+                .lines()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            entries.sort();
+            entries
+        };
+        assert_eq!(entries(&desktop), entries(&project));
+        for file in [
+            ".svode/config.json",
+            ".gitignore",
+            ".gitattributes",
+            ".lfsconfig",
+            ".git/hooks/pre-push",
+            ".git/hooks/post-checkout",
+            ".git/hooks/post-commit",
+            ".git/hooks/post-merge",
+        ] {
+            assert_eq!(
+                fs::read(desktop.join(file)).ok(),
+                fs::read(project.join(file)).ok(),
+                "{file}"
+            );
+        }
+        assert_eq!(agent_config(&desktop), agent_config(&project));
+        let config: Value =
+            serde_json::from_slice(&fs::read(project.join(".svode/config.json")).unwrap()).unwrap();
+        assert_eq!(config["assets"]["strategy"], "lfs-s3");
+        assert_eq!(
+            config["assets"]["s3"],
+            json!({ "endpoint": stand.endpoint, "bucket": BUCKET, "region": "us-east-1", "prefix": PREFIX })
+        );
+        assert_eq!(
+            fs::read_to_string(project.join(".lfsconfig")).unwrap(),
+            "[lfs]\n\turl = https://lfs-s3.svode.invalid/\n"
+        );
+
+        // Nothing is committed; the changed files are listed.
+        let changed = enabled["changedPaths"].as_array().unwrap();
+        for expected in [
+            ".svode/config.json",
+            ".gitignore",
+            ".gitattributes",
+            ".lfsconfig",
+            ".svode/lfs-s3-agent.json",
+            ".git/config",
+        ] {
+            assert!(changed.contains(&json!(expected)), "{enabled}");
+        }
+        assert!(
+            changed.contains(&json!(
+                device.config().join("settings.json").display().to_string()
+            )),
+            "{enabled}"
+        );
+        assert_eq!(enabled["committed"], false);
+        assert_eq!(enabled["warnings"], json!([]), "{enabled}");
+        assert_eq!(enabled["storage"]["strategy"], "lfs-s3");
+        assert_eq!(enabled["storage"]["s3"]["prefix"], PREFIX);
+        assert_eq!(
+            enabled["storage"]["bindings"]["secretKey"],
+            json!({ "name": "S3_SECRET_KEY", "owner": "device" })
+        );
+        assert_eq!(device.git(&project, &["rev-parse", "HEAD"]), head);
+        let mut dirty = device
+            .git(&project, &["status", "--porcelain"])
+            .lines()
+            .map(|line| line[3..].to_string())
+            .collect::<Vec<_>>();
+        dirty.sort();
+        assert_eq!(
+            dirty,
+            [
+                ".gitattributes",
+                ".gitignore",
+                ".lfsconfig",
+                ".svode/config.json"
+            ]
+        );
+        let probes = stand
+            .requests()
+            .into_iter()
+            .filter(|request| request.contains("/.svode-probe/"))
+            .count();
+        assert!(probes >= 3, "{probes}");
+        assert!(!stand.keys().iter().any(|key| key.contains(".svode-probe")));
+
+        let status = device.ok(&project, &["storage", "status"]);
+        assert_eq!(status["storage"]["ready"], true, "{status}");
+        assert_eq!(status["storage"]["lfs"], "ready");
+
+        // A repeat with the same data changes no file.
+        let again = device.ok(
+            &project,
+            &enable(&stand.endpoint, "S3_ACCESS_KEY", "S3_SECRET_KEY"),
+        );
+        assert_eq!(again["changedPaths"], json!([]), "{again}");
+        let human = device.run(
+            &project,
+            &enable(&stand.endpoint, "S3_ACCESS_KEY", "S3_SECRET_KEY"),
+            None,
+            &[],
+        );
+        assert!(
+            String::from_utf8(human.stdout)
+                .unwrap()
+                .contains("no file changed")
+        );
+
+        // A failed check keeps the working setup as it was.
+        refused(
+            &device,
+            &project,
+            &enable(&stand.endpoint, "BAD_ACCESS", "S3_SECRET_KEY"),
+            &[],
+            "S3_CHECK_FAILED",
+            "bucket",
+        );
+    }
+
+    #[test]
+    fn enable_refuses_an_active_strategy_and_an_inline_space_without_writing() {
+        if !tools_available() {
+            return;
+        }
+        let stand = S3Stand::start(ACCESS);
+        let device = Device::new();
+        device.ok(&device.home, &["secret", "store", "use", "file"]);
+        device.set_secret(&device.home, "S3_ACCESS_KEY", VALUES[0]);
+        device.set_secret(&device.home, "S3_SECRET_KEY", VALUES[1]);
+        let args = enable(&stand.endpoint, "S3_ACCESS_KEY", "S3_SECRET_KEY");
+
+        // The transition rule of the desktop app: an active strategy is kept.
+        let clone = cloned(&device, json!({ "strategy": "in-git" }), None);
+        let value = refused(
+            &device,
+            &clone,
+            &args,
+            &[],
+            "STORAGE_STRATEGY_MISMATCH",
+            "keep the strategy `in-git`",
+        );
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Changing an active assets storage strategy is not supported"),
+            "{value}"
+        );
+        assert!(
+            !stand
+                .requests()
+                .iter()
+                .any(|request| request.contains("/.svode-probe/"))
+        );
+
+        // An inline Space uses the storage of the Project.
+        let project = local_project(&device, "inline");
+        let space = device.ok(&project, &["space", "create", "notes", "--name", "Notes"]);
+        let id = space["space"]["id"].as_str().unwrap().to_string();
+        device.git(&project, &["add", "-A"]);
+        device.git(&project, &["commit", "-q", "-m", "space"]);
+        let mut inline = vec!["--space", id.as_str()];
+        inline.extend(args.iter().copied());
+        refused(
+            &device,
+            &project,
+            &inline,
+            &[],
+            "STORAGE_STRATEGY_INHERITED",
+            "--space root",
         );
     }
 

@@ -208,7 +208,7 @@ pub enum Noun {
     },
 }
 
-const STORAGE: &str = "Storage applies to the selected Space by the rules of the desktop app: an inline Space uses the storage of the Project, a repository Space its own. Secret values never appear in arguments, output, --json or logs; Secrets are named, their values come from the device store (see `svode secret`). These commands exist only in the CLI, not in svode-mcp.\n\nExamples:\n  svode storage status\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY";
+const STORAGE: &str = "Storage applies to the selected Space by the rules of the desktop app: an inline Space uses the storage of the Project, a repository Space its own. Secret values never appear in arguments, output, --json or logs; Secrets are named, their values come from the device store (see `svode secret`). These commands exist only in the CLI, not in svode-mcp.\n\nExamples:\n  svode storage status\n  svode storage s3 enable --endpoint https://s3.example.com --bucket assets --region us-east-1 --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY";
 
 #[derive(Debug, Subcommand)]
 pub enum StorageVerb {
@@ -221,7 +221,7 @@ pub enum StorageVerb {
     /// S3 storage of a Project with the `lfs-s3` strategy.
     #[command(
         name = "s3",
-        after_help = "Example:\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY"
+        after_help = "Examples:\n  svode storage s3 enable --endpoint https://s3.example.com --bucket assets --region us-east-1 --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY"
     )]
     S3 {
         #[command(subcommand)]
@@ -235,6 +235,28 @@ pub enum StorageS3Verb {
     /// `lfs-s3`.
     #[command(after_help = format!("Both Secrets must have a value on this device. The command writes, reads and deletes a probe object with them, then registers svode-lfs in Git and writes .svode/lfs-s3-agent.json, which Git ignores. Any failed check leaves the previous setup unchanged; a repeat with the same Secrets changes no file. Nothing is committed; changed files are listed. {SECRET_OWNER}\n\nExample:\n  svode storage s3 connect --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY --owner project"))]
     Connect(S3ConnectArgs),
+    /// Enable the `lfs-s3` strategy in the Project and connect this device
+    /// to its S3 storage.
+    #[command(after_help = format!("The Project gets the files, transition rules and warnings of the storage settings of the desktop app: `.gitignore`, `.gitattributes`, `.lfsconfig` and the `assets` section of `.svode/config.json`, with the binary routing it already has. `lfs-s3` is enabled from the `local` strategy or again over `lfs-s3`; another active strategy is not changed (STORAGE_STRATEGY_MISMATCH). An inline Space uses the storage of the Project, so the strategy is enabled for the Project, not from an inline Space (STORAGE_STRATEGY_INHERITED). Without --prefix the default prefix of the storage settings is used. Then this device is connected as with `connect`: every check runs before the first write, so a failed check leaves the previous setup unchanged; a repeat with the same data changes no file. Nothing is committed; changed files are listed. {SECRET_OWNER}\n\nExample:\n  svode storage s3 enable --endpoint https://s3.example.com --bucket assets --region us-east-1 --access-key S3_ACCESS_KEY --secret-key S3_SECRET_KEY"))]
+    Enable(S3EnableArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct S3EnableArgs {
+    /// S3 endpoint URL.
+    #[arg(long, value_name = "URL")]
+    pub endpoint: String,
+    /// Bucket of the Project files.
+    #[arg(long, value_name = "NAME")]
+    pub bucket: String,
+    /// Region of the bucket.
+    #[arg(long, value_name = "NAME")]
+    pub region: String,
+    /// Key prefix of the Project files in the bucket.
+    #[arg(long, value_name = "PATH", default_value = "")]
+    pub prefix: String,
+    #[command(flatten)]
+    pub keys: S3ConnectArgs,
 }
 
 #[derive(Debug, Args)]

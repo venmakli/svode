@@ -8,23 +8,21 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::assets::{self, Asset};
-use super::s3;
 use super::scope::{resolve_effective_storage_scope, resolve_effective_storage_scope_for_key};
-use super::strategy::{ApplyStrategyResult, StrategyWarning, StrategyWarningCode};
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::access::require_repository_mutation;
 use crate::git::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
-use crate::space::config::{read_space_config, write_space_config};
-use crate::space::types::{
-    AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig, SpaceConfig,
-};
+use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
 use svode_core::git::autocommit::{
     AutocommitService, StructuralChange, StructuralOp, SystemCommitKind,
 };
 use svode_core::git::cli::GitCli;
+use svode_core::storage::strategy::{
+    self, ApplyStrategyResult, StrategyRequest, StrategyScope, StrategyWarning, StrategyWarningCode,
+};
 
 /// File data returned to the frontend after reading a user-selected path.
 /// Used to construct a `File` object on the JS side so Plate's media
@@ -186,25 +184,6 @@ pub async fn get_assets_config(
     })
 }
 
-fn is_sync_strategy(strategy: &AssetsStrategy) -> bool {
-    !matches!(strategy, AssetsStrategy::Local)
-}
-
-fn ensure_supported_strategy_transition(
-    current: &AssetsStrategy,
-    next: &AssetsStrategy,
-) -> Result<(), AppError> {
-    svode_core::storage::policy::supported_strategy(current)?;
-    svode_core::storage::policy::supported_strategy(next)?;
-    if current == next || !is_sync_strategy(current) {
-        return Ok(());
-    }
-
-    Err(AppError::Storage(
-        "Changing an active assets storage strategy is not supported yet. Use the future migration flow to move existing assets between storage strategies.".into(),
-    ))
-}
-
 fn system_autocommit_enabled(config_dir: &Path) -> bool {
     svode_core::git::policy::effective_user_policy(config_dir).auto_commit_system
 }
@@ -268,28 +247,18 @@ pub async fn set_assets_strategy(
     require_repository_mutation(&app, &scope.repo_dir).await?;
     let cli = require_cli(&git_state)?;
 
-    // Inline spaces inherit their assets strategy from the root project —
-    // we refuse to write a child-space override that would silently be ignored.
-    if scope.inherited_from_project {
-        return Err(AppError::StrategyInherited);
-    }
-
-    let config = read_space_config(&scope.config_dir)?;
-    let current_strategy = config
-        .assets
-        .as_ref()
-        .map(|assets| assets.strategy.clone())
-        .unwrap_or_default();
-    ensure_supported_strategy_transition(&current_strategy, &strategy)?;
-    if let Some(current_assets) = config.assets.as_ref() {
-        svode_core::storage::policy::supported_binary_routing(current_assets)?;
-    }
-    let binary_routing = svode_core::storage::policy::normalize_binary_routing(binary_routing)?;
-
-    let s3_config = s3_config.map(|mut config| {
-        config.prefix = s3::normalize_prefix_path(&config.prefix, &scope.default_s3_prefix);
-        config
-    });
+    let planned = strategy::plan(
+        StrategyScope {
+            config_dir: &scope.config_dir,
+            inherited_from_project: scope.inherited_from_project,
+            default_s3_prefix: &scope.default_s3_prefix,
+        },
+        StrategyRequest {
+            strategy: strategy.clone(),
+            binary_routing,
+            s3: s3_config,
+        },
+    )?;
 
     let should_autocommit_strategy = system_autocommit_enabled(&scope.config_dir);
     let autocommit_blocker = if should_autocommit_strategy {
@@ -306,9 +275,10 @@ pub async fn set_assets_strategy(
     let catalog_dir = super::bindings::catalog_dir(&app)?;
     let mut next_agent_config = None;
     let svode_lfs_path = if matches!(strategy, AssetsStrategy::LfsS3) {
-        let cfg = s3_config
-            .as_ref()
-            .ok_or_else(|| AppError::Storage("lfs-s3 requires endpoint/bucket/region".into()))?;
+        let cfg =
+            planned.assets().s3.as_ref().ok_or_else(|| {
+                AppError::Storage("lfs-s3 requires endpoint/bucket/region".into())
+            })?;
         let saved = svode_core::storage::s3::AgentConfig::read(&scope.repo_dir).ok();
         let bindings = match s3_bindings {
             Some(bindings) => bindings,
@@ -355,26 +325,13 @@ pub async fn set_assets_strategy(
         None
     };
 
-    let mut result = super::strategy::apply_strategy(
-        &git_state,
-        &scope.repo_dir,
-        strategy.clone(),
-        &binary_routing,
-        s3_config.as_ref(),
-        svode_lfs_path.as_deref(),
-    )
-    .await?;
-
-    store_assets_config(
-        &scope.config_dir,
-        config,
-        AssetsSpaceConfig {
-            strategy,
-            binary_routing: Some(binary_routing),
-            s3: s3_config,
-            extensions: Default::default(),
-        },
-    )?;
+    let mut result = planned
+        .apply(
+            git_state.runtime(),
+            &scope.repo_dir,
+            svode_lfs_path.as_deref(),
+        )
+        .await?;
     if let Some(agent_config) = next_agent_config {
         let repo = scope.repo_dir.clone();
         run_locked(&settings_state, move || {
@@ -410,17 +367,6 @@ pub async fn set_assets_strategy(
         }
     }
     Ok(result)
-}
-
-/// Replace the assets section of a storage scope's config; the shared write
-/// keeps the keys of the file this version does not know.
-fn store_assets_config(
-    config_dir: &Path,
-    mut config: SpaceConfig,
-    assets: AssetsSpaceConfig,
-) -> Result<(), AppError> {
-    config.assets = Some(assets);
-    write_space_config(config_dir, &config)
 }
 
 /// Count the untracked files the `local` blocks of the storage scope's
@@ -572,99 +518,10 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 mod tests {
     use std::path::Path;
 
-    use super::{
-        StrategyWarningCode, document_id_for_scope, ensure_supported_strategy_transition,
-        store_assets_config, strategy_autocommit_blocker,
-    };
+    use super::{StrategyWarningCode, document_id_for_scope, strategy_autocommit_blocker};
     use crate::AppError;
-    use crate::space::config::read_space_config;
-    use crate::space::types::{AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
     use svode_core::git::autocommit::SystemCommitKind;
     use svode_core::git::cli::GitCli;
-
-    #[test]
-    fn strategy_transition_guard_allows_only_local_enrollment_or_same_strategy() {
-        for next in [
-            AssetsStrategy::Local,
-            AssetsStrategy::InGit,
-            AssetsStrategy::LfsRemote,
-            AssetsStrategy::LfsS3,
-        ] {
-            assert!(ensure_supported_strategy_transition(&AssetsStrategy::Local, &next).is_ok());
-        }
-
-        assert!(
-            ensure_supported_strategy_transition(&AssetsStrategy::LfsS3, &AssetsStrategy::LfsS3)
-                .is_ok()
-        );
-        assert!(
-            ensure_supported_strategy_transition(
-                &AssetsStrategy::InGit,
-                &AssetsStrategy::LfsRemote
-            )
-            .is_err()
-        );
-        assert!(
-            ensure_supported_strategy_transition(
-                &AssetsStrategy::LfsRemote,
-                &AssetsStrategy::Local
-            )
-            .is_err()
-        );
-        assert!(
-            ensure_supported_strategy_transition(
-                &AssetsStrategy::LfsRemote,
-                &AssetsStrategy::LfsS3
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn strategy_transition_guard_refuses_an_unknown_current_or_next_strategy() {
-        let unknown = AssetsStrategy::Unknown("lfs-future".into());
-        for (current, next) in [
-            (&unknown, &unknown),
-            (&unknown, &AssetsStrategy::Local),
-            (&AssetsStrategy::Local, &unknown),
-        ] {
-            let error = ensure_supported_strategy_transition(current, next)
-                .expect_err("unknown strategy refused");
-            assert!(error.to_string().contains("newer Svode version"), "{error}");
-        }
-    }
-
-    #[test]
-    fn stored_assets_strategy_keeps_unknown_config_keys() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        std::fs::create_dir_all(temp.path().join(".svode")).expect("svode dir");
-        std::fs::write(
-            temp.path().join(".svode/config.json"),
-            r#"{"name":"Project","futureRoot":1,"assets":{"strategy":"local","futureAssets":2}}"#,
-        )
-        .expect("config");
-        let config = read_space_config(temp.path()).expect("read config");
-
-        store_assets_config(
-            temp.path(),
-            config,
-            AssetsSpaceConfig {
-                strategy: AssetsStrategy::InGit,
-                binary_routing: Some(BinaryRoutingConfig::new_project_default()),
-                s3: None,
-                extensions: Default::default(),
-            },
-        )
-        .expect("store assets");
-
-        let value: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(temp.path().join(".svode/config.json")).expect("config"),
-        )
-        .expect("json");
-        assert_eq!(value["assets"]["strategy"], "in-git");
-        assert_eq!(value["futureRoot"], 1);
-        assert_eq!(value["assets"]["futureAssets"], 2);
-    }
 
     #[test]
     fn document_id_for_scope_uses_effective_pool_relative_path() {

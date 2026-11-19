@@ -3,12 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
-use super::s3;
 use crate::error::AppError;
 use crate::index::{IndexKey, IndexState};
-use crate::space::config::read_space_config;
 use crate::space::types::AssetsSpaceConfig;
 use svode_core::storage::scope::{self as core_scope, AssetsScope};
+use svode_core::storage::strategy::default_s3_prefix;
 
 #[derive(Debug, Clone)]
 pub struct AssetsStorageScope {
@@ -41,14 +40,7 @@ pub async fn resolve_effective_storage_scope_for_key(
 }
 
 fn with_default_s3_prefix(project: &Path, scope: AssetsScope) -> AssetsStorageScope {
-    let project_name = read_space_config(project).ok().map(|config| config.name);
-    let default_s3_prefix =
-        if matches!(&scope.pool_key, IndexKey::Root(_)) || scope.inherited_from_project {
-            s3::default_root_prefix(project, project_name.as_deref())
-        } else {
-            s3::default_repo_space_prefix(project, project_name.as_deref(), &scope.repo_dir)
-        };
-
+    let default_s3_prefix = default_s3_prefix(project, &scope);
     AssetsStorageScope {
         pool_key: scope.pool_key,
         pool_dir: scope.pool_dir,

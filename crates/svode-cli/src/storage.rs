@@ -6,16 +6,23 @@
 use std::path::Path;
 
 use serde_json::{Map, Value, json};
-use svode_core::storage::connection::{self, ConnectError, ConnectRequest, LfsNotReady};
+use svode_core::storage::config::AssetsS3Config;
+use svode_core::storage::connection::{
+    self, ConnectError, ConnectRequest, EnableRequest, LfsNotReady,
+};
 use svode_core::storage::lfs::LfsState;
-use svode_core::storage::s3::SecretBindings;
+use svode_core::storage::policy::StoragePolicyError;
+use svode_core::storage::s3::{AgentConfig, SecretBindings};
 use svode_core::storage::scope::{AssetsScope, AssetsScopeError, resolve_assets_scope};
+use svode_core::storage::strategy::{
+    StrategyError, StrategyScope, StrategyWarning, default_s3_prefix,
+};
 use svode_core::variables::{SourceOwner, SourceReference, valid_name};
 use svode_tools::error::ToolError;
 use svode_tools::host::ToolHost;
 
 use crate::error::CliError;
-use crate::grammar::{S3ConnectArgs, SecretOwner, StorageS3Verb, StorageVerb};
+use crate::grammar::{S3ConnectArgs, S3EnableArgs, SecretOwner, StorageS3Verb, StorageVerb};
 use crate::output::Outcome;
 use crate::target::{Selectors, Target};
 use crate::tools::envelope;
@@ -38,6 +45,9 @@ pub async fn run(
         StorageVerb::S3 {
             verb: StorageS3Verb::Connect(args),
         } => connect(host, &target, &scope, args).await,
+        StorageVerb::S3 {
+            verb: StorageS3Verb::Enable(args),
+        } => enable(host, &target, &scope, args).await,
     }
 }
 
@@ -196,12 +206,48 @@ fn not_ready(reason: &LfsNotReady, target: Map<String, Value>) -> CliError {
     refusal
 }
 
-async fn connect(
+/// Refusal of a failed connection or strategy change.
+fn connect_failure(error: ConnectError, target: &Map<String, Value>) -> CliError {
+    let storage = |message: String| {
+        CliError::operation(SVODE_ERROR, format!("Storage: {message}")).with_target(target.clone())
+    };
+    let git = |error| {
+        let error = ToolError::from(error);
+        CliError::operation(error.code, error.message).with_target(target.clone())
+    };
+    match error {
+        ConnectError::NotReady(reason) => not_ready(&reason, target.clone()),
+        ConnectError::Git(error)
+        | ConnectError::Strategy(StrategyError::Policy(StoragePolicyError::Git(error))) => {
+            git(error)
+        }
+        ConnectError::Strategy(error) => match error.code() {
+            Some(code) => {
+                let mut refusal =
+                    CliError::operation(code, error.to_string()).with_target(target.clone());
+                if let Some(hint) = error.hint() {
+                    refusal.evidence.insert("hint".into(), json!(hint));
+                }
+                refusal
+            }
+            None => storage(error.to_string()),
+        },
+        ConnectError::Storage(message) => storage(message),
+    }
+}
+
+/// Checks both Secret names and the repository access of the scope before
+/// anything else, then names the bindings of `owner` in the Variables
+/// context of the scope: an inline Space uses the storage of the Project,
+/// so its Secrets are resolved in the context of the Project, as the root
+/// Space is. Returns the device config directory, the Space of the context
+/// and the bindings.
+async fn bindings(
     host: &impl ToolHost,
     target: &Target,
     scope: &AssetsScope,
     args: S3ConnectArgs,
-) -> Result<Outcome, CliError> {
+) -> Result<(std::path::PathBuf, Option<String>, SecretBindings), CliError> {
     checked_name(&args.access_key)?;
     checked_name(&args.secret_key)?;
     let known = target.envelope();
@@ -214,8 +260,6 @@ async fn connect(
             failure.evidence = error.evidence;
             failure
         })?;
-    // An inline Space uses the storage of the Project, so its Secrets are
-    // resolved in the context of the Project, as the root Space is.
     let space_id = if scope.inherited_from_project {
         None
     } else {
@@ -234,6 +278,57 @@ async fn connect(
         access_key: reference(args.access_key),
         secret_key: reference(args.secret_key),
     };
+    Ok((catalog, space_id, bindings))
+}
+
+/// Changed files relative to the Project, absolute outside it.
+fn changed_paths(project: &Path, changed: &[std::path::PathBuf]) -> Vec<String> {
+    changed.iter().map(|path| shown(project, path)).collect()
+}
+
+/// The `storage` result of a connected scope.
+fn connected_json(target: &Target, scope: &AssetsScope, agent: &AgentConfig) -> Value {
+    let mut storage = scope_json(target, scope);
+    storage["strategy"] = json!("lfs-s3");
+    storage["s3"] = json!({
+        "endpoint": agent.endpoint,
+        "bucket": agent.bucket,
+        "region": agent.region,
+        "prefix": agent.prefix,
+    });
+    storage["bindings"] = bindings_json(&agent.bindings);
+    storage["lfs"] = json!(LfsState::Ready);
+    storage
+}
+
+fn connected_line(agent: &AgentConfig) -> String {
+    format!(
+        "This device is connected to the S3 storage {}/{} at {}.\n",
+        agent.bucket,
+        agent.prefix.as_deref().unwrap_or_default(),
+        agent.endpoint
+    )
+}
+
+fn changed_lines(human: &mut String, changed: &[String], unchanged: &str) {
+    if changed.is_empty() {
+        human.push_str(unchanged);
+    } else {
+        human.push_str("Changed files (nothing is committed):\n");
+        for path in changed {
+            human.push_str(&format!("  {path}\n"));
+        }
+    }
+}
+
+async fn connect(
+    host: &impl ToolHost,
+    target: &Target,
+    scope: &AssetsScope,
+    args: S3ConnectArgs,
+) -> Result<Outcome, CliError> {
+    let known = target.envelope();
+    let (catalog, space_id, bindings) = bindings(host, target, scope, args).await?;
     let project = &target.space.project_path;
     let connected = connection::connect(
         host.read_runtime().git,
@@ -247,57 +342,103 @@ async fn connect(
         },
     )
     .await
-    .map_err(|error| match error {
-        ConnectError::NotReady(reason) => not_ready(&reason, known.clone()),
-        ConnectError::Git(error) => {
-            let error = ToolError::from(error);
-            CliError::operation(error.code, error.message).with_target(known.clone())
-        }
-        ConnectError::Storage(message) => {
-            CliError::operation(SVODE_ERROR, format!("Storage: {message}"))
-                .with_target(known.clone())
-        }
-    })?;
-    let changed = connected
-        .changed
-        .iter()
-        .map(|path| shown(project, path))
-        .collect::<Vec<_>>();
-    let agent = &connected.config;
-    let mut human = format!(
-        "This device is connected to the S3 storage {}/{} at {}.\n",
-        agent.bucket,
-        agent.prefix.as_deref().unwrap_or_default(),
-        agent.endpoint
+    .map_err(|error| connect_failure(error, &known))?;
+    let changed = changed_paths(project, &connected.changed);
+    let mut human = connected_line(&connected.config);
+    changed_lines(
+        &mut human,
+        &changed,
+        "It was already connected with these Secrets; no file changed.\n",
     );
-    if changed.is_empty() {
-        human.push_str("It was already connected with these Secrets; no file changed.\n");
+    Ok(Outcome {
+        human,
+        envelope: envelope(
+            known,
+            json!({
+                "storage": connected_json(target, scope, &connected.config),
+                "changedPaths": changed,
+                "committed": false,
+            }),
+        ),
+        warnings: Vec::new(),
+    })
+}
+
+fn checked_text(flag: &str, value: &str) -> Result<(), CliError> {
+    if value.trim().is_empty() {
+        Err(CliError::argument(format!("--{flag} must not be empty")))
     } else {
-        human.push_str("Changed files (nothing is committed):\n");
-        for path in &changed {
-            human.push_str(&format!("  {path}\n"));
-        }
+        Ok(())
     }
-    let mut storage = scope_json(target, scope);
-    storage["strategy"] = json!(scope.config.strategy.as_str());
-    storage["s3"] = json!({
-        "endpoint": agent.endpoint,
-        "bucket": agent.bucket,
-        "region": agent.region,
-        "prefix": agent.prefix,
-    });
-    storage["bindings"] = bindings_json(&agent.bindings);
-    storage["lfs"] = json!(LfsState::Ready);
+}
+
+fn warning_line(warning: &StrategyWarning) -> String {
+    let code = serde_json::to_value(warning.code).unwrap_or_default();
+    match &warning.detail {
+        Some(detail) => format!("warning[{}]: {detail}", code.as_str().unwrap_or_default()),
+        None => format!("warning[{}]", code.as_str().unwrap_or_default()),
+    }
+}
+
+async fn enable(
+    host: &impl ToolHost,
+    target: &Target,
+    scope: &AssetsScope,
+    args: S3EnableArgs,
+) -> Result<Outcome, CliError> {
+    checked_text("endpoint", &args.endpoint)?;
+    checked_text("bucket", &args.bucket)?;
+    checked_text("region", &args.region)?;
+    let known = target.envelope();
+    let (catalog, space_id, bindings) = bindings(host, target, scope, args.keys).await?;
+    let project = &target.space.project_path;
+    let default_prefix = default_s3_prefix(project, scope);
+    let enabled = connection::enable(
+        host.read_runtime().git,
+        EnableRequest {
+            catalog_dir: &catalog,
+            project_path: project,
+            space_id: space_id.as_deref(),
+            repo_dir: &scope.repo_dir,
+            scope: StrategyScope {
+                config_dir: &scope.config_dir,
+                inherited_from_project: scope.inherited_from_project,
+                default_s3_prefix: &default_prefix,
+            },
+            current: &scope.config,
+            target: AssetsS3Config {
+                endpoint: args.endpoint,
+                bucket: args.bucket,
+                region: args.region,
+                prefix: args.prefix,
+                extensions: Default::default(),
+            },
+            bindings,
+        },
+    )
+    .await
+    .map_err(|error| connect_failure(error, &known))?;
+    let changed = changed_paths(project, &enabled.changed);
+    let mut human = String::from("The Project uses the `lfs-s3` strategy.\n");
+    human.push_str(&connected_line(&enabled.config));
+    changed_lines(
+        &mut human,
+        &changed,
+        "It was already enabled and connected with these Secrets; no file changed.\n",
+    );
+    let mut storage = connected_json(target, scope, &enabled.config);
+    storage["binaryRouting"] = json!(enabled.assets.binary_routing);
     Ok(Outcome {
         human,
         envelope: envelope(
             known,
             json!({
                 "storage": storage,
+                "warnings": enabled.warnings,
                 "changedPaths": changed,
                 "committed": false,
             }),
         ),
-        warnings: Vec::new(),
+        warnings: enabled.warnings.iter().map(warning_line).collect(),
     })
 }
