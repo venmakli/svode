@@ -1316,7 +1316,14 @@ async fn probe_remote(
     let output = cli
         .exec_sensitive_with_stdin(
             repository,
-            &["push", "--porcelain", &lease, "origin", &refspec],
+            &[
+                "push",
+                "--porcelain",
+                "--no-verify",
+                &lease,
+                "origin",
+                &refspec,
+            ],
             &[],
             None,
             PROBE_TIMEOUT,
@@ -1383,7 +1390,14 @@ async fn claim_remote_routine(
     let output = cli
         .exec_sensitive_with_stdin(
             repository,
-            &["push", "--porcelain", &lease, "origin", &refspec],
+            &[
+                "push",
+                "--porcelain",
+                "--no-verify",
+                &lease,
+                "origin",
+                &refspec,
+            ],
             &[],
             None,
             PROBE_TIMEOUT,
@@ -2207,6 +2221,61 @@ mod tests {
                 .status,
             RepositoryAccessStatus::Writable
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn service_ref_pushes_skip_a_refusing_pre_push_hook() {
+        let temp = TempDir::new().expect("temp dir");
+        let repository = temp.path().join("repository");
+        let remote = temp.path().join("remote.git");
+        let hooks = temp.path().join("hooks");
+        let marker = temp.path().join("pre-push-ran");
+        let cli = GitCli::detect().expect("git");
+        init_repository(&cli, &repository).await;
+        init_bare(&cli, &remote).await;
+        add_origin(&cli, &repository, &remote).await;
+        fs::create_dir_all(&hooks).expect("hooks directory");
+        let marker_path = marker.to_string_lossy().replace('\'', "'\\''");
+        svode_testkit::write_executable(
+            hooks.join("pre-push"),
+            format!("#!/bin/sh\nprintf ran >> '{marker_path}'\nexit 1\n"),
+        )
+        .expect("pre-push hook");
+        let hooks_path = hooks.to_string_lossy();
+        git_ok(
+            &cli,
+            &repository,
+            &["config", "core.hooksPath", &hooks_path],
+        )
+        .await;
+        let state = test_state(Arc::new(TestClock::new(1_700_000_000)));
+        let store = temp.path().join("access.json");
+
+        let access = state
+            .verify(&cli, &repository, &store)
+            .await
+            .expect("access probe");
+        assert_eq!(access.status, RepositoryAccessStatus::Writable);
+        let claim = state
+            .claim_routine(
+                &cli,
+                &repository,
+                &store,
+                &access,
+                "routine-one",
+                "slot-one",
+                "definition-one",
+                1_700_000_100,
+            )
+            .await
+            .expect("routine claim");
+
+        assert!(
+            matches!(claim, RoutineClaimResult::Claimed { .. }),
+            "claim: {claim:?}"
+        );
+        assert!(!marker.exists(), "service pushes must not run pre-push");
     }
 
     #[tokio::test]
