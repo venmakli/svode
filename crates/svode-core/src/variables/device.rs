@@ -313,29 +313,36 @@ impl SecretStore for DeviceSecretStore {
         }
         keyring::Entry::new(KEYCHAIN_SERVICE, account)
             .and_then(|entry| entry.set_password(value))
-            .map_err(|_| Error::SecretStore)
+            .map_err(system_failure)
     }
 
     fn remove(&self, account: &str) -> Result<()> {
         if self.change_file(account, None)? {
             return Ok(());
         }
-        let entry =
-            keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(|_| Error::SecretStore)?;
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(system_failure)?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err(Error::SecretStore),
+            Err(error) => Err(system_failure(error)),
         }
     }
 }
 
 fn system_get(account: &str) -> Result<Option<String>> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(|_| Error::SecretStore)?;
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(system_failure)?;
     match entry.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err(Error::SecretStore),
+        Err(error) => Err(system_failure(error)),
     }
+}
+
+/// The refusal of an unusable system password store. Its own error stays in
+/// the debug log only (`RUST_LOG=svode_core::variables=debug`): its text
+/// names the platform failure and never a stored value.
+fn system_failure(error: keyring::Error) -> Error {
+    tracing::debug!("system password store: {error}");
+    Error::SecretStore
 }
 
 /// Reads an account that is never written, so only access is checked.

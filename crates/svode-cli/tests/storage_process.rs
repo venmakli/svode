@@ -28,10 +28,26 @@ mod unix {
     struct Device {
         temp: tempfile::TempDir,
         home: PathBuf,
+        /// Every process starts as in a new SSH login session, see
+        /// [`Device::login_session`].
+        login: bool,
     }
 
     impl Device {
         fn new() -> Self {
+            Self::with(false)
+        }
+
+        /// A server account reached over SSH: each process gets only what a
+        /// login session sets (`HOME`, `USER`, `LOGNAME`, `PATH`, `SHELL`,
+        /// `LANG`), so no D-Bus session, no XDG directories, no `SVODE_*`
+        /// variable and the default product identifier under the temporary
+        /// home.
+        fn login_session() -> Self {
+            Self::with(true)
+        }
+
+        fn with(login: bool) -> Self {
             let temp = tempfile::tempdir().unwrap();
             let home = temp.path().canonicalize().unwrap().join("home");
             fs::create_dir_all(&home).unwrap();
@@ -40,7 +56,7 @@ mod unix {
                 "[user]\n\tname = Fixture\n\temail = fixture@example.test\n[init]\n\tdefaultBranch = main\n[maintenance]\n\tauto = false\n",
             )
             .unwrap();
-            Self { temp, home }
+            Self { temp, home, login }
         }
 
         fn base(&self) -> PathBuf {
@@ -53,7 +69,11 @@ mod unix {
             } else {
                 self.home.join(".config")
             };
-            base.join(TEST_IDENTIFIER)
+            base.join(if self.login {
+                svode_core::runtime::device::PRODUCT_IDENTIFIER
+            } else {
+                TEST_IDENTIFIER
+            })
         }
 
         fn file(&self) -> PathBuf {
@@ -61,6 +81,18 @@ mod unix {
         }
 
         fn env(&self, command: &mut Command) {
+            if self.login {
+                let user = std::env::var("USER").unwrap_or_else(|_| "fixture".into());
+                command
+                    .env_clear()
+                    .env("HOME", &self.home)
+                    .env("USER", &user)
+                    .env("LOGNAME", &user)
+                    .env("PATH", login_path())
+                    .env("SHELL", "/bin/sh")
+                    .env("LANG", "C.UTF-8");
+                return;
+            }
             command
                 .env("HOME", &self.home)
                 .env_remove("XDG_CONFIG_HOME")
@@ -89,10 +121,12 @@ mod unix {
             }
             let mut command = Command::new(BIN);
             self.env(&mut command);
+            if !self.login {
+                command.env("RUST_LOG", "trace");
+            }
             let mut child = command
                 .args(args)
                 .current_dir(cwd)
-                .env("RUST_LOG", "trace")
                 .envs(env.iter().copied())
                 .stdin(if stdin.is_some() {
                     Stdio::piped()
@@ -153,6 +187,14 @@ mod unix {
         }
 
         fn git_with(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> String {
+            let output = self.git_output(dir, args, env);
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+            String::from_utf8(output.stdout).unwrap()
+        }
+
+        /// Runs `git`, whatever its exit, and checks that no test value
+        /// appears in its stdout or stderr, which carry svode-lfs messages.
+        fn git_output(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
             let mut command = Command::new("git");
             self.env(&mut command);
             let output = command
@@ -161,12 +203,13 @@ mod unix {
                 .envs(env.iter().copied())
                 .output()
                 .unwrap();
-            assert!(output.status.success(), "git {args:?}: {output:?}");
-            let stdout = String::from_utf8(output.stdout).unwrap();
-            for value in VALUES {
-                assert!(!stdout.contains(value), "git {args:?}: {stdout}");
+            for stream in [&output.stdout, &output.stderr] {
+                let text = String::from_utf8_lossy(stream);
+                for value in VALUES {
+                    assert!(!text.contains(value), "git {args:?}: {text}");
+                }
             }
-            stdout
+            output
         }
 
         /// Git LFS pointer of `file`: its text and OID.
@@ -184,18 +227,43 @@ mod unix {
         }
     }
 
+    /// Whether `git`, `git-lfs` and the svode-lfs next to `svode` are there.
+    /// Without them a test is skipped, unless `SVODE_STORAGE_REQUIRE_TOOLS`
+    /// is set, as in CI, where a skip would hide the server scenario.
     fn tools_available() -> bool {
         let lfs = Command::new("git").args(["lfs", "version"]).output();
-        if !lfs.is_ok_and(|output| output.status.success()) {
-            eprintln!("skipped: git and git-lfs are needed");
-            return false;
+        let missing = if !lfs.is_ok_and(|output| output.status.success()) {
+            "git and git-lfs are needed"
+        } else if !Path::new(BIN).with_file_name("svode-lfs").is_file() {
+            // `svode` registers the svode-lfs binary next to itself.
+            "build svode-lfs next to svode (`cargo build -p svode-lfs`)"
+        } else {
+            return true;
+        };
+        assert!(
+            std::env::var_os("SVODE_STORAGE_REQUIRE_TOOLS").is_none(),
+            "{missing}"
+        );
+        eprintln!("skipped: {missing}");
+        false
+    }
+
+    /// `PATH` of a login session: the directories of `git`, `git-lfs` and
+    /// `svode`, as an install puts them on it, and the system ones.
+    fn login_path() -> String {
+        let mut dirs = Vec::new();
+        for tool in ["git", "git-lfs"] {
+            let output = Command::new("sh")
+                .args(["-c", &format!("command -v {tool}")])
+                .output()
+                .unwrap();
+            let path = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
+            dirs.push(path.parent().unwrap().display().to_string());
         }
-        // `svode` registers the svode-lfs binary next to itself.
-        if !Path::new(BIN).with_file_name("svode-lfs").is_file() {
-            eprintln!("skipped: build svode-lfs next to svode (`cargo build -p svode-lfs`)");
-            return false;
-        }
-        true
+        dirs.push(Path::new(BIN).parent().unwrap().display().to_string());
+        dirs.extend(["/usr/bin".into(), "/bin".into()]);
+        dirs.dedup();
+        dirs.join(":")
     }
 
     fn object_key(oid: &str) -> String {
@@ -218,6 +286,14 @@ mod unix {
     /// A Project committed with `assets` in `source`, pushed to a bare
     /// origin and cloned without LFS content, as a server clones it.
     fn cloned(device: &Device, assets: Value, photo: Option<&[u8]>) -> PathBuf {
+        let origin = origin(device, assets, photo);
+        clone(device, &origin)
+    }
+
+    /// The bare origin of a Project committed with `assets` and, with
+    /// `photo`, the Git LFS pointer of `photo.png`, as the desktop app
+    /// pushes it.
+    fn origin(device: &Device, assets: Value, photo: Option<&[u8]>) -> PathBuf {
         let base = device.base();
         let source = base.join("source");
         write(
@@ -253,6 +329,12 @@ mod unix {
             &source,
             &["push", "-q", origin.to_str().unwrap(), "HEAD:main"],
         );
+        origin
+    }
+
+    /// `origin` cloned without LFS content, with verified repository access.
+    fn clone(device: &Device, origin: &Path) -> PathBuf {
+        let base = device.base();
         let clone = base.join("clone");
         device.git_with(
             &base,
@@ -1035,6 +1117,172 @@ mod unix {
             "STORAGE_STRATEGY_INHERITED",
             "--space root",
         );
+    }
+
+    /// Imports `name` with `bytes` into the Page at `path`, commits it and
+    /// pushes its Git LFS object to the stand; returns the canonical Page
+    /// path after the import.
+    fn import_and_push(
+        device: &Device,
+        stand: &S3Stand,
+        clone: &Path,
+        path: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> String {
+        let file = device.base().join("elsewhere").join(name);
+        write(&file, bytes);
+        let imported = device.ok(
+            clone,
+            &[
+                "asset",
+                "import",
+                "--path",
+                path,
+                "--file",
+                file.to_str().unwrap(),
+            ],
+        );
+        let (_, oid) = device.pointer(&file);
+        device.git(clone, &["add", "-A"]);
+        device.git(clone, &["commit", "-q", "-m", name]);
+        assert!(
+            device
+                .git(clone, &["lfs", "ls-files", "--long"])
+                .contains(&oid),
+            "{name} is stored as a Git LFS pointer"
+        );
+        assert!(stand.get(&object_key(&oid)).is_none());
+        device.git(clone, &["lfs", "push", "origin", "main"]);
+        assert_eq!(stand.get(&object_key(&oid)).unwrap(), bytes);
+        imported["contentPath"].as_str().unwrap().to_string()
+    }
+
+    /// Drops the local Git LFS objects and checks `photo.png` out as its
+    /// pointer, as a clone without LFS content has it.
+    fn forget_lfs_content(device: &Device, clone: &Path, pointer: &str) {
+        fs::remove_dir_all(clone.join(".git/lfs/objects")).unwrap();
+        fs::remove_file(clone.join("photo.png")).unwrap();
+        device.git_with(
+            clone,
+            &["checkout", "--", "photo.png"],
+            &[("GIT_LFS_SKIP_SMUDGE", "1")],
+        );
+        assert_eq!(
+            fs::read_to_string(clone.join("photo.png")).unwrap(),
+            pointer
+        );
+        assert_eq!(device.git(clone, &["status", "--porcelain"]), "");
+    }
+
+    /// DF-367 on a server reached over SSH, with no desktop session: every
+    /// process starts with only the environment of a login session. The
+    /// path of the example — clone without LFS content, the secrets file,
+    /// two Secrets from stdin, `connect` — gives real bytes on `git lfs
+    /// pull`, and an import goes out with `git lfs push`; a new session does
+    /// it again with nothing kept but the files; svode-lfs started by Git
+    /// takes `SVODE_SECRET_<NAME>` over the file.
+    #[test]
+    fn a_server_without_a_desktop_session_uses_the_lfs_s3_project_in_every_new_ssh_session() {
+        if !tools_available() {
+            return;
+        }
+        let stand = S3Stand::start(ACCESS);
+        let desktop = Device::new();
+        let photo = (0..=255u8).cycle().take(16 * 1024).collect::<Vec<_>>();
+        let origin = origin(&desktop, assets(&stand.endpoint), Some(&photo));
+        let (pointer, oid) = desktop.pointer(&desktop.base().join("blob.png"));
+        stand.put(&object_key(&oid), &photo);
+
+        let server = Device::login_session();
+        // Without a session bus the system password store cannot be used.
+        // The macOS run skips it: there the login keychain of the user
+        // would answer.
+        #[cfg(target_os = "linux")]
+        {
+            let status = server.ok(&server.home, &["secret", "store", "status"]);
+            eprintln!(
+                "system password store in a login session without D-Bus: {}",
+                status["store"]
+            );
+            assert_eq!(status["store"]["kind"], "system", "{status}");
+            assert_eq!(status["store"]["available"], false, "{status}");
+            assert_eq!(
+                status["store"]["problem"]["code"], "SECRET_STORE_UNAVAILABLE",
+                "{status}"
+            );
+        }
+
+        // The session that sets the server up.
+        let clone = clone(&server, &origin);
+        assert_eq!(
+            fs::read_to_string(clone.join("photo.png")).unwrap(),
+            pointer
+        );
+        let used = server.ok(&clone, &["secret", "store", "use", "file"]);
+        assert_eq!(used["store"]["kind"], "file", "{used}");
+        assert_eq!(
+            used["store"]["file"],
+            server.file().display().to_string(),
+            "{used}"
+        );
+        server.set_secret(&clone, "S3_ACCESS_KEY", VALUES[0]);
+        server.set_secret(&clone, "S3_SECRET_KEY", VALUES[1]);
+        let connected = server.ok(&clone, &connect("S3_ACCESS_KEY", "S3_SECRET_KEY"));
+        assert_eq!(connected["committed"], false, "{connected}");
+        let agent: Value =
+            serde_json::from_slice(&fs::read(clone.join(".svode/lfs-s3-agent.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            agent["globalDirectory"],
+            server.config().display().to_string()
+        );
+        server.git(&clone, &["lfs", "pull"]);
+        assert_eq!(fs::read(clone.join("photo.png")).unwrap(), photo);
+        let page = import_and_push(
+            &server,
+            &stand,
+            &clone,
+            "notes.md",
+            "first.png",
+            &(0..200u8).rev().cycle().take(9000).collect::<Vec<_>>(),
+        );
+
+        // A new session: nothing of the earlier processes is kept but the
+        // files, and the content comes again from S3.
+        forget_lfs_content(&server, &clone, &pointer);
+        let status = server.ok(&clone, &["storage", "status"]);
+        assert_eq!(status["storage"]["ready"], true, "{status}");
+        server.git(&clone, &["lfs", "pull"]);
+        assert_eq!(fs::read(clone.join("photo.png")).unwrap(), photo);
+        import_and_push(
+            &server,
+            &stand,
+            &clone,
+            &page,
+            "second.png",
+            &(0..150u8).cycle().take(7000).collect::<Vec<_>>(),
+        );
+
+        // svode-lfs started by Git sees `SVODE_SECRET_<NAME>`: with a wrong
+        // access key in the file the transfer is refused, with the right one
+        // in the environment of Git it passes, and nothing is written.
+        server.set_secret(&clone, "S3_ACCESS_KEY", VALUES[2]);
+        forget_lfs_content(&server, &clone, &pointer);
+        let refused = server.git_output(&clone, &["lfs", "pull"], &[]);
+        assert!(!refused.status.success(), "{refused:?}");
+        assert_eq!(
+            fs::read_to_string(clone.join("photo.png")).unwrap(),
+            pointer
+        );
+        server.git_with(
+            &clone,
+            &["lfs", "pull"],
+            &[("SVODE_SECRET_S3_ACCESS_KEY", ACCESS)],
+        );
+        assert_eq!(fs::read(clone.join("photo.png")).unwrap(), photo);
+        let secrets = fs::read_to_string(server.file()).unwrap();
+        assert!(secrets.contains(VALUES[2]) && !secrets.contains(ACCESS));
     }
 
     /// Without a D-Bus session the system password store cannot be used;

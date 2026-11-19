@@ -248,6 +248,10 @@ jobs:
     # payload into the standalone archive, which the installer puts into the
     # stable location of a user without Svode.
     runs-on: ubuntu-22.04
+    env:
+      # The storage process tests fail instead of skipping without git-lfs
+      # or the svode-lfs next to svode (DF-367).
+      SVODE_STORAGE_REQUIRE_TOOLS: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.97.0
@@ -255,10 +259,12 @@ jobs:
         with:
           workspaces: . -> target
           key: standalone
-      - name: Install the build dependency of the OS keychain client
+      - name: Install the build dependency of the OS keychain client and Git LFS
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config
+          sudo apt-get install -y libdbus-1-dev pkg-config git-lfs
+          git --version
+          git lfs version
       - name: Build the standalone binaries
         run: cargo build -p svode-cli -p svode-mcp -p svode-lfs -p svode-install
       - name: The binaries link no desktop GUI library
@@ -267,6 +273,37 @@ jobs:
           if ldd target/debug/svode target/debug/svode-mcp | grep -Ei 'gtk|webkit|appindicator|rsvg'; then
             exit 1
           fi
+      # Stage 12 E3 (DF-367): what the system password store answers on a
+      # host without a desktop session, in the environment of a new SSH
+      # login, with the error of the keychain client from the debug log.
+      # `status` reads an account that is never written; `set` writes one.
+      # The second group has a session bus but no Secret Service.
+      - name: System password store without a desktop session
+        run: |
+          echo "DBUS_SESSION_BUS_ADDRESS of the runner: ${DBUS_SESSION_BUS_ADDRESS-<unset>}"
+          echo "XDG_RUNTIME_DIR of the runner: ${XDG_RUNTIME_DIR-<unset>}"
+          svode="$PWD/target/debug/svode"
+          home="$(mktemp -d)"
+          session() {
+            env -i HOME="$home" USER="$USER" LOGNAME="$USER" PATH=/usr/bin:/bin \
+              SHELL=/bin/sh LANG=C.UTF-8 RUST_LOG=svode_core::variables=debug "$@"
+          }
+          echo "::group::No session bus"
+          session "$svode" secret store status --json
+          printf 'probe' | session "$svode" secret set E3_PROBE --json || echo "exit $?"
+          echo "::endgroup::"
+          if command -v dbus-run-session >/dev/null; then
+            echo "::group::A session bus without a Secret Service"
+            session dbus-run-session -- "$svode" secret store status --json || echo "exit $?"
+            printf 'probe' | session dbus-run-session -- "$svode" secret set E3_PROBE --json || echo "exit $?"
+            echo "::endgroup::"
+          fi
+          test ! -e "$home/.config/app.svode.desktop/secrets.json"
+      # The server path of DF-367 through real git, git-lfs, svode and
+      # svode-lfs against the loopback S3 stand, in login sessions without
+      # D-Bus; the output shows that no test was skipped.
+      - name: Server scenario of an lfs-s3 project without a desktop session
+        run: cargo test -p svode-cli --test storage_process --test secret_process -- --nocapture
       - name: Every command and tool through real processes
         run: cargo test -p svode-cli -p svode-mcp -p svode-install -p svode-connect
       - name: Packaging smoke
