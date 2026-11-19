@@ -446,22 +446,10 @@ pub async fn repair_lfs(
     Ok(index_state.get_lfs_state(&scope.pool_key).await)
 }
 
-/// S3 readiness resolves the current Variables snapshot on every read.
-/// Active transfers keep their state; remote-provider probes remain cached.
-#[tauri::command]
-pub async fn get_lfs_state(
-    app: AppHandle,
-    project_path: String,
-    space_id: Option<String>,
-    index_state: State<'_, IndexState>,
-) -> Result<LfsState, AppError> {
-    Ok(lfs_status(&app, &index_state, &project_path, space_id)
-        .await?
-        .state)
-}
-
-/// IPC: [`get_lfs_state`] with the files the last download left without
-/// content and why it stopped (DF-368 R6).
+/// IPC: the LFS state of the scope with the files the last download left
+/// without content and why it stopped (DF-368 R6). S3 readiness resolves the
+/// current Variables snapshot on every read; active transfers keep their
+/// state; remote-provider probes remain cached.
 #[tauri::command]
 pub async fn get_lfs_status(
     app: AppHandle,
