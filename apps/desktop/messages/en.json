@@ -2418,6 +2418,7 @@
   "variables_changed_outside": "This variable changed outside this form. Review the latest version and keep your draft, or cancel.",
   "variables_retry_draft": "Review latest and keep draft",
   "variables_project_description": "Each space inherits the project's variables until it defines its own variable with the same name.",
+  "variables_secret_store_file": "Secret values are stored in the file {path}.",
   "variables_remove_inheritance": "Deleting this space variable restores project inheritance for references without an explicit source. Explicit bindings will become missing.",
   "variables_known_usage": "Known usage",
   "variables_reload_review": "The source was reloaded. Compare the saved value with your draft before saving.",

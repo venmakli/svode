@@ -20,6 +20,7 @@ test("global catalog edits a Secret without reading or replacing its value", asy
   const mutations: Array<{ command: string; args: unknown }> = [];
   mockNativeIpc(
     (command, args) => {
+      if (command === "get_secret_store") return { kind: "system", file: null };
       if (command === "get_app_variables") {
         return catalogFixture(
           [
@@ -139,6 +140,7 @@ test("project page gives every owner a block with one editor on the page", async
   let finishWrite: (() => void) | null = null;
   mockNativeIpc(
     async (command, args) => {
+      if (command === "get_secret_store") return { kind: "system", file: null };
       if (command === "get_app_variables") {
         const spaceId = (args as { scope?: { spaceId: string | null } }).scope
           ?.spaceId;
@@ -423,6 +425,119 @@ test("project page gives every owner a block with one editor on the page", async
     clearNativeMocks();
     restoreGlobals();
     dom.window.close();
+  }
+});
+
+test("both Variables pages name the secrets file only while it is the active store", async () => {
+  const file = "/home/user/.config/app.svode.desktop/secrets.json";
+  const line = `Secret values are stored in the file ${file}.`;
+  for (const page of ["global", "project"] as const) {
+    for (const store of ["file", "unsafe file", "system"] as const) {
+      const dom = new JSDOM(
+        "<!doctype html><html><body><div id=app></div></body></html>",
+        { pretendToBeVisual: true, url: "http://localhost/" },
+      );
+      const restoreGlobals = installDomGlobals(dom);
+      const document = dom.window.document;
+      mockNativeIpc(
+        (command) => {
+          if (command === "get_secret_store") {
+            return store === "system"
+              ? { kind: "system", file: null }
+              : { kind: "file", file };
+          }
+          if (command === "get_app_variables") {
+            if (store === "unsafe file") {
+              throw {
+                kind: "variables_problem",
+                message: "raw message",
+                problem: {
+                  category: "unavailable",
+                  code: "secret_file_unsafe",
+                  owner: { scope: page === "global" ? "global" : "project" },
+                  file: null,
+                  section: null,
+                  recoverable: false,
+                },
+              };
+            }
+            return catalogFixture(
+              [
+                variableFixture(
+                  { name: "TOKEN", kind: "secret", hasValue: true },
+                  page === "global"
+                    ? { scope: "global" }
+                    : { scope: "project" },
+                ),
+              ],
+              page === "global" ? { scope: "global" } : { scope: "project" },
+            );
+          }
+          throw new Error(`Unexpected command: ${command}`);
+        },
+        { shouldMockEvents: true },
+      );
+      const root = createRoot(document.getElementById("app")!);
+      try {
+        await act(async () => {
+          root.render(
+            page === "global" ? (
+              <GlobalVariablesSection />
+            ) : (
+              <ProjectVariablesSection
+                projectPath="/repo"
+                projectName="Testov"
+                projectIcon=""
+                spaces={[]}
+                gitTypes={{}}
+                reveal={{ owner: null, request: {} }}
+                registerLeaveGuard={() => () => undefined}
+              />
+            ),
+          );
+          await nextTurn();
+          await nextTurn();
+        });
+        const text = document.body.textContent ?? "";
+        const label = `${page} page, ${store}`;
+        if (store === "system") {
+          expect(text.includes("Secret values are stored"), label).toBe(false);
+          expect(document.querySelector("code"), label).toBe(null);
+          continue;
+        }
+        const code = Array.from(document.querySelectorAll("code")).find(
+          (item) => item.textContent === file,
+        );
+        expect(code !== undefined, label).toBe(true);
+        const note = code!.parentElement!;
+        expect(note.textContent, label).toBe(line);
+        // The line sits in the page description, in its muted text.
+        const description = note.closest("p")!;
+        expect(
+          description.className.includes("text-muted-foreground"),
+          label,
+        ).toBe(true);
+        expect(
+          description.textContent?.startsWith(
+            page === "global"
+              ? "Available for explicit connection to Apps and S3"
+              : "Each space inherits the project's variables",
+          ),
+          label,
+        ).toBe(true);
+        expect(note.querySelector("button, svg"), label).toBe(null);
+        // The path only: no value and no number of values.
+        expect(/\d/.test(line.replace(file, "")), label).toBe(false);
+        if (store === "unsafe file") {
+          expect(text.includes("Couldn't read variables"), label).toBe(true);
+        }
+      } finally {
+        await act(async () => root.unmount());
+        clearNativeMocks();
+        restoreGlobals();
+        dom.window.close();
+      }
+    }
   }
 });
 

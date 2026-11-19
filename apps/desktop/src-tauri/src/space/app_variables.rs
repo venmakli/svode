@@ -9,7 +9,7 @@ use svode_core::variables::{
 
 pub(crate) mod mutations;
 mod registry;
-pub(crate) use core::{KeyringSecretStore, Kind as AppVariableKind, SecretStore};
+pub(crate) use core::{Kind as AppVariableKind, SecretStore};
 
 pub(crate) fn storage_error(error: core::Error) -> AppError {
     AppError::Storage(error.to_string())

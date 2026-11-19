@@ -3,15 +3,17 @@ use crate::space::app_variables::mutations::{
     self, Mutation, VariableMutationResult, VariableRecoveryResult,
 };
 use crate::space::app_variables::{
-    self, AppVariableContextInput, AppVariableOwnerContext, AppVariablesCatalog,
-    KeyringSecretStore, VariableScope, storage_error,
+    self, AppVariableContextInput, AppVariableOwnerContext, AppVariablesCatalog, VariableScope,
+    storage_error,
 };
 use crate::space::settings::AppSettingsState;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use svode_core::apps::manifest::{read_and_validate_manifest, resolve_app_owner};
 use svode_core::system_path;
-use svode_core::variables::{self as core, Service, SourceOwner, SourceReference};
+use svode_core::variables::{
+    self as core, DeviceSecretStore, Service, SourceOwner, SourceReference,
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub(crate) const APP_VARIABLES_CHANGED_EVENT: &str = "app-settings:variables-changed";
@@ -56,14 +58,34 @@ pub(crate) async fn get_app_variables(
     run_locked(&state, move || {
         let context = context.map(resolve_context).transpose()?;
         let scope = context.as_ref().map(|c| &c.scope).or(scope.as_ref());
+        let secrets = DeviceSecretStore::new(&config);
         if include_global == Some(true) && context.is_none() {
-            app_variables::get_source_catalog(&config, scope, &KeyringSecretStore)
+            app_variables::get_source_catalog(&config, scope, &secrets)
         } else {
-            app_variables::get_catalog(&config, scope, context.as_ref(), &KeyringSecretStore)
+            app_variables::get_catalog(&config, scope, context.as_ref(), &secrets)
         }
     })
     .await
 }
+/// Where Secret values of this device are stored; the file path is given
+/// only while the secrets file is the active store.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SecretStoreLocation {
+    kind: core::StoreKind,
+    file: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn get_secret_store(app: AppHandle) -> Result<SecretStoreLocation, AppError> {
+    let active = DeviceSecretStore::new(&config_dir(&app)?).active();
+    Ok(SecretStoreLocation {
+        kind: active.kind,
+        file: (active.kind == core::StoreKind::File)
+            .then(|| system_path::user_facing_path(&active.file)),
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn upsert_app_variable(
     app: AppHandle,
@@ -75,8 +97,8 @@ pub(crate) async fn upsert_app_variable(
         &state,
         input.scope,
         input.source.owner,
-        move |owner| {
-            Service::new(&KeyringSecretStore)
+        move |owner, secrets| {
+            Service::new(secrets)
                 .save(
                     owner,
                     core::Save {
@@ -109,8 +131,8 @@ pub(crate) async fn remove_app_variable(
         &state,
         input.scope,
         input.source.owner,
-        move |owner| {
-            Service::new(&KeyringSecretStore)
+        move |owner, secrets| {
+            Service::new(secrets)
                 .remove(owner, &input.source.name, &input.revision)
                 .map(Some)
                 .map_err(storage_error)
@@ -130,10 +152,8 @@ pub(crate) async fn recover_app_variables(
     scope: Option<VariableScope>,
     source: SourceOwner,
 ) -> Result<VariableRecoveryResult, AppError> {
-    let mutation = run_mutation(&app, &state, scope, source, |owner| {
-        Service::new(&KeyringSecretStore)
-            .recover(owner)
-            .map_err(storage_error)
+    let mutation = run_mutation(&app, &state, scope, source, |owner, secrets| {
+        Service::new(secrets).recover(owner).map_err(storage_error)
     })
     .await?;
     Ok(VariableRecoveryResult {
@@ -147,9 +167,12 @@ async fn run_mutation(
     state: &AppSettingsState,
     scope: Option<VariableScope>,
     source: SourceOwner,
-    operation: impl FnOnce(&core::Owner) -> Result<Option<core::Change>, AppError> + Send + 'static,
+    operation: impl FnOnce(&core::Owner, &DeviceSecretStore) -> Result<Option<core::Change>, AppError>
+    + Send
+    + 'static,
 ) -> Result<Mutation, AppError> {
     let config = config_dir(app)?;
+    let secrets = DeviceSecretStore::new(&config);
     let project = scope
         .as_ref()
         .map(|s| std::path::PathBuf::from(&s.project_path));
@@ -167,7 +190,7 @@ async fn run_mutation(
             &owner,
             project.as_deref(),
             &git,
-            run_locked(state, move || operation(&write_owner)),
+            run_locked(state, move || operation(&write_owner, &secrets)),
             |_cli, space, repo| crate::git::delivery::publish_commit(app, space, repo),
         )
         .await
@@ -202,7 +225,7 @@ pub(crate) async fn set_app_variable_binding(
             &input.reference_name,
             input.source,
             &input.revision,
-            &KeyringSecretStore,
+            &DeviceSecretStore::new(&config),
         )
     })
     .await?;

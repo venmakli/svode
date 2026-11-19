@@ -34,6 +34,9 @@ url = "2.5.8"
 jsonc-parser = { version = "0.34", features = ["serde"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 svode-testkit = { path = "../svode-testkit" }
 tracing-subscriber = "0.3"

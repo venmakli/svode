@@ -448,6 +448,9 @@ impl AgentRuntime {
         if let Some(environment) = &launch.environment {
             command.env_clear().envs(environment.0.iter());
         }
+        // Secret overrides of the host stay out of the agent; the variables
+        // of its description, set below, are its own.
+        svode_core::variables::strip_secret_environment(command.as_std_mut());
         command
             .args(&launch.args)
             .envs(&launch.env)

@@ -159,7 +159,7 @@ struct Snapshot {
     revision: Revision,
 }
 
-fn valid_ref(reference: &str) -> bool {
+pub(super) fn valid_ref(reference: &str) -> bool {
     reference
         .strip_prefix("secret:")
         .is_some_and(|token| ulid::Ulid::from_string(token).is_ok())
@@ -326,6 +326,15 @@ impl Snapshot {
     }
 }
 
+/// A secret store failure keeps the file causes it names; any other cause
+/// is the store being unavailable, never its diagnostics.
+fn store_error(error: Error) -> Error {
+    match error {
+        Error::SecretFileUnsafe | Error::SecretFileInvalid | Error::Missing => error,
+        _ => Error::SecretStore,
+    }
+}
+
 pub struct Service<'a> {
     secrets: &'a dyn SecretStore,
     #[cfg(test)]
@@ -338,6 +347,12 @@ impl<'a> Service<'a> {
             #[cfg(test)]
             interrupt: std::cell::Cell::new(0),
         }
+    }
+
+    /// `SVODE_SECRET_<NAME>` of a declared Secret; it takes the place of the
+    /// value on this device and is never written anywhere.
+    fn environment_value(&self, name: &str) -> Result<Option<String>> {
+        self.secrets.environment_value(name).map_err(store_error)
     }
 
     pub fn catalog(&self, owner: &Owner) -> Located<Catalog> {
@@ -353,12 +368,12 @@ impl<'a> Service<'a> {
         let mut entries = Vec::new();
         for (name, mode, entry) in snapshot.entries() {
             let kind = entry.kind.ok_or(Error::InvalidConfig)?;
-            let has_value = if kind == Kind::Variable {
+            let has_value = if kind == Kind::Variable || self.environment_value(name)?.is_some() {
                 true
             } else if let Some(account) = snapshot.account(name, mode, entry) {
                 self.secrets
                     .get(&account)
-                    .map_err(|_| Error::SecretStore)?
+                    .map_err(store_error)?
                     .is_some_and(|v| !v.is_empty())
             } else {
                 false
@@ -450,7 +465,7 @@ impl<'a> Service<'a> {
                 let configured = next
                     .secret_ref
                     .as_ref()
-                    .map(|r| self.secrets.get(r).map_err(|_| Error::SecretStore))
+                    .map(|r| self.secrets.get(r).map_err(store_error))
                     .transpose()?
                     .flatten()
                     .is_some_and(|v| !v.is_empty());
@@ -467,9 +482,7 @@ impl<'a> Service<'a> {
             .and_then(|e| e.secret_ref.clone());
         if let Some(value) = secret_value {
             let account = format!("secret:{}", ulid::Ulid::new());
-            self.secrets
-                .set(&account, &value)
-                .map_err(|_| Error::SecretStore)?;
+            self.secrets.set(&account, &value).map_err(store_error)?;
             next.secret_ref = Some(account);
         }
         let cleanup = old_account
@@ -548,8 +561,10 @@ impl<'a> Service<'a> {
         };
         let value = if entry.kind == Some(Kind::Variable) {
             entry.value.clone()
+        } else if let Some(value) = self.environment_value(&source.name)? {
+            Some(value)
         } else if let Some(account) = snapshot.account(&source.name, mode, entry) {
-            self.secrets.get(&account).map_err(|_| Error::SecretStore)?
+            self.secrets.get(&account).map_err(store_error)?
         } else {
             None
         };
@@ -840,9 +855,7 @@ impl Service<'_> {
             files::atomic_write(&owner.local_path(), &journal.local)?;
         }
         for account in &journal.cleanup {
-            self.secrets
-                .remove(account)
-                .map_err(|_| Error::SecretStore)?;
+            self.secrets.remove(account).map_err(store_error)?;
         }
         std::fs::remove_file(owner.directory.join(files::PENDING_FILE))
             .map_err(|_| Error::Unavailable)?;

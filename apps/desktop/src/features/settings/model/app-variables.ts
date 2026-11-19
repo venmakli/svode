@@ -1,6 +1,7 @@
 import type { VariablesProblemDto as VariablesProblem } from "@/platform/settings/app-variables-api";
 
 export type {
+  SecretStoreLocationDto as SecretStoreLocation,
   VariableMutationResultDto as VariableMutationResult,
   VariableRecoveryResultDto as VariableRecoveryResult,
   VariablesProblemCategoryDto as VariablesProblemCategory,

@@ -6307,3 +6307,80 @@ async fn a_typed_error_of_an_update_leaves_the_turn_and_odd_failures_show_nothin
     );
     assert_eq!(snapshot.title.as_deref(), Some("Renamed"));
 }
+
+/// R9 of DF-367: an agent process and an adapter diagnostic Svode starts get
+/// no `SVODE_SECRET_*` of the host, inherited or from a captured login
+/// environment, while the variables of the agent's description stay.
+#[cfg(unix)]
+#[tokio::test]
+async fn launched_agents_do_not_inherit_secret_overrides() {
+    const CHILD: &str = "SVODE_AGENTS_SECRET_ENV_CHILD";
+    if let Some(dir) = std::env::var_os(CHILD) {
+        let dir = PathBuf::from(dir);
+        let runtime = AgentRuntime::new(RuntimeConfig::default());
+        for (name, environment) in [
+            ("inherited", None),
+            (
+                "captured",
+                Some(crate::runtime::LaunchEnvironment::new([
+                    ("PATH".into(), std::env::var_os("PATH").unwrap()),
+                    ("SVODE_SECRET_CAPTURED".into(), "captured".into()),
+                    ("SVODE_VISIBLE".into(), "visible".into()),
+                ])),
+            ),
+        ] {
+            let output = dir.join(name);
+            let launch = AcpLaunch {
+                program: PathBuf::from("/bin/sh"),
+                args: vec!["-c".into(), format!("env > '{}'", output.display())],
+                environment,
+                env: BTreeMap::from([("SVODE_DECLARED".into(), "declared".into())]),
+                cwd: dir.clone(),
+                ..launch()
+            };
+            // The script exits before `initialize`; its environment is written.
+            assert!(runtime.connect(launch).await.is_err());
+            let seen = std::fs::read_to_string(&output).unwrap();
+            assert!(!seen.contains("SVODE_SECRET_"), "{name}: {seen}");
+            assert!(seen.contains("SVODE_VISIBLE=visible"), "{name}: {seen}");
+            assert!(seen.contains("SVODE_DECLARED=declared"), "{name}: {seen}");
+        }
+        let diagnostic = crate::registry::RuntimeCommandRunner::run(
+            &crate::registry::SystemRuntimeCommandRunner,
+            &crate::registry::RuntimeCommandRequest {
+                program: PathBuf::from("/bin/sh"),
+                arguments: vec!["-c".into(), "env".into()],
+                cwd: dir.clone(),
+                search_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !diagnostic.stdout.contains("SVODE_SECRET_"),
+            "{}",
+            diagnostic.stdout
+        );
+        assert!(diagnostic.stdout.contains("SVODE_VISIBLE=visible"));
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "runtime::tests::launched_agents_do_not_inherit_secret_overrides",
+            "--nocapture",
+        ])
+        .env(CHILD, dir.path())
+        .env("SVODE_SECRET_LEAK", "leak")
+        .env("SVODE_VISIBLE", "visible")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("1 passed;"), "{stdout}");
+}

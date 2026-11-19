@@ -88,6 +88,7 @@ impl RuntimeCommandRunner for SystemRuntimeCommandRunner {
     ) -> Pin<Box<dyn Future<Output = Result<RuntimeCommandOutput, String>> + Send + 'a>> {
         Box::pin(async move {
             let mut command = tokio::process::Command::new(&request.program);
+            svode_core::variables::strip_secret_environment(command.as_std_mut());
             // npm/bun/volta installs are `#!/usr/bin/env node` scripts.
             if let Some(path) = &request.search_path {
                 command.env("PATH", path);

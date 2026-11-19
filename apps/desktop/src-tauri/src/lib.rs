@@ -215,6 +215,7 @@ pub fn run() {
             apps::commands::app_open_owner_directory,
             apps::commands::app_open_browser,
             commands::app_variables::get_app_variables,
+            commands::app_variables::get_secret_store,
             commands::app_variables::upsert_app_variable,
             commands::app_variables::remove_app_variable,
             commands::app_variables::recover_app_variables,

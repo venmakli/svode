@@ -8,6 +8,7 @@ import {
 } from "../hooks/use-settings-owner-blocks";
 import type { SettingsLeaveGuard } from "../model/settings-destination";
 import { ProjectOwnerBlock, SpaceOwnerBlock } from "./project-owner-block";
+import { SecretStoreFileNote } from "./secret-store-file-note";
 import {
   VariableCatalogGroup,
   type VariableCatalogGroupHandle,
@@ -22,7 +23,12 @@ export function GlobalVariablesSection({
 }) {
   return (
     <VariableCatalogGroup
-      description={m.variables_global_description()}
+      description={
+        <>
+          {m.variables_global_description()}
+          <SecretStoreFileNote />
+        </>
+      }
       registerLeaveGuard={registerLeaveGuard}
     />
   );
@@ -75,6 +81,7 @@ export function ProjectVariablesSection({
     <>
       <p className="text-sm text-muted-foreground">
         {m.variables_project_description()}
+        <SecretStoreFileNote />
       </p>
       <ProjectOwnerBlock
         name={projectName}

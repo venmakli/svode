@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-pub const KEYCHAIN_SERVICE: &str = "app.svode.desktop.variables";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -55,7 +53,13 @@ pub enum Error {
     LegacyFormat,
     Missing,
     WrongKind,
+    /// The system password store cannot be used.
     SecretStore,
+    /// The secrets file is a symbolic link, not a regular file, belongs to
+    /// another account or is accessible to group or others.
+    SecretFileUnsafe,
+    /// The secrets file is not valid JSON of a known version.
+    SecretFileInvalid,
 }
 
 impl std::fmt::Display for Error {
@@ -76,6 +80,8 @@ impl std::fmt::Display for Error {
             Self::Missing => "Variable value is missing",
             Self::WrongKind => "This source is not a Secret",
             Self::SecretStore => "Cannot access the Variables secret store",
+            Self::SecretFileUnsafe => "The secrets file is not private to this account",
+            Self::SecretFileInvalid => "The secrets file is damaged or has an unknown version",
         })
     }
 }
@@ -97,7 +103,10 @@ pub enum Category {
 impl Error {
     pub fn category(&self) -> Category {
         match self {
-            Self::Unavailable | Self::SecretStore => Category::Unavailable,
+            Self::Unavailable
+            | Self::SecretStore
+            | Self::SecretFileUnsafe
+            | Self::SecretFileInvalid => Category::Unavailable,
             Self::LegacyFormat => Category::LegacyFormat,
             Self::InvalidConfig | Self::UnsupportedVersion => Category::InvalidConfig,
             Self::InvalidJournal => Category::BlockedJournal,
@@ -105,7 +114,24 @@ impl Error {
             _ => Category::Unknown,
         }
     }
+
+    /// Stable code of a Secret value failure for CLI refusals; `Missing`
+    /// means a Secret that is not declared or has no value.
+    pub fn secret_code(&self) -> Option<&'static str> {
+        match self {
+            Self::SecretStore => Some(SECRET_STORE_UNAVAILABLE),
+            Self::SecretFileUnsafe => Some(SECRET_FILE_UNSAFE),
+            Self::SecretFileInvalid => Some(SECRET_FILE_INVALID),
+            Self::Missing => Some(SECRET_NOT_FOUND),
+            _ => None,
+        }
+    }
 }
+
+pub const SECRET_STORE_UNAVAILABLE: &str = "SECRET_STORE_UNAVAILABLE";
+pub const SECRET_FILE_UNSAFE: &str = "SECRET_FILE_UNSAFE";
+pub const SECRET_FILE_INVALID: &str = "SECRET_FILE_INVALID";
+pub const SECRET_NOT_FOUND: &str = "SECRET_NOT_FOUND";
 
 /// A read error with the file and section to fix; contents are never included.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,36 +195,17 @@ pub fn valid_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Secret values of the device by account (`secret:<ULID>`). Production code
+/// uses [`DeviceSecretStore`](super::DeviceSecretStore).
 pub trait SecretStore {
+    /// Value that overrides the declared Secret `name` before its account is
+    /// read; when present, the account is not read at all.
+    fn environment_value(&self, _name: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
     fn get(&self, account: &str) -> Result<Option<String>>;
     fn set(&self, account: &str, value: &str) -> Result<()>;
     fn remove(&self, account: &str) -> Result<()>;
-}
-
-pub struct KeyringSecretStore;
-impl SecretStore for KeyringSecretStore {
-    fn get(&self, account: &str) -> Result<Option<String>> {
-        let entry =
-            keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(|_| Error::SecretStore)?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(_) => Err(Error::SecretStore),
-        }
-    }
-    fn set(&self, account: &str, value: &str) -> Result<()> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, account)
-            .and_then(|entry| entry.set_password(value))
-            .map_err(|_| Error::SecretStore)
-    }
-    fn remove(&self, account: &str) -> Result<()> {
-        let entry =
-            keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(|_| Error::SecretStore)?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err(Error::SecretStore),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]

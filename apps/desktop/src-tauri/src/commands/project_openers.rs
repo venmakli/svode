@@ -354,6 +354,7 @@ fn canonicalize_accessible_path(path: &str) -> Result<PathBuf, AppError> {
 }
 
 fn spawn(mut command: Command, label: &str) -> Result<(), AppError> {
+    svode_core::variables::strip_secret_environment(&mut command);
     command
         .spawn()
         .map(|_| ())
@@ -613,6 +614,7 @@ fn open_vscode(path: &Path) -> Result<(), AppError> {
     let mut command = Command::new(&candidate.path);
     command.arg(path);
     crate::process::hide_window(&mut command);
+    svode_core::variables::strip_secret_environment(&mut command);
     command.spawn().map(|_| ()).map_err(|err| {
         AppError::General(format!(
             "Failed to open VS Code using {}: {err}. Tried: {}. {}",

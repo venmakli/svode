@@ -1,6 +1,6 @@
 //! Shared S3 bindings, local agent configuration and credential resolution.
 use super::config::AssetsS3Config;
-use crate::variables::{self, Context, KeyringSecretStore, SecretStore, Service};
+use crate::variables::{self, Context, DeviceSecretStore, SecretStore, Service};
 pub use crate::variables::{SecretPair as SecretBindings, SecretValues as Credentials};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -99,7 +99,9 @@ impl AgentConfig {
                 )
             })
     }
+    /// Credentials from the device store of the config directory the
+    /// bindings were made in, which also holds the Global catalog.
     pub fn resolve(&self) -> Result<Credentials, String> {
-        self.resolve_with_store(&KeyringSecretStore)
+        self.resolve_with_store(&DeviceSecretStore::new(&self.global_directory))
     }
 }

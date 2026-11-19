@@ -183,6 +183,15 @@ export function setAppVariableBinding(input: {
 }): Promise<void> {
   return invokeCommand("set_app_variable_binding", { input });
 }
+// The device store of Secret values; `file` is set only while the secrets
+// file is the active store.
+export interface SecretStoreLocationDto {
+  kind: "system" | "file";
+  file: string | null;
+}
+export function getSecretStore(): Promise<SecretStoreLocationDto> {
+  return invokeCommand("get_secret_store");
+}
 export function listenAppVariablesChanged(
   handler: () => void,
 ): Promise<UnlistenFn> {

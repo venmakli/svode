@@ -11,8 +11,8 @@ use super::process_runtime::{AppProcessAction, AppProcessSnapshot};
 use crate::AppError;
 use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
 use crate::space::app_variables::{
-    AppEnvironment, AppVariableOwnerContext, KeyringSecretStore, MissingAppVariable, VariableScope,
-    VariablesProblem, resolve_environment,
+    AppEnvironment, AppVariableOwnerContext, MissingAppVariable, VariableScope, VariablesProblem,
+    resolve_environment,
 };
 use crate::space::settings::AppSettingsState;
 use svode_core::apps::manifest::AppProcessRuntime;
@@ -109,7 +109,7 @@ pub(crate) async fn resolve_runtime_environment(
             &config_dir,
             &context,
             &declaration,
-            &KeyringSecretStore,
+            &svode_core::variables::DeviceSecretStore::new(&config_dir),
         ))
     })
     .await?;

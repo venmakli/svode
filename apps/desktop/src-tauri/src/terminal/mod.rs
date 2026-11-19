@@ -390,11 +390,7 @@ impl TerminalManager {
             .openpty(size)
             .map_err(|e| AppError::General(format!("Failed to open terminal PTY: {e}")))?;
 
-        let mut cmd = CommandBuilder::new(shell.program.clone());
-        for arg in &shell.args {
-            cmd.arg(arg);
-        }
-        cmd.cwd(&cwd_path);
+        let mut cmd = shell_command(&shell, &cwd_path);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         if let Ok(discovery_path) = crate::mcp::ipc::discovery_path_for_app(&app) {
@@ -1000,12 +996,10 @@ impl TerminalManager {
     fn insert_program_for_test(&self, pty_id: &str, cwd: &Path, shell: ShellCommand) {
         let size = pty_size(80, 24);
         let pair = native_pty_system().openpty(size).expect("open PTY");
-        let mut cmd = CommandBuilder::new(shell.program.clone());
-        for arg in &shell.args {
-            cmd.arg(arg);
-        }
-        cmd.cwd(cwd);
-        let child = pair.slave.spawn_command(cmd).expect("spawn shell");
+        let child = pair
+            .slave
+            .spawn_command(shell_command(&shell, cwd))
+            .expect("spawn shell");
         let writer = pair.master.take_writer().expect("PTY writer");
         let (_, write_ready) = master_ready(&*pair.master).expect("PTY readiness");
         let input = TerminalInput::start(pty_id, writer, write_ready, self.agent_surfaces.clone())
@@ -1589,6 +1583,20 @@ impl ShellCommand {
     }
 }
 
+/// The shell of a terminal in `cwd` with the app's environment, except the
+/// Secret overrides, which a terminal Svode starts does not inherit.
+fn shell_command(shell: &ShellCommand, cwd: &Path) -> CommandBuilder {
+    let mut command = CommandBuilder::new(shell.program.clone());
+    for arg in &shell.args {
+        command.arg(arg);
+    }
+    command.cwd(cwd);
+    for key in svode_core::variables::inherited_secret_environment() {
+        command.env_remove(key);
+    }
+    command
+}
+
 #[cfg(windows)]
 fn default_shell() -> ShellCommand {
     select_windows_shell(|candidate| {
@@ -1737,6 +1745,45 @@ fn quote_cmd_terminal_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R9 of DF-367: the shell of a terminal, and so an agent started in
+    /// it, gets no `SVODE_SECRET_*` of the app; other variables stay.
+    #[test]
+    fn a_terminal_shell_does_not_inherit_secret_overrides() {
+        const CHILD: &str = "SVODE_TERMINAL_SECRET_ENV_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let command = shell_command(&default_shell(), Path::new("/"));
+            assert_eq!(command.get_env("SVODE_SECRET_LEAK"), None);
+            assert_eq!(
+                command.get_env("SVODE_VISIBLE"),
+                Some(std::ffi::OsStr::new("visible"))
+            );
+            assert!(
+                command
+                    .iter_full_env_as_str()
+                    .all(|(key, _)| !key.starts_with("SVODE_SECRET_"))
+            );
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "terminal::tests::a_terminal_shell_does_not_inherit_secret_overrides",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("SVODE_SECRET_LEAK", "leak")
+            .env("SVODE_VISIBLE", "visible")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("1 passed;"), "{stdout}");
+    }
 
     fn test_surface() -> AgentTerminalSurface {
         AgentTerminalSurface {

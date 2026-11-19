@@ -75,6 +75,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       };
     },
     listenAppVariablesChanged: async () => noop,
+    getSecretStore: async () => ({ kind: "system", file: null }),
     upsertAppVariable: async () => {
       await variableWrite;
       return { effects: [] };

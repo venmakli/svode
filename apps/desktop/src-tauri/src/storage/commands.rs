@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
-use crate::space::app_variables::KeyringSecretStore;
 use crate::space::settings::AppSettingsState;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -346,7 +345,7 @@ pub async fn set_assets_strategy(
                     &variable_scope,
                     &target,
                     bindings,
-                    &KeyringSecretStore,
+                    &svode_core::variables::DeviceSecretStore::new(&directory),
                 )
             })
             .await?,
@@ -379,7 +378,12 @@ pub async fn set_assets_strategy(
     if let Some(agent_config) = next_agent_config {
         let repo = scope.repo_dir.clone();
         run_locked(&settings_state, move || {
-            super::bindings::publish(&catalog_dir, &repo, &agent_config, &KeyringSecretStore)
+            super::bindings::publish(
+                &catalog_dir,
+                &repo,
+                &agent_config,
+                &svode_core::variables::DeviceSecretStore::new(&catalog_dir),
+            )
         })
         .await?;
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());

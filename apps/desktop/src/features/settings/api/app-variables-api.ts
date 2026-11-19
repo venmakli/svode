@@ -1,5 +1,6 @@
 import * as transport from "@/platform/settings/app-variables-api";
 import type {
+  SecretStoreLocation,
   AppVariablesCatalog,
   AppVariablesContext,
   SaveVariableInput,
@@ -43,6 +44,9 @@ export function setAppVariableBinding(input: {
   revision: string;
 }) {
   return transport.setAppVariableBinding(input);
+}
+export function getSecretStore(): Promise<SecretStoreLocation> {
+  return transport.getSecretStore();
 }
 export function listenAppVariablesChanged(handler: () => void) {
   return transport.listenAppVariablesChanged(handler);

@@ -749,6 +749,31 @@ async fn monitor_ready_child(
     }
 }
 
+/// The App's start command in `cwd`: the app's environment without its
+/// Secret overrides, then the App's declared `environment`.
+fn start_command(
+    recipe: &AppCommandRecipe,
+    cwd: &Path,
+    environment: &BTreeMap<String, String>,
+    search_path: Option<&OsStr>,
+) -> Command {
+    let mut command = Command::new(&recipe.argv[0]);
+    if let Some(path) = search_path {
+        command.env("PATH", path);
+    }
+    svode_core::variables::strip_secret_environment(command.as_std_mut());
+    command
+        .args(&recipe.argv[1..])
+        .envs(environment)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    hide_tokio_window(&mut command);
+    command
+}
+
 fn spawn_command(
     inner: Arc<Mutex<ProcessStateInner>>,
     key: &AppProcessKey,
@@ -762,19 +787,7 @@ fn spawn_command(
         .cwd
         .as_deref()
         .map_or_else(|| owner_path.to_path_buf(), |cwd| owner_path.join(cwd));
-    let mut command = Command::new(&recipe.argv[0]);
-    if let Some(path) = search_path {
-        command.env("PATH", path);
-    }
-    command
-        .args(&recipe.argv[1..])
-        .envs(environment)
-        .current_dir(&cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    hide_tokio_window(&mut command);
+    let mut command = start_command(recipe, &cwd, environment, search_path);
     let mut state = inner.lock().unwrap_or_else(|error| error.into_inner());
     let Some(entry) = state.entries.get_mut(key) else {
         return Err(std::io::Error::new(
@@ -1138,6 +1151,49 @@ mod tests {
             cwd: None,
             inputs: Vec::new(),
         }
+    }
+
+    /// R9 of DF-367: an App gets no `SVODE_SECRET_*` of the app, while the
+    /// environment it declares stays.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_does_not_inherit_secret_overrides() {
+        const CHILD: &str = "SVODE_APP_SECRET_ENV_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let dir = tempfile::tempdir().unwrap();
+            let output = start_command(
+                &shell("env"),
+                dir.path(),
+                &BTreeMap::from([("SVODE_DECLARED".into(), "declared".into())]),
+                None,
+            )
+            .output()
+            .await
+            .unwrap();
+            let seen = String::from_utf8(output.stdout).unwrap();
+            assert!(!seen.contains("SVODE_SECRET_"), "{seen}");
+            assert!(seen.contains("SVODE_VISIBLE=visible"), "{seen}");
+            assert!(seen.contains("SVODE_DECLARED=declared"), "{seen}");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "apps::process_runtime::tests::an_app_does_not_inherit_secret_overrides",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("SVODE_SECRET_LEAK", "leak")
+            .env("SVODE_VISIBLE", "visible")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("1 passed;"), "{stdout}");
     }
 
     async fn wait_for_snapshot(

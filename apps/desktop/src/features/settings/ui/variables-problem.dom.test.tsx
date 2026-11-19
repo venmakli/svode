@@ -108,6 +108,8 @@ if (process.env.SVODE_VARIABLES_PROBLEM_DOM !== "1") {
     let broken = true;
     mockNativeIpc(
       (command, args) => {
+        if (command === "get_secret_store")
+          return { kind: "system", file: null };
         commands.push(command);
         if (command !== "get_app_variables")
           throw new Error(`Unexpected ${command}`);
@@ -218,6 +220,8 @@ if (process.env.SVODE_VARIABLES_PROBLEM_DOM !== "1") {
     };
     mockNativeIpc(
       (command, args) => {
+        if (command === "get_secret_store")
+          return { kind: "system", file: null };
         if (command !== "get_app_variables")
           throw new Error(`Unexpected ${command}`);
         const spaceId =
@@ -331,6 +335,8 @@ if (process.env.SVODE_VARIABLES_PROBLEM_DOM !== "1") {
     });
     mockNativeIpc(
       async (command, args) => {
+        if (command === "get_secret_store")
+          return { kind: "system", file: null };
         if (command === "recover_app_variables") {
           recoveries.push(args);
           return recovery();
@@ -446,6 +452,8 @@ if (process.env.SVODE_VARIABLES_PROBLEM_DOM !== "1") {
     };
     mockNativeIpc(
       (command, args) => {
+        if (command === "get_secret_store")
+          return { kind: "system", file: null };
         commands.push({ command, args });
         if (command === "get_app_variables") return load();
         if (command === "recover_app_variables")

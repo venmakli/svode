@@ -7,9 +7,10 @@ use tauri::{AppHandle, Manager, State};
 use crate::AppError;
 use crate::commands::app_variables::run_locked;
 use crate::index::IndexState;
-use crate::space::app_variables::{self, KeyringSecretStore, SecretStore};
+use crate::space::app_variables::{self, SecretStore};
 use crate::space::settings::AppSettingsState;
 use crate::space::types::AssetsS3Config;
+use svode_core::variables::DeviceSecretStore;
 
 pub(crate) fn prepare(
     catalog_dir: &Path,
@@ -122,14 +123,15 @@ pub(crate) async fn check_s3_bindings(
     };
     let draft_target = target.clone();
     let credentials = run_locked(&state, move || {
+        let secrets = DeviceSecretStore::new(&catalog_dir);
         prepare(
             &catalog_dir,
             &variable_scope,
             &draft_target,
             bindings,
-            &KeyringSecretStore,
+            &secrets,
         )?
-        .resolve_with_store(&KeyringSecretStore)
+        .resolve_with_store(&secrets)
         .map_err(AppError::Storage)
     })
     .await?;
@@ -361,6 +363,38 @@ mod tests {
         assert!(!settings.contains("private-value"));
         let clone = dir.path().join("clone");
         assert!(AgentConfig::read_for_target(&clone, &target()).is_err());
+    }
+
+    /// With the secrets file active, Variables saved from Desktop land in the
+    /// file, and the agent's default resolution reads the same values from
+    /// the device store of the catalog directory.
+    #[cfg(unix)]
+    #[test]
+    fn with_the_secrets_file_desktop_and_the_agent_read_the_same_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets = DeviceSecretStore::with_environment(dir.path(), []);
+        secrets.use_file().unwrap();
+        for (_, name) in pair().roles() {
+            upsert(
+                dir.path(),
+                &name.name,
+                AppVariableKind::Secret,
+                Some("file-value"),
+                &secrets,
+            )
+            .unwrap();
+        }
+        assert_eq!(secrets.status().values, Some(2));
+        let cfg = prepare(dir.path(), &target(), pair(), &secrets).unwrap();
+        let repo = dir.path().join("repo");
+        publish(dir.path(), &repo, &cfg, &secrets).unwrap();
+        let desktop = cfg.resolve_with_store(&secrets).unwrap();
+        let agent = AgentConfig::read(&repo).unwrap().resolve().unwrap();
+        assert_eq!(desktop.access_key, "file-value");
+        assert_eq!(
+            (desktop.access_key, desktop.secret_key),
+            (agent.access_key, agent.secret_key)
+        );
     }
 
     #[test]
