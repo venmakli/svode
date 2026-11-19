@@ -667,12 +667,13 @@ pub fn command_paths() -> Vec<(String, bool)> {
 
 /// Leaf commands of the grammar that address Project data or guidance.
 /// `integration …` changes the agent client configs of the user, not a
-/// Project; its process tests run in a temporary home, never in the home of
-/// the user running this table.
+/// Project; `secret …` changes the Secret values and store of the device
+/// and has no catalog tool. Their process tests run in a temporary home,
+/// never in the home of the user running this table.
 pub fn leaf_commands() -> Vec<String> {
     command_paths()
         .into_iter()
         .filter_map(|(path, leaf)| leaf.then_some(path))
-        .filter(|path| !path.starts_with("integration "))
+        .filter(|path| !path.starts_with("integration ") && !path.starts_with("secret "))
         .collect()
 }

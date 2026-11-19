@@ -307,6 +307,13 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
         .collect::<Vec<_>>();
     tools.sort();
     assert_eq!(tools, SERVED);
+    // Secret and storage setup are CLI-only commands (`svode secret …`).
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool.contains("secret") || tool.contains("storage")),
+        "{tools:?}"
+    );
 
     let page = &structured(&responses[&3])["page"];
     assert_eq!(page["body"], "Notes body\n");

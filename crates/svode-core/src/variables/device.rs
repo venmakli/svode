@@ -118,8 +118,9 @@ pub enum UseFile {
 pub enum UseSystem {
     /// No secrets file existed; nothing changed.
     AlreadyActive,
-    /// The file was removed with the values it held.
-    Restored { deleted_values: usize },
+    /// The file was removed with the values it held; `None` when an unsafe
+    /// or damaged file was removed and its values could not be counted.
+    Restored { deleted_values: Option<usize> },
     /// The file holds values and was kept: they are removed only explicitly.
     HasValues { values: usize },
 }
@@ -231,12 +232,12 @@ impl DeviceSecretStore {
         }
         let _guard = self.lock()?;
         let values = match read_file(&file) {
-            Ok(Some(image)) => image.values.len(),
+            Ok(Some(image)) => Some(image.values.len()),
             Ok(None) => return Ok(UseSystem::AlreadyActive),
             Err(error) if !delete_values => return Err(error),
-            Err(_) => 0,
+            Err(_) => None,
         };
-        if values > 0 && !delete_values {
+        if let Some(values) = values.filter(|values| *values > 0 && !delete_values) {
             return Ok(UseSystem::HasValues { values });
         }
         match fs::remove_file(&file) {

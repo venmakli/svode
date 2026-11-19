@@ -156,7 +156,7 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 
 ## Assets and Apps
 
-`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. Readiness is the same live check the desktop app runs: an S3-backed route needs the S3 setup saved for this device with its credentials in the OS keychain, a remote route needs Git LFS to reach `origin`. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
+`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. Readiness is the same live check the desktop app runs: an S3-backed route needs the S3 setup saved for this device with its credentials in the Secret store of this device (see `secret`), a remote route needs Git LFS to reach `origin`. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
 
 - JSON result: `spaceId`, canonical `contentPath` (use it for the next command), `attachmentPath` and `coverPath` relative to the Space, `markdownUrl` relative to the content, `fileName`, `mime`, `sizeBytes`, `changedPaths`.
 - Human output: the summary line, `contentPath`, `attachmentPath`, `markdownUrl`, `coverPath`, then each changed path.
@@ -205,7 +205,7 @@ Reads one standalone Page from its Markdown source through the shared `read_page
 
 ## doctor
 
-`svode doctor [--project <path>]` reports, without opening an index or store: `version`; `project` (`ok`, or the target error code and message); `spaces` from `space list`, each with `index.present` checked by file presence; `git` availability and versions; `runtime.servedTools`. It exits 0 whenever the command itself runs.
+`svode doctor [--project <path>]` reports, without opening an index or store: `version`; `project` (`ok`, or the target error code and message); `spaces` from `space list`, each with `index.present` checked by file presence; `git` availability and versions; `secrets`: the active Secret store (`store` `file` or `system`), the path of the secrets `file` and, for an active file, its `problem` (`code`, `message`, `hint`) when it is unsafe or damaged, without touching the system password store (`secret store status` checks it); `runtime.servedTools`. It exits 0 whenever the command itself runs.
 
 ## integration
 
@@ -217,6 +217,40 @@ Reads one standalone Page from its Markdown source through the shared `read_page
 - `sync` completes every connected client, as the desktop app does at start: a managed MCP entry of a previous desktop app becomes a full connection and a missing artifact is restored. It fails with `RECONCILE_FAILED` when a client cannot be completed. The standalone installer runs it after installing the active runtime and runs `disconnect --all` before removing it.
 
 Agent sessions that are already open get a new skill and MCP server after a restart; `svode` itself runs the active version at once.
+
+## secret
+
+`svode [--project <path>] [--space <root|space-id>] secret <store|list|set|remove> [--owner device|project|space] [--json]` manages the Secret values of this device without the desktop app, with the device store and Variables the desktop app uses. These commands exist only in the CLI: `svode-mcp` has no tool for them.
+
+The store:
+
+- An OS account keeps Secret values in one store: the secrets file `<config dir>/secrets.json` while it exists, otherwise the system password store (Keychain on macOS, Credential Manager on Windows, Secret Service over D-Bus on Linux). `svode`, `svode-mcp`, `svode-lfs` and the desktop app always use the same one, and values of the inactive store are never read. `<config dir>` is the device config directory above: `~/.config/app.svode.desktop` on Linux (under `$XDG_CONFIG_HOME` when it is set), `~/Library/Application Support/app.svode.desktop` on macOS, with `SVODE_PRODUCT_IDENTIFIER` in place of the identifier. The file lies outside every Project, Git and `~/.svode`.
+- `secret store use file` creates the empty file with mode `0600` in a `0700` directory and makes it the active store; a repeat with a usable file changes nothing. Values are not moved from the system password store: set them again. On Windows the file is not available and the command fails with `SECRET_FILE_UNSUPPORTED`.
+- `secret store use system [--delete-values]` removes the file and returns to the system password store; values are not moved there either. A file that holds values is kept and the command fails with `SECRET_VALUES_PRESENT` and their number in `values` until `--delete-values` is given. An unsafe or damaged file is removed only with `--delete-values`, and its values cannot be counted (`deletedValues` is `null`).
+- `secret store status` reports the active store (`kind` `file` or `system`), whether it can be used (`available`, and `problem` with `code`, `message` and `hint`), the path of the file and its number of `values`. A problem is part of the result (exit 0). The system password store is checked by reading an account Svode never writes.
+- The file is JSON `{"version":1,"values":{"secret:<ULID>":"…"}}` under the keys the system password store uses, written atomically under `secrets.lock`. It is not encrypted: the file permissions are its protection. A symbolic link, a file of another account or a file accessible to group or others is refused with `SECRET_FILE_UNSAFE` and never repaired; damaged JSON or an unknown version is refused with `SECRET_FILE_INVALID` and never rewritten.
+
+Values:
+
+- `secret set <NAME>` reads the value only from stdin: typed in a terminal it is hidden, piped input is read to its end. One trailing line break is dropped; an empty value fails with `INVALID_ARGUMENT` (exit 2), and a value that is not UTF-8 with `INPUT_UNREADABLE`. A Secret declared in Git keeps its declaration and gets a value on this device; a new Secret is declared only locally (in `.svode/local.json` of the owner or in the device settings), so files under Git never change. A Variable of that name fails with `VARIABLES_ERROR` and `reason` `wrong_kind`, a local and a Git declaration of the same name with `reason` `collision`.
+- `secret remove <NAME>` removes a local declaration with its value; a declaration in Git stays and only its value on this device is removed. A name that is not declared fails with `SECRET_NOT_FOUND`.
+- `secret list` prints the declared Secrets of the owner: name, `local` or `git`, and whether this device has a value (`set` / `not set`), never the value.
+- `--owner device` (default) is the device settings, shared by every Project of this OS account; `project` is the Project and `space` the selected Space (`--space`, or the Space containing the current directory; the root Space is the Project), resolved like the target of every command. `device` needs no Project.
+- JSON results: `set` — `owner`, `name`, `mode`, `created`, `store` (`kind`, `file`); `remove` — `owner`, `name`, `mode`, `removedDeclaration`, `removedValue`; `list` — `owner`, `secrets` (`name`, `mode`, `hasValue`), `collisions`; `store use file` — `store`, `created`, `values`, `valuesMoved`; `store use system` — `store`, `changed`, `deletedValues`, `valuesMoved`.
+
+`SVODE_SECRET_<NAME>`, where `<NAME>` is the Secret name with its case, overrides the value of a declared Secret of any owner when it is set and not empty. It creates no declaration and is never written to a store, so a Secret declared in Git works on a server with the variable alone. Agents, Routines, Apps and terminals that Svode launches do not inherit `SVODE_SECRET_*`; Git and `svode-lfs` do.
+
+A refusal exits 1 with a stable `code` and a `hint` with the next step, and never contains a value:
+
+| Code | Next step in `hint` |
+|---|---|
+| `SECRET_STORE_UNAVAILABLE` | `svode secret store use file`, or set `SVODE_SECRET_<NAME>` |
+| `SECRET_FILE_UNSAFE` | fix the owner of the file, or `chmod 600 <path>` |
+| `SECRET_FILE_INVALID` | restore the file from a backup, or delete it with `svode secret store use system --delete-values` and set the values again |
+| `SECRET_NOT_FOUND` | `svode secret set <NAME>` |
+| `SECRET_VALUES_PRESENT` | `svode secret store use system --delete-values` |
+
+Security: any process running under the same OS account can read the secrets file, and the file goes into backups of the home directory. Give an S3 key access to one bucket only, and run agents under a separate OS account when that matters. Updating and removing Svode keep the file; removal names it so you can delete it yourself.
 
 ## Codes
 
@@ -236,4 +270,4 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 
 ## Installation
 
-The desktop app bundle ships `svode` and `svode-mcp` of the same version as sidecars next to its own executable (Linux packages place sidecars in `/usr/bin`). For scripts and CI both build without the desktop app: `cargo build --release -p svode-cli -p svode-mcp` in the Svode repository gives standalone binaries that need neither the desktop app nor its GUI libraries, and `node scripts/smoke-standalone.mjs <dir>` checks such binaries against a fresh Project. The standalone installer (`scripts/install.sh <archive>`) installs both into `~/.svode` with `PATH` setup, updates and removal; `svode integration` connects agent clients to it.
+The desktop app bundle ships `svode` and `svode-mcp` of the same version as sidecars next to its own executable (Linux packages place sidecars in `/usr/bin`). For scripts and CI both build without the desktop app: `cargo build --release -p svode-cli -p svode-mcp` in the Svode repository gives standalone binaries that need neither the desktop app nor its GUI libraries, and `node scripts/smoke-standalone.mjs <dir>` checks such binaries against a fresh Project. The standalone installer (`scripts/install.sh <archive>`) installs both into `~/.svode` with `PATH` setup, updates and removal; `svode integration` connects agent clients to it. Updates and removal keep the secrets file of `secret`; removal names its path when it exists.

@@ -139,6 +139,7 @@ mod unix {
 
     fn uninstall() -> Result<String, InstallError> {
         let layout = Layout::user()?;
+        let secrets = secrets_file(&layout);
         let mut disconnected = String::new();
         let removal = uninstall_standalone(&layout, |layout| {
             disconnected = integration(
@@ -167,7 +168,33 @@ mod unix {
                 file.display()
             ));
         }
+        if let Some(file) = secrets {
+            report.push_str(&format!(
+                "\nThe secrets file {file} stays on this device with the Secret values it holds; delete it yourself when Svode no longer needs them."
+            ));
+        }
         Ok(report)
+    }
+
+    /// The secrets file of this account while it is the active Secret store.
+    /// The device store belongs to the runtime, not to the launchers, so
+    /// `svode doctor` of the active runtime names it before anything is
+    /// removed; uninstalling never touches the file.
+    fn secrets_file(layout: &Layout) -> Option<String> {
+        let binary = resolve_launch(layout, "svode").ok()?;
+        let output = Command::new(&binary)
+            .args(["doctor", "--json"])
+            .current_dir(home(layout))
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let result = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()?;
+        let secrets = &result["doctor"]["secrets"];
+        if secrets["store"] != "file" {
+            return None;
+        }
+        secrets["file"].as_str().map(str::to_string)
     }
 
     /// Runs `svode integration sync` or `disconnect --all` of the runtime

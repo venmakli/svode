@@ -306,7 +306,9 @@ mod file {
         assert!(file.exists());
         assert_eq!(
             store.use_system(true).unwrap(),
-            UseSystem::Restored { deleted_values: 1 }
+            UseSystem::Restored {
+                deleted_values: Some(1)
+            }
         );
         assert!(!file.exists());
         assert_eq!(store.active().kind, StoreKind::System);
@@ -318,7 +320,9 @@ mod file {
         store.use_file().unwrap();
         assert_eq!(
             store.use_system(false).unwrap(),
-            UseSystem::Restored { deleted_values: 0 }
+            UseSystem::Restored {
+                deleted_values: Some(0)
+            }
         );
         store.use_file().unwrap();
         fs::write(&file, "{").unwrap();
@@ -328,7 +332,10 @@ mod file {
         );
         assert_eq!(
             store.use_system(true).unwrap(),
-            UseSystem::Restored { deleted_values: 0 }
+            UseSystem::Restored {
+                deleted_values: None
+            },
+            "the values of a damaged file cannot be counted"
         );
         assert!(!file.exists());
     }

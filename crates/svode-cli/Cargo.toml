@@ -21,8 +21,14 @@ svode-tools = { path = "../svode-tools" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
-tokio = { version = "1", features = ["rt", "macros", "signal"] }
+tokio = { version = "1", features = ["rt", "macros", "signal", "sync"] }
 tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 [dev-dependencies]
 svode-install = { path = "../svode-install" }

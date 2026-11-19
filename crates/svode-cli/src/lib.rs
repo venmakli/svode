@@ -10,6 +10,7 @@ mod input;
 mod integration;
 mod output;
 mod render;
+mod secret;
 mod target;
 mod tools;
 
@@ -66,6 +67,7 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
         Noun::Guide => guide(host).await,
         Noun::Doctor => Ok(doctor::run(host, selectors).await),
         Noun::Integration { verb } => integration::run(verb, &selectors),
+        Noun::Secret { verb } => secret::run(verb, &selectors).await,
         Noun::Git {
             verb: GitVerb::Access {
                 verb: AccessVerb::Verify,

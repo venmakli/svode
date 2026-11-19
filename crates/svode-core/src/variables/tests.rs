@@ -1754,3 +1754,229 @@ fn lookup_tells_missing_values_from_unreadable_owners() {
     assert_eq!(failure.error, Error::SecretStore);
     assert_eq!(failure.file, None);
 }
+
+fn bytes(root: &Path, filename: &str) -> Option<Vec<u8>> {
+    std::fs::read(root.join(".svode").join(filename)).ok()
+}
+
+#[test]
+fn setting_a_secret_keeps_a_git_declaration_and_creates_only_local_ones() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let owner = owner(root.path(), None);
+    save(&service, &owner, "SHARED", Mode::Git, Kind::Secret, None).unwrap();
+    let portable = bytes(root.path(), "config.json");
+
+    // The Git declaration keeps its mode; only the device side changes.
+    let set = service
+        .set_secret(&owner, "SHARED", "synthetic-git-value".into())
+        .unwrap();
+    assert_eq!((set.mode, set.created), (Mode::Git, false));
+    assert_eq!(bytes(root.path(), "config.json"), portable);
+    assert_eq!(
+        resolved(&service, root.path(), None, "SHARED").unwrap(),
+        "synthetic-git-value"
+    );
+
+    // A new name becomes a local declaration; the portable config stays.
+    let set = service
+        .set_secret(&owner, "TOKEN", "synthetic-first".into())
+        .unwrap();
+    assert_eq!((set.mode, set.created), (Mode::Local, true));
+    assert_eq!(bytes(root.path(), "config.json"), portable);
+    let first = raw(root.path(), "local.json")["variables"]["TOKEN"]["secretRef"].clone();
+    let set = service
+        .set_secret(&owner, "TOKEN", "synthetic-second".into())
+        .unwrap();
+    assert_eq!((set.mode, set.created), (Mode::Local, false));
+    assert_eq!(
+        resolved(&service, root.path(), None, "TOKEN").unwrap(),
+        "synthetic-second"
+    );
+    // The replaced value does not stay behind in the store.
+    assert!(
+        !secrets
+            .values
+            .borrow()
+            .contains_key(first.as_str().unwrap())
+    );
+    assert_eq!(secrets.values.borrow().len(), 2);
+    for source in [
+        String::from_utf8(bytes(root.path(), "config.json").unwrap()).unwrap(),
+        String::from_utf8(bytes(root.path(), "local.json").unwrap()).unwrap(),
+    ] {
+        assert!(!source.contains("synthetic-"));
+    }
+}
+
+#[test]
+fn setting_a_secret_refuses_variables_collisions_and_empty_values_without_changes() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let owner = owner(root.path(), None);
+    save(
+        &service,
+        &owner,
+        "PLAIN",
+        Mode::Git,
+        Kind::Variable,
+        Some("v"),
+    )
+    .unwrap();
+    save(
+        &service,
+        &owner,
+        "LOCAL_PLAIN",
+        Mode::Local,
+        Kind::Variable,
+        Some("v"),
+    )
+    .unwrap();
+    save(&service, &owner, "BOTH", Mode::Git, Kind::Secret, None).unwrap();
+    let mut local = raw(root.path(), "local.json");
+    local["variables"]["BOTH"] =
+        json!({"kind": "secret", "secretRef": "secret:01ARZ3NDEKTSV4RRFFQ69G5FAV"});
+    files::atomic_write(&root.path().join(".svode/local.json"), &local).unwrap();
+    let before = (
+        bytes(root.path(), "config.json"),
+        bytes(root.path(), "local.json"),
+    );
+    for (name, value, error) in [
+        ("PLAIN", "x", Error::WrongKind),
+        ("LOCAL_PLAIN", "x", Error::WrongKind),
+        ("BOTH", "x", Error::Collision),
+        ("NEW", "", Error::InvalidValue),
+        ("not-a-name", "x", Error::InvalidName),
+    ] {
+        assert_eq!(
+            service.set_secret(&owner, name, value.into()).unwrap_err(),
+            error,
+            "{name}"
+        );
+    }
+    assert_eq!(
+        (
+            bytes(root.path(), "config.json"),
+            bytes(root.path(), "local.json")
+        ),
+        before
+    );
+    assert!(secrets.values.borrow().is_empty());
+}
+
+#[test]
+fn removing_a_secret_drops_the_local_declaration_and_keeps_a_git_one() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let owner = owner(root.path(), Some("inline"));
+    let config = |name| bytes(&root.path().join("inline"), name);
+    service.set_secret(&owner, "LOCAL", "one".into()).unwrap();
+    save(
+        &service,
+        &owner,
+        "SHARED",
+        Mode::Git,
+        Kind::Secret,
+        Some("two"),
+    )
+    .unwrap();
+    let portable = config("config.json");
+    assert_eq!(secrets.values.borrow().len(), 2);
+
+    let removed = service.remove_secret(&owner, "LOCAL").unwrap();
+    assert_eq!((removed.mode, removed.value_removed), (Mode::Local, true));
+    let removed = service.remove_secret(&owner, "SHARED").unwrap();
+    assert_eq!((removed.mode, removed.value_removed), (Mode::Git, true));
+    assert_eq!(config("config.json"), portable, "the Git declaration stays");
+    assert!(secrets.values.borrow().is_empty());
+    let catalog = service.catalog(&owner).unwrap();
+    assert_eq!(
+        catalog
+            .entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.mode, entry.has_value))
+            .collect::<Vec<_>>(),
+        [("SHARED", Mode::Git, false)]
+    );
+
+    // A Git declaration without a value on this device changes nothing.
+    let before = (config("config.json"), config("local.json"));
+    let removed = service.remove_secret(&owner, "SHARED").unwrap();
+    assert_eq!((removed.mode, removed.value_removed), (Mode::Git, false));
+    assert_eq!((config("config.json"), config("local.json")), before);
+    assert_eq!(
+        service.remove_secret(&owner, "LOCAL").unwrap_err(),
+        Error::Missing
+    );
+    save(
+        &service,
+        &owner,
+        "PLAIN",
+        Mode::Local,
+        Kind::Variable,
+        Some("v"),
+    )
+    .unwrap();
+    assert_eq!(
+        service.remove_secret(&owner, "PLAIN").unwrap_err(),
+        Error::WrongKind
+    );
+}
+
+#[test]
+fn removing_a_collided_secret_keeps_the_git_declaration() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let owner = owner(root.path(), None);
+    save(&service, &owner, "BOTH", Mode::Git, Kind::Secret, None).unwrap();
+    let account = "secret:01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    secrets.set(account, "local").unwrap();
+    let mut local = raw(root.path(), "local.json");
+    local["variables"]["BOTH"] = json!({"kind": "secret", "secretRef": account});
+    files::atomic_write(&root.path().join(".svode/local.json"), &local).unwrap();
+    let portable = bytes(root.path(), "config.json");
+    let removed = service.remove_secret(&owner, "BOTH").unwrap();
+    assert_eq!((removed.mode, removed.value_removed), (Mode::Local, true));
+    assert_eq!(bytes(root.path(), "config.json"), portable);
+    assert!(secrets.values.borrow().is_empty());
+    let catalog = service.catalog(&owner).unwrap();
+    assert!(catalog.collisions.is_empty());
+    assert_eq!(catalog.entries[0].mode, Mode::Git);
+}
+
+#[test]
+fn device_secrets_are_set_and_removed_in_the_global_settings() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    let path = root.path().join("library/settings.json");
+    files::atomic_write(&path, &json!({"theme": "dark"})).unwrap();
+    let set = service
+        .set_secret(&global, "TOKEN", "value".into())
+        .unwrap();
+    assert_eq!((set.mode, set.created), (Mode::Local, true));
+    let settings = files::read(&path, true).unwrap();
+    assert_eq!(settings["theme"], "dark");
+    assert_eq!(settings["variables"]["TOKEN"]["kind"], "secret");
+    let removed = service.remove_secret(&global, "TOKEN").unwrap();
+    assert_eq!((removed.mode, removed.value_removed), (Mode::Local, true));
+    assert_eq!(files::read(&path, true).unwrap(), json!({"theme": "dark"}));
+    assert!(secrets.values.borrow().is_empty());
+}
+
+#[test]
+fn secret_failures_name_their_next_step_without_values() {
+    let file = Path::new("/home/user/.config/app.svode.desktop/secrets.json");
+    let hint = |error: Error| error.secret_hint(file, Some("TOKEN")).unwrap();
+    assert!(hint(Error::SecretStore).contains("svode secret store use file"));
+    assert!(hint(Error::SecretStore).contains("SVODE_SECRET_TOKEN"));
+    assert!(hint(Error::SecretFileUnsafe).contains(&format!("chmod 600 {}", file.display())));
+    assert!(hint(Error::SecretFileInvalid).contains(&file.display().to_string()));
+    assert_eq!(hint(Error::Missing), "run `svode secret set TOKEN`");
+    assert_eq!(Error::Collision.secret_hint(file, None), None);
+}

@@ -508,7 +508,7 @@ fn the_active_standalone_runtime_syncs_connections_after_install_and_disconnects
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         fs::read_to_string(&log).unwrap(),
-        "integration sync --json\nintegration sync --json\nintegration disconnect --json --all\n"
+        "integration sync --json\nintegration sync --json\ndoctor --json\nintegration disconnect --json --all\n"
     );
     assert!(!machine.layout().root().exists());
 
@@ -521,4 +521,70 @@ fn the_active_standalone_runtime_syncs_connections_after_install_and_disconnects
     log_integration(&archive, &log, true);
     assert!(machine.install(&archive).status.success());
     assert!(!log.exists());
+}
+
+/// The secrets file of the account in the device config directory of `home`.
+fn secrets_file(home: &Path) -> PathBuf {
+    let config = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        home.join(".config")
+    };
+    config.join("app.svode.desktop/secrets.json")
+}
+
+/// Replaces `svode` of an unpacked archive with a script whose `doctor`
+/// reports the secrets file `file` as the active Secret store.
+fn doctor_reports_file(archive: &Path, file: &Path) {
+    svode_testkit::write_executable(
+        archive.join("bin/svode"),
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\n  doctor) echo '{{\"schemaVersion\":1,\"ok\":true,\"doctor\":{{\"secrets\":{{\"store\":\"file\",\"file\":\"{}\"}}}}}}' ;;\n  *) echo '{{\"schemaVersion\":1,\"ok\":true,\"changed\":false}}' ;;\nesac\n",
+            file.display()
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn install_update_and_uninstall_keep_the_secrets_file_and_uninstall_names_it() {
+    let machine = Machine::new();
+    let file = secrets_file(&machine.home);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, r#"{"version":1,"values":{}}"#).unwrap();
+    let archive = machine.archive("A");
+    doctor_reports_file(&archive, &file);
+    assert!(machine.install(&archive).status.success());
+    let update = machine.archive("B");
+    doctor_reports_file(&update, &file);
+    assert!(machine.install(&update).status.success());
+    assert!(file.is_file());
+
+    let output = machine.uninstall();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let report = stdout(&output);
+    assert!(
+        report.contains(&format!(
+            "The secrets file {} stays on this device",
+            file.display()
+        )),
+        "{report}"
+    );
+    assert!(report.contains("delete it yourself"), "{report}");
+    assert!(!machine.layout().root().exists());
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        r#"{"version":1,"values":{}}"#
+    );
+
+    // With the system password store active nothing is said about a file.
+    let machine = Machine::new();
+    assert!(machine.install(&machine.archive("A")).status.success());
+    let output = machine.uninstall();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        !stdout(&output).contains("secrets file"),
+        "{}",
+        stdout(&output)
+    );
 }

@@ -193,6 +193,92 @@ pub enum Noun {
         #[command(subcommand)]
         verb: IntegrationVerb,
     },
+    /// Secret values of this device and the store that holds them.
+    #[command(after_help = SECRET)]
+    Secret {
+        #[command(subcommand)]
+        verb: SecretVerb,
+    },
+}
+
+const SECRET: &str = "A value comes only from stdin: typing in a terminal is hidden, piped input is read to its end, one trailing line break is dropped and an empty value is refused. Values never appear in arguments, output, --json or logs. SVODE_SECRET_<NAME> in the environment overrides the value of a declared Secret and is never stored. These commands exist only in the CLI, not in svode-mcp.\n\nExamples:\n  svode secret store use file\n  svode secret set S3_ACCESS_KEY < access-key.txt\n  svode secret list --owner project --json";
+
+const SECRET_OWNER: &str = "--owner: `device` (default) for this device, `project` for the Project, `space` for the selected Space (--space, or the Space containing the current directory; the root Space is the Project).";
+
+#[derive(Debug, Subcommand)]
+pub enum SecretVerb {
+    /// The store that holds Secret values on this device.
+    #[command(after_help = "Example:\n  svode secret store status")]
+    Store {
+        #[command(subcommand)]
+        verb: SecretStoreVerb,
+    },
+    /// Declared Secrets of an owner and whether this device has their value.
+    #[command(after_help = format!("{SECRET_OWNER}\n\nExample:\n  svode secret list --owner project --json"))]
+    List(SecretOwnerArgs),
+    /// Set the value of a Secret on this device from stdin.
+    #[command(after_help = format!("A Secret declared in Git keeps its declaration and gets a value on this device; a new Secret is declared only locally, so files under Git do not change. {SECRET_OWNER}\n\nExamples:\n  svode secret set S3_ACCESS_KEY\n  printf %s \"$KEY\" | svode secret set S3_SECRET_KEY --owner project"))]
+    Set(SecretNameArgs),
+    /// Remove a local Secret with its value, or the value of a Git Secret on
+    /// this device.
+    #[command(after_help = format!("A local declaration is removed with its value; a declaration in Git stays and only its value on this device is removed. {SECRET_OWNER}\n\nExample:\n  svode secret remove S3_ACCESS_KEY"))]
+    Remove(SecretNameArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SecretStoreVerb {
+    /// The active store, whether it can be used, the secrets file and its
+    /// number of values.
+    #[command(after_help = "Example:\n  svode secret store status --json")]
+    Status,
+    /// Choose the store: the secrets file or the system password store.
+    #[command(
+        after_help = "Switching never moves values between the stores.\n\nExamples:\n  svode secret store use file\n  svode secret store use system"
+    )]
+    Use {
+        #[command(subcommand)]
+        store: SecretStoreChoice,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SecretStoreChoice {
+    /// Create the empty secrets file (0600 in a 0700 directory) and use it.
+    #[command(
+        after_help = "Values are not moved from the system password store: set them again with `svode secret set`. A repeat with a usable file changes nothing. Not available on Windows.\n\nExample:\n  svode secret store use file"
+    )]
+    File,
+    /// Remove the secrets file and use the system password store again.
+    #[command(
+        after_help = "A file that holds values is kept unless --delete-values is given. Values are not moved to the system password store.\n\nExample:\n  svode secret store use system --delete-values"
+    )]
+    System {
+        /// Delete the values the secrets file holds.
+        #[arg(long)]
+        delete_values: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SecretOwner {
+    Device,
+    Project,
+    Space,
+}
+
+#[derive(Debug, Args)]
+pub struct SecretOwnerArgs {
+    #[arg(long, value_enum, default_value_t = SecretOwner::Device)]
+    pub owner: SecretOwner,
+}
+
+#[derive(Debug, Args)]
+pub struct SecretNameArgs {
+    /// Secret name: [A-Za-z_][A-Za-z0-9_]*.
+    #[arg(value_name = "NAME")]
+    pub name: String,
+    #[command(flatten)]
+    pub owner: SecretOwnerArgs,
 }
 
 #[derive(Debug, Subcommand)]

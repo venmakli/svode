@@ -1,6 +1,7 @@
 //! `svode doctor`: read-only diagnostics composed from existing reads. It
 //! opens no index or store, reads repository access from the shared
-//! evidence store without a probe, and a target failure is part of the
+//! evidence store without a probe, reports the active Secret store without
+//! touching the system password store, and a target failure is part of the
 //! result.
 
 use serde_json::{Value, json};
@@ -70,6 +71,7 @@ pub async fn run(host: &impl ToolHost, selectors: Selectors<'_>) -> Outcome {
         "project": project,
         "spaces": spaces,
         "git": git,
+        "secrets": crate::secret::diagnostics(),
         "runtime": { "servedTools": served },
     });
     Outcome {
@@ -122,6 +124,21 @@ fn human(report: &Value) -> String {
         )),
         Some(version) => out.push_str(&format!("git: {version}\n")),
         None => out.push_str("git: unavailable\n"),
+    }
+    let secrets = &report["secrets"];
+    let problem = &secrets["problem"];
+    let store = match secrets["store"].as_str() {
+        Some("file") => format!("file {}", secrets["file"].as_str().unwrap_or_default()),
+        Some(_) => "system password store".to_string(),
+        None => "unavailable".to_string(),
+    };
+    match problem["code"].as_str() {
+        Some(code) => out.push_str(&format!(
+            "secrets: {store} — {code}: {}\n  hint: {}\n",
+            problem["message"].as_str().unwrap_or_default(),
+            problem["hint"].as_str().unwrap_or_default()
+        )),
+        None => out.push_str(&format!("secrets: {store}\n")),
     }
     out.push_str(&format!(
         "served tools: {}\n",

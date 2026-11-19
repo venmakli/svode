@@ -401,7 +401,96 @@ impl<'a> Service<'a> {
             return Err(Error::InvalidOwner);
         }
         let _guard = files::lock(&owner.directory)?;
+        let snapshot = Snapshot::read(owner)?;
+        self.save_locked(owner, snapshot, input)
+    }
+
+    /// Sets the value of the Secret `name` of `owner` on this device. A Git
+    /// declaration keeps its mode and the portable config is not rewritten;
+    /// without a declaration a local one is created. A Variable of that name
+    /// is refused with `WrongKind`, a Local/Git collision with `Collision`.
+    pub fn set_secret(&self, owner: &Owner, name: &str, value: String) -> Result<SecretSet> {
+        if !valid_name(name) {
+            return Err(Error::InvalidName);
+        }
+        if value.is_empty() {
+            return Err(Error::InvalidValue);
+        }
+        let _guard = files::lock(&owner.directory)?;
+        let snapshot = Snapshot::read(owner)?;
+        let (mode, operation) = match snapshot.declaration(name)? {
+            Some((_, entry)) if entry.kind != Some(Kind::Secret) => return Err(Error::WrongKind),
+            Some((mode, _)) => (mode, SaveOperation::Edit),
+            None => (Mode::Local, SaveOperation::Create),
+        };
+        let revision = snapshot.revision.clone();
+        let change = self.save_locked(
+            owner,
+            snapshot,
+            Save {
+                name: name.into(),
+                mode,
+                kind: Kind::Secret,
+                value: Some(value),
+                revision,
+                operation,
+                keep: None,
+            },
+        )?;
+        Ok(SecretSet {
+            mode,
+            created: operation == SaveOperation::Create,
+            change,
+        })
+    }
+
+    /// Removes the local declaration of the Secret `name` of `owner` with
+    /// its value on this device. A Git declaration stays; only its value on
+    /// this device is removed, so the portable config is not rewritten.
+    pub fn remove_secret(&self, owner: &Owner, name: &str) -> Result<SecretRemoval> {
+        if !valid_name(name) {
+            return Err(Error::InvalidName);
+        }
+        let _guard = files::lock(&owner.directory)?;
         let mut snapshot = Snapshot::read(owner)?;
+        let git = snapshot.git.get(name);
+        let local = snapshot.device.get(name).filter(|e| e.kind.is_some());
+        if git.is_none() && local.is_none() {
+            return Err(Error::Missing);
+        }
+        if git
+            .into_iter()
+            .chain(local)
+            .any(|e| e.kind != Some(Kind::Secret))
+        {
+            return Err(Error::WrongKind);
+        }
+        let mode = if local.is_some() {
+            Mode::Local
+        } else {
+            Mode::Git
+        };
+        let account = snapshot.device.get(name).and_then(|e| e.secret_ref.clone());
+        let before_portable = files::digest(&snapshot.portable);
+        let before_local = files::digest(&snapshot.local);
+        snapshot.device.remove(name);
+        snapshot.publish_sections(owner)?;
+        let change = self.commit(
+            owner,
+            snapshot,
+            before_portable,
+            before_local,
+            vec![name.into()],
+            account.iter().cloned().collect(),
+        )?;
+        Ok(SecretRemoval {
+            mode,
+            value_removed: account.is_some(),
+            change,
+        })
+    }
+
+    fn save_locked(&self, owner: &Owner, mut snapshot: Snapshot, input: Save) -> Result<Change> {
         if input.revision != snapshot.revision {
             return Err(Error::StaleRevision);
         }
@@ -759,6 +848,25 @@ impl<'a> Service<'a> {
 pub struct SecretValues {
     pub access_key: String,
     pub secret_key: String,
+}
+
+/// Result of [`Service::set_secret`]: the mode of the declaration that holds
+/// the value and whether a new local declaration was created.
+#[derive(Debug, Clone)]
+pub struct SecretSet {
+    pub mode: Mode,
+    pub created: bool,
+    pub change: Change,
+}
+
+/// Result of [`Service::remove_secret`]: `Local` when the local declaration
+/// was removed, `Git` when the Git declaration stays; `value_removed` tells
+/// whether this device held a value for it.
+#[derive(Debug, Clone)]
+pub struct SecretRemoval {
+    pub mode: Mode,
+    pub value_removed: bool,
+    pub change: Change,
 }
 
 #[derive(Serialize, Deserialize)]

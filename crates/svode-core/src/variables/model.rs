@@ -126,6 +126,26 @@ impl Error {
             _ => None,
         }
     }
+
+    /// Next step for a failure with a [`secret_code`](Self::secret_code),
+    /// naming the secrets file `file` and the Secret `name` when known.
+    pub fn secret_hint(&self, file: &std::path::Path, name: Option<&str>) -> Option<String> {
+        let file = file.display();
+        let name = name.unwrap_or("<NAME>");
+        Some(match self {
+            Self::SecretStore => format!(
+                "run `svode secret store use file`, or set SVODE_SECRET_{name} in the environment"
+            ),
+            Self::SecretFileUnsafe => format!(
+                "make {file} a regular file owned by this account, or run `chmod 600 {file}`"
+            ),
+            Self::SecretFileInvalid => format!(
+                "restore {file} from a backup, or delete it with `svode secret store use system --delete-values` and set the values again"
+            ),
+            Self::Missing => format!("run `svode secret set {name}`"),
+            _ => return None,
+        })
+    }
 }
 
 pub const SECRET_STORE_UNAVAILABLE: &str = "SECRET_STORE_UNAVAILABLE";
