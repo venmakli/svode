@@ -368,4 +368,119 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
       await setLocale(previousLocale, { reload: false });
     }
   });
+
+  test("a sync step Svode stopped at its time limit is named, not an unknown cause, after background and explicit sync", async () => {
+    const dom = await createTestDom();
+    const path = "/project";
+    activeSpacePath = path;
+    const timedOut = {
+      kind: "git_sync_failed",
+      repository: "lfs-test",
+      stage: "push",
+      cause: "timed_out",
+    };
+    mockNativeIpc(
+      async (command) => {
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/project.git";
+        if (command === "git_publication_status") return null;
+        if (command === "git_last_synced") return null;
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: path,
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_fetch_status" || command === "git_status")
+          return { branch: "main", ahead: 1, behind: 0, files: [] };
+        if (command === "git_unpushed_commits") return [];
+        if (command === "git_sync") throw timedOut;
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { recordGitOperationOutcome } =
+      await import("../api/git-operation-events");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const m = await import("@/paraglide/messages.js");
+    const previousLocale = getLocale();
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+    const alertText = () =>
+      dom.document.querySelector("[role=dialog]")?.querySelector("[role=alert]")
+        ?.textContent ?? null;
+    const expected = {
+      en: "lfs-test: Could not publish the changes. The server didn't respond in time. Check the connection and try again.",
+      ru: "lfs-test: Не удалось опубликовать изменения. Сервер не ответил вовремя. Проверьте подключение и повторите.",
+    };
+    try {
+      for (const locale of ["en", "ru"] as const) {
+        await setLocale(locale, { reload: false });
+
+        // Background sync records the failure on the repository, without toasts.
+        toasts.length = 0;
+        recordGitOperationOutcome({
+          repository: path,
+          active: false,
+          report: null,
+          error: timedOut,
+        });
+        expect(toasts).toEqual([]);
+        await dom.render(
+          <TooltipProvider>
+            <GitSyncStatusWidget key={locale} repositoryPath={path} />
+          </TooltipProvider>,
+        );
+        await settle();
+        // The status shows the sync error like any other failed sync.
+        expect(
+          dom.document.querySelector("[data-git-sync-error]") === null,
+        ).toBe(false);
+        await act(async () => {
+          dom.document
+            .querySelector<HTMLButtonElement>("[data-repository-control]")!
+            .click();
+        });
+        await settle();
+        expect(alertText()).toBe(expected[locale]);
+        expect(alertText()?.includes(m.git_save_cause_unknown())).toBe(false);
+
+        // An explicit retry that runs out of time again shows the same text
+        // and the toast of a failed sync.
+        useGitStore.getState().setSyncError(path, null);
+        await settle();
+        expect(alertText()).toBe(null);
+        const retry = Array.from(
+          dom.document.querySelectorAll<HTMLButtonElement>(
+            "[role=dialog] button",
+          ),
+        ).find((button) => button.textContent === m.git_sync_action());
+        toasts.length = 0;
+        await act(async () => {
+          retry!.click();
+        });
+        await settle();
+        expect(alertText()).toBe(expected[locale]);
+        expect(toasts).toEqual([m.git_sync_failed()]);
+        await dom.render(null);
+        useGitStore.getState().clear(path);
+      }
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+      await setLocale(previousLocale, { reload: false });
+    }
+  });
 }

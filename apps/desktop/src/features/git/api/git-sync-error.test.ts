@@ -149,6 +149,17 @@ test("a failed sync step names the repository, the stage and the cause without G
         cause: null,
       }),
     ).toBe("Research: Could not publish the changes. The cause is unknown.");
+    // A time limit Svode put on the step is a recognized cause (DF-369 R4).
+    expect(
+      gitSyncErrorMessage({
+        kind: "git_sync_failed",
+        repository: "lfs-test",
+        stage: "push",
+        cause: "timed_out",
+      }),
+    ).toBe(
+      "lfs-test: Could not publish the changes. The server didn't respond in time. Check the connection and try again.",
+    );
     await setLocale("ru", { reload: false });
     expect(
       gitSyncErrorMessage({
@@ -159,6 +170,16 @@ test("a failed sync step names the repository, the stage and the cause without G
       }),
     ).toBe(
       "Исследования: Не удалось создать коммит слияния. Репозиторием занят другой процесс Git (index.lock). Дождитесь его завершения; если такого процесса нет, удалите .git/index.lock.",
+    );
+    expect(
+      gitSyncErrorMessage({
+        kind: "git_sync_failed",
+        repository: "lfs-test",
+        stage: "push",
+        cause: "timed_out",
+      }),
+    ).toBe(
+      "lfs-test: Не удалось опубликовать изменения. Сервер не ответил вовремя. Проверьте подключение и повторите.",
     );
   } finally {
     await setLocale(original, { reload: false });

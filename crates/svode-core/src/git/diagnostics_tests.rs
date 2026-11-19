@@ -66,6 +66,42 @@ fn causes_are_recognized_from_git_output() {
 }
 
 #[test]
+fn a_command_svode_stopped_at_its_time_limit_is_the_timed_out_cause() {
+    let out = crate::git::cli::GitOutput::timed_out(std::time::Duration::from_secs(120));
+    assert!(out.is_timed_out());
+    assert_eq!(out.stderr, "git command timed out after 120s");
+    // A pre-push hook Git started when the limit passed decides nothing.
+    for hook_failed in [false, true] {
+        assert_eq!(
+            cause(&out.stderr, hook_failed),
+            Some(GitFailureCause::TimedOut)
+        );
+    }
+    // The publication snapshot (`push --dry-run`, `ls-remote`) that ran out
+    // of time fails the push step with this cause, never an unknown one.
+    let error = crate::git::ops::git_remote_command_error(
+        std::path::Path::new("/nonexistent/lfs-test"),
+        GitStage::Push,
+        out.stderr.trim(),
+    );
+    assert_eq!(
+        error.failure(),
+        Some(&GitFailure {
+            repository: "repository".into(),
+            stage: GitStage::Push,
+            cause: Some(GitFailureCause::TimedOut),
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&error).unwrap()["cause"],
+        serde_json::json!("timed_out")
+    );
+    assert!(!error.is_local_failure());
+    // Output of Git that only mentions the words is not Svode's limit.
+    assert_eq!(cause("hook: git command timed out", false), None);
+}
+
+#[test]
 fn only_local_causes_keep_repository_access() {
     for cause in [
         GitFailureCause::Hook,
@@ -77,6 +113,7 @@ fn only_local_causes_keep_repository_access() {
         assert!(cause.is_local(), "{cause:?}");
     }
     assert!(!GitFailureCause::Network.is_local());
+    assert!(!GitFailureCause::TimedOut.is_local());
     let failure = |cause| {
         GitError::SyncFailed(GitFailure {
             repository: "Research".into(),
@@ -289,6 +326,32 @@ mod git {
                 stage: GitStage::Prepare,
                 cause: Some(GitFailureCause::IndexLocked),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_command_past_its_time_limit_is_stopped_as_timed_out() {
+        let repo = Repo::new();
+        let slow = repo.temp.join("git-slow");
+        svode_testkit::write_executable(&slow, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        let limit = std::time::Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        let out = GitCli::for_test(slow)
+            .exec_sensitive_with_stdin(&repo.root, &["push", "--dry-run"], &[], None, limit)
+            .await
+            .unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert!(out.is_timed_out(), "{out:?}");
+        // The log of the failed step names the limit.
+        assert_eq!(out.stderr, "git command timed out after 200ms");
+        let error = ops::git_remote_command_error(&repo.root, GitStage::Push, &out.stderr);
+        assert_eq!(
+            error.failure(),
+            Some(&GitFailure {
+                repository: "Research".into(),
+                stage: GitStage::Push,
+                cause: Some(GitFailureCause::TimedOut),
+            })
         );
     }
 

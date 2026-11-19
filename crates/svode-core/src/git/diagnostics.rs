@@ -64,6 +64,9 @@ pub enum GitFailureCause {
     FileSystemDenied,
     /// The remote could not be reached.
     Network,
+    /// A time limit Svode puts on a Git command passed before the command
+    /// finished.
+    TimedOut,
     /// Git refused to overwrite changes of the working tree: files edited
     /// after an operation stopped, or untracked files in its way.
     LocalChanges,
@@ -88,6 +91,7 @@ impl GitFailureCause {
             Self::IndexLocked => "index_locked",
             Self::FileSystemDenied => "file_system_denied",
             Self::Network => "network",
+            Self::TimedOut => "timed_out",
             Self::LocalChanges => "local_changes",
             Self::BranchLeftSequence => "branch_left_sequence",
             Self::CommitsPublished => "commits_published",
@@ -97,7 +101,7 @@ impl GitFailureCause {
 
     /// A cause of this device that says nothing about access to the remote.
     pub fn is_local(self) -> bool {
-        !matches!(self, Self::Network)
+        !matches!(self, Self::Network | Self::TimedOut)
     }
 }
 
@@ -153,7 +157,11 @@ pub fn repository_name(repo: &Path) -> String {
 /// A failed hook is decisive: Git stops right after it and prints nothing of
 /// its own, while the hook may print anything. Only an unreachable remote is
 /// told apart, since the git-lfs transfer of a push runs in its pre-push hook.
+/// A command Svode stopped at its time limit is decisive before both.
 pub fn cause(stderr: &str, hook_failed: bool) -> Option<GitFailureCause> {
+    if stderr.starts_with(super::cli::TIMED_OUT_MESSAGE) {
+        return Some(GitFailureCause::TimedOut);
+    }
     let lower = stderr.to_ascii_lowercase();
     if hook_failed {
         return Some(if is_network_failure(&lower) {

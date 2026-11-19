@@ -86,6 +86,30 @@ pub struct GitOutput {
     pub exit_code: i32,
 }
 
+/// The exit code of a command Svode stopped when its time limit passed.
+const TIMED_OUT_EXIT_CODE: i32 = -2;
+
+/// The start of the stderr Svode gives a command it stopped at its time
+/// limit; the diagnostics recognize the outcome by it.
+pub(crate) const TIMED_OUT_MESSAGE: &str = "git command timed out";
+
+impl GitOutput {
+    /// The outcome of a command Svode stopped when `limit` passed; its stderr
+    /// names the limit for the log.
+    pub(crate) fn timed_out(limit: Duration) -> Self {
+        Self {
+            stdout: String::new(),
+            stderr: format!("{TIMED_OUT_MESSAGE} after {limit:?}"),
+            exit_code: TIMED_OUT_EXIT_CODE,
+        }
+    }
+
+    /// Whether Svode stopped the command at its time limit.
+    pub fn is_timed_out(&self) -> bool {
+        self.exit_code == TIMED_OUT_EXIT_CODE
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GitCli {
     git_path: PathBuf,
@@ -324,13 +348,7 @@ impl GitCli {
             Ok(result) => result.map_err(|error| {
                 GitError::GitCommandFailed(format!("Failed to wait for git: {error}"))
             })?,
-            Err(_) => {
-                return Ok(GitOutput {
-                    stdout: String::new(),
-                    stderr: "git command timed out".to_string(),
-                    exit_code: -2,
-                });
-            }
+            Err(_) => return Ok(GitOutput::timed_out(timeout)),
         };
 
         Ok(GitOutput {

@@ -6,6 +6,7 @@ export type GitFailureCauseDto =
   | "index_locked"
   | "file_system_denied"
   | "network"
+  | "timed_out"
   | "local_changes"
   | "branch_left_sequence"
   | "commits_published"
@@ -35,6 +36,7 @@ const CAUSES: readonly string[] = [
   "index_locked",
   "file_system_denied",
   "network",
+  "timed_out",
   "local_changes",
   "branch_left_sequence",
   "commits_published",
