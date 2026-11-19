@@ -20,12 +20,24 @@ const titles: Record<VariablesProblemCategory, () => string> = {
   unknown: m.variables_problem_title_unknown,
 };
 
+// The secrets file refused, not the system password store; the Variables
+// page names the file itself above the catalog.
+function secretsFileFix(problem: VariablesProblem) {
+  if (problem.code === "secret_file_unsafe")
+    return m.variables_problem_fix_secret_file_unsafe;
+  if (problem.code === "secret_file_invalid")
+    return m.variables_problem_fix_secret_file_invalid;
+  return null;
+}
+
 function reason(problem: VariablesProblem) {
   switch (problem.category) {
     case "unavailable":
       return problem.file
         ? m.variables_problem_reason_unavailable_file()
-        : m.variables_problem_reason_unavailable_store();
+        : secretsFileFix(problem)
+          ? m.variables_problem_reason_secret_file()
+          : m.variables_problem_reason_unavailable_store();
     case "legacy_format":
       return m.variables_problem_reason_legacy_format();
     case "invalid_config":
@@ -111,7 +123,10 @@ function Instructions({
         <div>
           {problem.file
             ? m.variables_problem_fix_unavailable_file()
-            : m.variables_problem_fix_unavailable_store()}
+            : (
+                secretsFileFix(problem) ??
+                m.variables_problem_fix_unavailable_store
+              )()}
         </div>
       ) : (
         <>

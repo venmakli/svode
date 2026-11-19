@@ -432,7 +432,12 @@ test("both Variables pages name the secrets file only while it is the active sto
   const file = "/home/user/.config/app.svode.desktop/secrets.json";
   const line = `Secret values are stored in the file ${file}.`;
   for (const page of ["global", "project"] as const) {
-    for (const store of ["file", "unsafe file", "system"] as const) {
+    for (const store of [
+      "file",
+      "unsafe file",
+      "damaged file",
+      "system",
+    ] as const) {
       const dom = new JSDOM(
         "<!doctype html><html><body><div id=app></div></body></html>",
         { pretendToBeVisual: true, url: "http://localhost/" },
@@ -447,13 +452,16 @@ test("both Variables pages name the secrets file only while it is the active sto
               : { kind: "file", file };
           }
           if (command === "get_app_variables") {
-            if (store === "unsafe file") {
+            if (store === "unsafe file" || store === "damaged file") {
               throw {
                 kind: "variables_problem",
                 message: "raw message",
                 problem: {
                   category: "unavailable",
-                  code: "secret_file_unsafe",
+                  code:
+                    store === "unsafe file"
+                      ? "secret_file_unsafe"
+                      : "secret_file_invalid",
                   owner: { scope: page === "global" ? "global" : "project" },
                   file: null,
                   section: null,
@@ -528,8 +536,31 @@ test("both Variables pages name the secrets file only while it is the active sto
         expect(note.querySelector("button, svg"), label).toBe(null);
         // The path only: no value and no number of values.
         expect(/\d/.test(line.replace(file, "")), label).toBe(false);
-        if (store === "unsafe file") {
+        if (store === "unsafe file" || store === "damaged file") {
+          // The cause and its fix name the secrets file, not the system
+          // password store.
           expect(text.includes("Couldn't read variables"), label).toBe(true);
+          expect(
+            text.includes("Svode can't use the secrets file."),
+            label,
+          ).toBe(true);
+          const details = Array.from(document.querySelectorAll("button")).find(
+            (item) => item.textContent === "Details",
+          )!;
+          await act(async () => {
+            details.click();
+            await nextTurn();
+          });
+          const shown = document.body.textContent ?? "";
+          expect(shown.includes("system secret store"), label).toBe(false);
+          expect(
+            shown.includes(
+              store === "unsafe file"
+                ? "run chmod 600 on it"
+                : "Restore it from a backup",
+            ),
+            label,
+          ).toBe(true);
         }
       } finally {
         await act(async () => root.unmount());
