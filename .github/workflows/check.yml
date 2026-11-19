@@ -89,8 +89,13 @@ jobs:
         run: cargo test -p svode-tools
       - name: MCP package tests without the desktop crate
         run: cargo test -p svode-mcp
+      # The desktop build script of `cargo check` above left the svode-lfs
+      # placeholder in the target directory; the lfs-s3 storage tests run
+      # svode-lfs through Git, so it is built first.
       - name: CLI package tests without the desktop crate
-        run: cargo test -p svode-cli
+        run: |
+          cargo build -p svode-lfs
+          cargo test -p svode-cli
       - name: Connection manager tests without the desktop crate
         run: cargo test -p svode-connect
       - name: Agent runtime tests without the desktop crate
