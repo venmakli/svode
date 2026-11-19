@@ -365,6 +365,31 @@ export interface GitUserPolicyDto {
   autoCommitContent: boolean;
 }
 
+export type GitTransferDirectionDto = "upload" | "download";
+
+/** Where a transfer of file contents is, from the last line of its git-lfs report. */
+export interface GitTransferProgressDto {
+  direction: GitTransferDirectionDto;
+  /** The number of the current file, from 1. */
+  file: number;
+  /** The files of the transfer git-lfs knows of so far. */
+  files: number;
+  /** The current file, relative to the repository. */
+  path: string;
+  /** Bytes of the current file transferred so far. */
+  bytes: number;
+  size: number;
+}
+
+/**
+ * `git:transfer`: the progress of a transfer of a repository (project or
+ * Space), at most four times a second, and `progress: null` once it ended.
+ */
+export interface GitTransferEventDto {
+  repository: string;
+  progress: GitTransferProgressDto | null;
+}
+
 export interface CloneProgressDto {
   spacePath: string;
   phase: string;

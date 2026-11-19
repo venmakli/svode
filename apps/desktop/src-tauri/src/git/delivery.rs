@@ -16,10 +16,12 @@ use svode_core::git::cli::GitCli;
 use svode_core::git::flow::{ParentPublication, SyncReport};
 use svode_core::git::host::{GitHost, HostFuture};
 use svode_core::git::operations::SharedError;
+use svode_core::git::transfer::{TransferObserver, TransferProgress};
 
 const EVENT_COMMITTED: &str = "git:committed";
 const EVENT_SYNC_STATE: &str = "git:sync-state";
 const EVENT_PUBLICATION: &str = "git:publication";
+const EVENT_TRANSFER: &str = "git:transfer";
 
 /// The commit event the Git indicators of `space` refresh on. A change of
 /// HEAD, refs or the index by a Git process outside Svode (a commit, reset or
@@ -84,8 +86,33 @@ struct PublicationEvent<'a> {
     parent: Option<&'a ParentPublication>,
 }
 
+/// The progress of a transfer of file contents of `repository`, `None` once
+/// it ended (DF-369 R5).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferEvent<'a> {
+    repository: String,
+    progress: Option<&'a TransferProgress>,
+}
+
 struct DesktopGitHost {
     app: AppHandle,
+}
+
+/// Core reports a transfer at most four times a second, so every report
+/// reaches the window.
+impl TransferObserver for DesktopGitHost {
+    fn transfer_progress(&self, repository: &Path, progress: Option<&TransferProgress>) {
+        if let Err(error) = self.app.emit(
+            EVENT_TRANSFER,
+            TransferEvent {
+                repository: repository.to_string_lossy().into_owned(),
+                progress,
+            },
+        ) {
+            tracing::warn!("failed to emit {EVENT_TRANSFER}: {error}");
+        }
+    }
 }
 
 impl DesktopGitHost {
@@ -315,4 +342,45 @@ pub(crate) async fn repair_scope(
 
 pub(crate) async fn repair_project(app: &AppHandle, root: &Path) {
     svode_core::git::local_repair::repair_project(&runtime(app), host(app).as_ref(), root).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TransferEvent;
+    use svode_core::git::transfer::{TransferDirection, TransferProgress};
+
+    /// The shape `platform/git` reads from `git:transfer`.
+    #[test]
+    fn a_transfer_event_names_the_repository_and_the_progress_or_its_end() {
+        let progress = TransferProgress {
+            direction: TransferDirection::Upload,
+            file: 1,
+            files: 2,
+            path: "media/video.mov".into(),
+            bytes: 12_582_912,
+            size: 99_614_720,
+        };
+        let event = |progress| TransferEvent {
+            repository: "/projects/notes".into(),
+            progress,
+        };
+        assert_eq!(
+            serde_json::to_value(event(Some(&progress))).unwrap(),
+            serde_json::json!({
+                "repository": "/projects/notes",
+                "progress": {
+                    "direction": "upload",
+                    "file": 1,
+                    "files": 2,
+                    "path": "media/video.mov",
+                    "bytes": 12_582_912,
+                    "size": 99_614_720,
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(event(None)).unwrap(),
+            serde_json::json!({ "repository": "/projects/notes", "progress": null })
+        );
+    }
 }

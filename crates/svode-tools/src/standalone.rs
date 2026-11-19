@@ -336,6 +336,9 @@ impl ToolHost for StandaloneHost {
 /// evidence the install shares, without a network probe. The process has
 /// no window or event consumers, never syncs and runs no background
 /// publication, so notifications have nobody to reach.
+/// Shows no transfer progress: nothing of it reaches a window.
+impl svode_core::git::transfer::TransferObserver for StandaloneHost {}
+
 impl GitHost for StandaloneHost {
     fn authorize_repository<'a>(
         &'a self,

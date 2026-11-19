@@ -44,7 +44,7 @@ pub async fn list_tree_children(
         .await
         .map_err(|source| tree::TreeLoadError::Unavailable {
             message: source.to_string(),
-            source,
+            source: Box::new(source),
         })?
 }
 

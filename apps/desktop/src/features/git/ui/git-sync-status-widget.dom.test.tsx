@@ -369,7 +369,7 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
     }
   });
 
-  test("a sync step Svode stopped at its time limit is named, not an unknown cause, after background and explicit sync", async () => {
+  test("a sync step Svode stopped at its time limit or without transfer progress is named, not an unknown cause, after background and explicit sync", async () => {
     const dom = await createTestDom();
     const path = "/project";
     activeSpacePath = path;
@@ -379,6 +379,18 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
       stage: "push",
       cause: "timed_out",
     };
+    const stalled = {
+      kind: "git_sync_failed",
+      repository: "lfs-test",
+      stage: "push",
+      cause: "transfer_stalled",
+      transfer: {
+        direction: "upload",
+        path: "media/video.mov",
+        size: 99_614_720,
+      },
+    };
+    let refusal: object = timedOut;
     mockNativeIpc(
       async (command) => {
         if (command === "git_get_user_policy") return { autoSync: false };
@@ -399,7 +411,7 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
         if (command === "git_fetch_status" || command === "git_status")
           return { branch: "main", ahead: 1, behind: 0, files: [] };
         if (command === "git_unpushed_commits") return [];
-        if (command === "git_sync") throw timedOut;
+        if (command === "git_sync") throw refusal;
         throw new Error(command);
       },
       { shouldMockEvents: true },
@@ -419,13 +431,28 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
     const alertText = () =>
       dom.document.querySelector("[role=dialog]")?.querySelector("[role=alert]")
         ?.textContent ?? null;
-    const expected = {
-      en: "lfs-test: Could not publish the changes. The server didn't respond in time. Check the connection and try again.",
-      ru: "lfs-test: Не удалось опубликовать изменения. Сервер не ответил вовремя. Проверьте подключение и повторите.",
-    };
+    const cases = [
+      {
+        error: timedOut,
+        expected: {
+          en: "lfs-test: Could not publish the changes. The server didn't respond in time. Check the connection and try again.",
+          ru: "lfs-test: Не удалось опубликовать изменения. Сервер не ответил вовремя. Проверьте подключение и повторите.",
+        },
+      },
+      {
+        error: stalled,
+        expected: {
+          en: "lfs-test: Could not publish the changes. Sending the file “video.mov” (95 MB) stopped: no data was transferred for 2 minutes. Check the connection and sync again — files already sent won't be sent again.",
+          ru: "lfs-test: Не удалось опубликовать изменения. Отправка файла «video.mov» (95 МБ) остановлена: 2 минуты не было передачи данных. Проверьте подключение и синхронизируйте ещё раз — уже отправленные файлы не отправятся повторно.",
+        },
+      },
+    ];
     try {
-      for (const locale of ["en", "ru"] as const) {
+      for (const [locale, { error, expected }] of (
+        ["en", "ru"] as const
+      ).flatMap((locale) => cases.map((item) => [locale, item] as const))) {
         await setLocale(locale, { reload: false });
+        refusal = error;
 
         // Background sync records the failure on the repository, without toasts.
         toasts.length = 0;
@@ -433,12 +460,15 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
           repository: path,
           active: false,
           report: null,
-          error: timedOut,
+          error,
         });
         expect(toasts).toEqual([]);
         await dom.render(
           <TooltipProvider>
-            <GitSyncStatusWidget key={locale} repositoryPath={path} />
+            <GitSyncStatusWidget
+              key={`${locale}-${error.cause}`}
+              repositoryPath={path}
+            />
           </TooltipProvider>,
         );
         await settle();

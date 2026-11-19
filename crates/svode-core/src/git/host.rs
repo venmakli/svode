@@ -13,10 +13,13 @@ use super::GitError;
 use super::cli::GitCli;
 use super::flow::{ParentPublication, SyncReport};
 use super::operations::SharedError;
+use super::transfer::TransferObserver;
 
 pub type HostFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-pub trait GitHost: Send + Sync {
+/// The host also shows the progress of the transfers of its operations
+/// ([`TransferObserver`], DF-369 R5).
+pub trait GitHost: TransferObserver + Send + Sync {
     /// Authorize a mutation of the whole repository that owns `repository`.
     fn authorize_repository<'a>(
         &'a self,

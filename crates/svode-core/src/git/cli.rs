@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::GitError;
+use super::transfer::TransferObserver;
 use super::version::{GitVersion, release_label};
 use crate::process::ProcessTree;
 
@@ -120,12 +121,24 @@ impl GitOutput {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GitCli {
     git_path: PathBuf,
     /// Last observed release, shared by every clone so that an availability
     /// check after a Git update applies to the whole process.
     version: Arc<RwLock<Option<GitVersion>>>,
+    /// Where the transfers this CLI runs report their progress.
+    transfer_observer: Option<Arc<dyn TransferObserver>>,
+}
+
+impl std::fmt::Debug for GitCli {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitCli")
+            .field("git_path", &self.git_path)
+            .field("version", &self.version)
+            .field("transfer_observer", &self.transfer_observer.is_some())
+            .finish()
+    }
 }
 
 impl GitCli {
@@ -134,7 +147,21 @@ impl GitCli {
         Self {
             git_path,
             version: Arc::default(),
+            transfer_observer: None,
         }
+    }
+
+    /// This CLI with the transfers it runs reporting their progress to
+    /// `observer` (DF-369 R5); the release stays shared with this one.
+    pub fn reporting_transfers_to(&self, observer: Arc<dyn TransferObserver>) -> Self {
+        Self {
+            transfer_observer: Some(observer),
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn transfer_observer(&self) -> Option<&dyn TransferObserver> {
+        self.transfer_observer.as_deref()
     }
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, GitError> {
@@ -166,6 +193,7 @@ impl GitCli {
         Self {
             git_path,
             version: Arc::new(RwLock::new(version)),
+            transfer_observer: None,
         }
     }
 
@@ -377,6 +405,32 @@ impl GitCli {
             stderr: String::from_utf8_lossy(&stderr).to_string(),
             exit_code: status.code().unwrap_or(-1),
         })
+    }
+
+    /// The command of a [`super::transfer::Transfer`]: the environment of
+    /// [`Self::exec_sensitive_with_stdin`], no stdin and piped output.
+    pub(crate) fn transfer_command(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> Command {
+        tracing::debug!("running redacted git transfer (in {})", space_dir.display());
+        let git_args = args_with_quote_path(args);
+        let mut cmd = Command::new(&self.git_path);
+        hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
+        cmd.args(&git_args)
+            .current_dir(space_dir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("LC_ALL", "C.UTF-8")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+        cmd
     }
 
     /// Execute a git command that reads `input` from stdin, such as a path set

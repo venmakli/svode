@@ -310,7 +310,7 @@ async fn clean_commit_publishes_without_extra_network_calls() {
     assert_eq!(count(&log, "diff --check"), 1);
     assert_eq!(count(&log, "push --dry-run"), 1);
     assert_eq!(count(&log, "ls-remote"), 2);
-    assert_eq!(count(&log, "push --recurse-submodules=check"), 1);
+    assert_eq!(count(&log, "push --progress --recurse-submodules=check"), 1);
     assert_eq!(count(&log, "fetch"), 0);
 }
 

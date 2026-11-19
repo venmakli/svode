@@ -1,6 +1,63 @@
 use super::*;
 use crate::git::GitError;
 
+/// A push stopped without transfer progress fails the push step with its
+/// own cause, the direction, the file and its size (DF-369 R1, R4).
+#[test]
+fn a_stalled_transfer_is_its_own_cause_with_the_file_and_its_size() {
+    use crate::git::transfer::{TransferDirection, TransferStall};
+    let stall = TransferStall {
+        direction: TransferDirection::Upload,
+        path: Some("media/video.mov".into()),
+        size: Some(99_614_720),
+        idle_limit: crate::git::transfer::IDLE_LIMIT,
+    };
+    let error = GitError::SyncFailed(GitFailure::transfer_stalled(
+        std::path::Path::new("/nonexistent/lfs-test"),
+        GitStage::Push,
+        stall.clone(),
+    ));
+    assert_eq!(
+        error.failure(),
+        Some(&GitFailure {
+            repository: "repository".into(),
+            stage: GitStage::Push,
+            cause: Some(GitFailureCause::TransferStalled),
+            transfer: Some(Box::new(stall)),
+        })
+    );
+    assert!(!error.is_local_failure());
+    assert_eq!(
+        serde_json::to_value(&error).unwrap(),
+        serde_json::json!({
+            "kind": "git_sync_failed",
+            "repository": "repository",
+            "stage": "push",
+            "cause": "transfer_stalled",
+            "transfer": {
+                "direction": "upload",
+                "path": "media/video.mov",
+                "size": 99_614_720,
+            },
+        })
+    );
+    // Without a file in the report, the cause stays without one.
+    let unnamed = GitFailure::transfer_stalled(
+        std::path::Path::new("/nonexistent/lfs-test"),
+        GitStage::Push,
+        TransferStall {
+            direction: TransferDirection::Upload,
+            path: None,
+            size: None,
+            idle_limit: crate::git::transfer::IDLE_LIMIT,
+        },
+    );
+    assert_eq!(
+        serde_json::to_value(GitError::SyncFailed(unnamed)).unwrap()["transfer"],
+        serde_json::json!({ "direction": "upload", "path": null, "size": null })
+    );
+}
+
 #[test]
 fn causes_are_recognized_from_git_output() {
     let cases = [
@@ -90,6 +147,7 @@ fn a_command_svode_stopped_at_its_time_limit_is_the_timed_out_cause() {
             repository: "repository".into(),
             stage: GitStage::Push,
             cause: Some(GitFailureCause::TimedOut),
+            transfer: None,
         })
     );
     assert_eq!(
@@ -114,11 +172,13 @@ fn only_local_causes_keep_repository_access() {
     }
     assert!(!GitFailureCause::Network.is_local());
     assert!(!GitFailureCause::TimedOut.is_local());
+    assert!(!GitFailureCause::TransferStalled.is_local());
     let failure = |cause| {
         GitError::SyncFailed(GitFailure {
             repository: "Research".into(),
             stage: GitStage::Fetch,
             cause,
+            transfer: None,
         })
     };
     assert!(failure(Some(GitFailureCause::FileSystemDenied)).is_local_failure());
@@ -250,6 +310,7 @@ mod git {
                 repository: "Research".into(),
                 stage: GitStage::Commit,
                 cause: Some(GitFailureCause::Hook),
+                transfer: None,
             }
         );
         assert!(matches!(
@@ -299,6 +360,7 @@ mod git {
                 repository: "Research".into(),
                 stage: GitStage::Commit,
                 cause: Some(GitFailureCause::Signing),
+                transfer: None,
             }
         );
     }
@@ -325,6 +387,7 @@ mod git {
                 repository: "Research".into(),
                 stage: GitStage::Prepare,
                 cause: Some(GitFailureCause::IndexLocked),
+                transfer: None,
             }
         );
     }
@@ -351,6 +414,7 @@ mod git {
                 repository: "Research".into(),
                 stage: GitStage::Push,
                 cause: Some(GitFailureCause::TimedOut),
+                transfer: None,
             })
         );
     }
@@ -385,6 +449,7 @@ mod git {
                 repository: "Research".into(),
                 stage: GitStage::Push,
                 cause: Some(GitFailureCause::Hook),
+                transfer: None,
             })
         );
         assert!(error.is_local_failure());

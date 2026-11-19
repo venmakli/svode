@@ -3,6 +3,7 @@ import {
   toGitSyncFailureDto,
   type GitFailureCauseDto,
   type GitFailureStageDto,
+  type GitSyncFailureDto,
 } from "@/platform/git/failure-errors";
 import { toGitPublicationBlockDto } from "@/platform/git/publication-errors";
 import { toGitPullBlockDto } from "@/platform/git/pull-block-errors";
@@ -15,6 +16,7 @@ import {
   type GitPublicationBlock,
 } from "../model/publication-block";
 import type { GitSyncStop } from "../model/sync-stop";
+import { transferMegabytes } from "../lib/transfer-size";
 import * as m from "@/paraglide/messages.js";
 
 /** The Spaces a publication refusal names, or `null` for any other error. */
@@ -37,11 +39,31 @@ export function gitFailureCauseMessage(cause: GitFailureCauseDto): string {
     file_system_denied: m.git_failure_cause_file_system_denied,
     network: m.git_failure_cause_network,
     timed_out: m.git_failure_cause_timed_out,
+    transfer_stalled: m.git_failure_cause_transfer_stalled,
     local_changes: m.git_failure_cause_local_changes,
     branch_left_sequence: m.git_failure_cause_branch_left_sequence,
     commits_published: m.git_failure_cause_commits_published,
     state_changed: m.git_failure_cause_state_changed,
   }[cause]();
+}
+
+/**
+ * The cause of a failed sync step; a transfer Svode stopped without progress
+ * names its last file and size when its report had one (DF-369 R4).
+ */
+function gitSyncFailureCauseMessage(failure: GitSyncFailureDto): string {
+  if (!failure.cause) return m.git_save_cause_unknown();
+  const transfer = failure.transfer;
+  if (
+    failure.cause === "transfer_stalled" &&
+    transfer?.path &&
+    transfer.size !== null
+  )
+    return m.git_failure_cause_transfer_stalled_file({
+      name: transfer.path.split("/").pop() ?? transfer.path,
+      size: transferMegabytes(transfer.size),
+    });
+  return gitFailureCauseMessage(failure.cause);
 }
 
 /**
@@ -121,9 +143,7 @@ export function gitSyncErrorMessage(error: unknown): string {
     return [
       failure.repository ? `${failure.repository}:` : "",
       gitSyncStageMessage(failure.stage),
-      failure.cause
-        ? gitFailureCauseMessage(failure.cause)
-        : m.git_save_cause_unknown(),
+      gitSyncFailureCauseMessage(failure),
     ]
       .filter(Boolean)
       .join(" ");

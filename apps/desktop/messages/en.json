@@ -2570,6 +2570,8 @@
   "git_failure_cause_file_system_denied": "The file system denied access to the repository files. Check the permissions of the folder and its .git folder.",
   "git_failure_cause_network": "The remote couldn't be reached. Check the connection and sync again.",
   "git_failure_cause_timed_out": "The server didn't respond in time. Check the connection and try again.",
+  "git_failure_cause_transfer_stalled": "Sending the file stopped: no data was transferred for 2 minutes. Check the connection and sync again — files already sent won't be sent again.",
+  "git_failure_cause_transfer_stalled_file": "Sending the file “{name}” ({size} MB) stopped: no data was transferred for 2 minutes. Check the connection and sync again — files already sent won't be sent again.",
   "git_failure_cause_local_changes": "Git would overwrite file edits made after the operation stopped. Discard them or set them aside, then try again.",
   "git_failure_cause_branch_left_sequence": "The branch was switched or reset after the sequence stopped, so it no longer continues from where the sequence started. Nothing was changed. Handle it with an agent.",
   "git_failure_cause_commits_published": "Some of the commits that would be lost are already published, so the branch is not returned. Nothing was changed. Handle it with an agent.",

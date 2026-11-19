@@ -1,6 +1,7 @@
 use super::flow::{ParentPublication, SyncReport};
 use super::host::{GitHost, HostFuture};
 use super::operations::SharedError;
+use super::transfer::{TransferObserver, TransferProgress};
 use super::{GitError, cli::GitCli, ops};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -20,6 +21,7 @@ pub(super) struct TestHost {
     pub(super) publications: Mutex<Vec<(PathBuf, String)>>,
     pub(super) refreshed: Mutex<Vec<PathBuf>>,
     pub(super) content_recorded: Mutex<Vec<PathBuf>>,
+    pub(super) transfers: Mutex<Vec<(PathBuf, Option<TransferProgress>)>>,
 }
 
 impl TestHost {
@@ -44,6 +46,15 @@ impl TestHost {
             }),
             Some(error) => Err(GitError::General(error.to_string())),
         }
+    }
+}
+
+impl TransferObserver for TestHost {
+    fn transfer_progress(&self, repository: &Path, progress: Option<&TransferProgress>) {
+        self.transfers
+            .lock()
+            .unwrap()
+            .push((repository.to_path_buf(), progress.cloned()));
     }
 }
 

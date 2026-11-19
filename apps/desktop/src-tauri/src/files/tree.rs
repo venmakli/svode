@@ -27,8 +27,9 @@ pub enum TreeLoadError {
     },
     Unavailable {
         message: String,
+        /// Boxed so that the error of a tree load stays small.
         #[serde(skip)]
-        source: AppError,
+        source: Box<AppError>,
     },
 }
 
@@ -52,7 +53,7 @@ pub fn list_tree_children_checked(
                 let source = AppError::from(source);
                 TreeLoadError::Unavailable {
                     message: source.to_string(),
-                    source,
+                    source: Box::new(source),
                 }
             }
         }

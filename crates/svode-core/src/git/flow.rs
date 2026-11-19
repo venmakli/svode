@@ -7,6 +7,7 @@ use super::operations::{
 use super::publication::{PublicationBlockReason, SpaceBlockClass};
 use super::state::GitRuntime;
 use super::sync::{SyncMode, SyncResult};
+use super::transfer::TransferObserver;
 use super::{access, branch, ops};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -352,7 +353,7 @@ pub(crate) async fn request(
     runtime
         .operations()
         .run(cli, repo, intent, move |request| async move {
-            execute(&owned_runtime, owned_host.as_ref(), request).await
+            execute(&owned_runtime, &owned_host, request).await
         })
         .await
 }
@@ -425,11 +426,14 @@ async fn caller_status(
     Ok(status)
 }
 
-async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> Completion {
+async fn execute(runtime: &GitRuntime, host: &Arc<dyn GitHost>, request: Request) -> Completion {
     let repo = request.repo.as_path();
+    let observer: Arc<dyn TransferObserver> = host.clone();
+    let host = host.as_ref();
     if !request.intent.reader() {
         host.publish_sync_state(repo, true, request.intent.background(), None, None);
     }
+    let sent = send_ahead(runtime, host, &observer, &request).await;
     let lock = runtime.get_lock(repo).await;
     let _guard = lock.lock().await;
     let mut before = request.snapshot.clone();
@@ -440,7 +444,11 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
         .and_then(|done| done.parent.clone());
     let mut read_sync = None;
     let result = async {
-        let cli = runtime.require_cli()?;
+        let cli = runtime.require_cli()?.reporting_transfers_to(observer);
+        if let Err(error) = sent {
+            host.invalidate_repository_access(&cli, repo).await;
+            return Err(error);
+        }
         before = Snapshot::read(&cli, repo).await?;
         if before.target != request.snapshot.target {
             return Err(super::operations::target_changed(repo));
@@ -629,6 +637,63 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
         parent: parent_evidence,
         read_sync,
     }
+}
+
+/// DF-369 R2: before a publishing operation takes the repository lock, the
+/// LFS content of the commits it would push is sent, for its repository and
+/// for the project it then publishes. Only a stalled transfer of its own
+/// repository fails the operation; the project's push sends what is left.
+async fn send_ahead(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    observer: &Arc<dyn TransferObserver>,
+    request: &Request,
+) -> Result<(), GitError> {
+    let Ok(cli) = runtime.require_cli() else {
+        return Ok(());
+    };
+    let cli = cli.reporting_transfers_to(observer.clone());
+    let repo = request.repo.as_path();
+    let background = request.intent.background();
+    let (own, parent) = match &request.intent {
+        Intent::Sync { .. }
+        | Intent::SyncObserved
+        | Intent::Resolve { .. }
+        | Intent::MergeServiceFiles { .. }
+        | Intent::ResolveFile { .. } => (true, true),
+        Intent::PublishSpace { .. } | Intent::Push | Intent::Publish => (true, false),
+        Intent::RetryParent { .. } => (false, true),
+        Intent::AbortMerge
+        | Intent::AbortOperation { .. }
+        | Intent::FetchStatus
+        | Intent::InspectPublication => (false, false),
+    };
+    // A background operation asks for access only before a transfer.
+    let ahead = async |repository: &Path| {
+        if !request.intent.admitted(repository) {
+            return None;
+        }
+        let remote = super::publication::lfs_content_ahead(&cli, repository).await?;
+        (!background || host.authorize_repository(repository).await.is_ok()).then_some(remote)
+    };
+    if own && let Some(remote) = ahead(repo).await {
+        super::publication::send_lfs_content(&cli, repo, &remote).await?;
+    }
+    if let Some((root, _)) = request.parent.as_ref().filter(|_| parent) {
+        // The project publishes with a Space only under its own auto-sync;
+        // otherwise it holds every commit that is not a pointer.
+        let retry = matches!(request.intent, Intent::RetryParent { .. });
+        if (retry || super::policy::effective_user_policy(root).auto_sync)
+            && let Some(remote) = ahead(root).await
+            && let Err(error) = super::publication::send_lfs_content(&cli, root, &remote).await
+        {
+            tracing::warn!(
+                repository = %root.display(),
+                "LFS content of the project was not sent before the lock: {error}"
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn direct_push_locked(

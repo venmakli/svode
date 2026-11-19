@@ -370,6 +370,7 @@ fn refused(repo: &Path, cause: GitFailureCause) -> GitError {
         repository: repository_name(repo),
         stage: GitStage::Abort,
         cause: Some(cause),
+        transfer: None,
     })
 }
 

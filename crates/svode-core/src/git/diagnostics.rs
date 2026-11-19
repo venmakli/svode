@@ -7,6 +7,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::transfer::TransferStall;
+
 /// The step of a save or sync that failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -67,6 +69,9 @@ pub enum GitFailureCause {
     /// A time limit Svode puts on a Git command passed before the command
     /// finished.
     TimedOut,
+    /// Svode stopped a transfer of file contents that made no progress for
+    /// [`super::transfer::IDLE_LIMIT`]; [`GitFailure::transfer`] names it.
+    TransferStalled,
     /// Git refused to overwrite changes of the working tree: files edited
     /// after an operation stopped, or untracked files in its way.
     LocalChanges,
@@ -92,6 +97,7 @@ impl GitFailureCause {
             Self::FileSystemDenied => "file_system_denied",
             Self::Network => "network",
             Self::TimedOut => "timed_out",
+            Self::TransferStalled => "transfer_stalled",
             Self::LocalChanges => "local_changes",
             Self::BranchLeftSequence => "branch_left_sequence",
             Self::CommitsPublished => "commits_published",
@@ -101,7 +107,7 @@ impl GitFailureCause {
 
     /// A cause of this device that says nothing about access to the remote.
     pub fn is_local(self) -> bool {
-        !matches!(self, Self::Network | Self::TimedOut)
+        !matches!(self, Self::Network | Self::TimedOut | Self::TransferStalled)
     }
 }
 
@@ -113,6 +119,9 @@ pub struct GitFailure {
     pub repository: String,
     pub stage: GitStage,
     pub cause: Option<GitFailureCause>,
+    /// The stopped transfer of [`GitFailureCause::TransferStalled`], boxed
+    /// so that every `GitError` stays small.
+    pub transfer: Option<Box<TransferStall>>,
 }
 
 impl GitFailure {
@@ -123,6 +132,26 @@ impl GitFailure {
             repository: repository_name(repo),
             stage,
             cause: cause(stderr, hook_failed),
+            transfer: None,
+        }
+    }
+
+    /// The failure of `stage` in `repo` whose transfer Svode stopped without
+    /// progress; the log names the step, the limit and the file.
+    pub fn transfer_stalled(repo: &Path, stage: GitStage, stall: TransferStall) -> Self {
+        tracing::warn!(
+            "git {stage} stopped: no transfer progress for {:?} (last file: {}, {} bytes)",
+            stall.idle_limit,
+            stall.path.as_deref().unwrap_or("none"),
+            stall
+                .size
+                .map_or_else(|| "unknown".into(), |size| size.to_string()),
+        );
+        Self {
+            repository: repository_name(repo),
+            stage,
+            cause: Some(GitFailureCause::TransferStalled),
+            transfer: Some(Box::new(stall)),
         }
     }
 }

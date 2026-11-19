@@ -381,6 +381,8 @@ mod tests {
     /// A host that allows every mutation and delivers nothing.
     pub(crate) struct QuietHost;
 
+    impl svode_core::git::transfer::TransferObserver for QuietHost {}
+
     impl GitHost for QuietHost {
         fn authorize_repository<'a>(&'a self, _: &'a Path) -> HostFuture<'a, Result<(), GitError>> {
             Box::pin(async { Ok(()) })

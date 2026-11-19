@@ -56,6 +56,7 @@ pub mod state;
 pub mod status;
 pub mod sync;
 pub mod system_files;
+pub mod transfer;
 pub mod upstream;
 pub mod version;
 pub mod versions;
@@ -231,13 +232,18 @@ impl serde::Serialize for GitError {
                 "pathSample": path_sample,
             })
             .serialize(serializer),
-            GitError::SyncFailed(failure) => serde_json::json!({
-                "kind": self.kind(),
-                "repository": failure.repository,
-                "stage": failure.stage,
-                "cause": failure.cause,
-            })
-            .serialize(serializer),
+            GitError::SyncFailed(failure) => {
+                let mut value = serde_json::json!({
+                    "kind": self.kind(),
+                    "repository": failure.repository,
+                    "stage": failure.stage,
+                    "cause": failure.cause,
+                });
+                if let Some(transfer) = &failure.transfer {
+                    value["transfer"] = serde_json::json!(transfer);
+                }
+                value.serialize(serializer)
+            }
             GitError::SourceBusy { path } => {
                 serde_json::json!({ "kind": self.kind(), "path": path }).serialize(serializer)
             }
@@ -353,6 +359,7 @@ mod tests {
                 repository: "Research".to_string(),
                 stage: diagnostics::GitStage::Prepare,
                 cause: Some(diagnostics::GitFailureCause::IndexLocked),
+                transfer: None,
             },
             reason: "target_unavailable",
             exit_code: Some(1),
@@ -373,6 +380,7 @@ mod tests {
             repository: "Research".to_string(),
             stage: diagnostics::GitStage::Fetch,
             cause: None,
+            transfer: None,
         }))
         .unwrap();
         assert_eq!(

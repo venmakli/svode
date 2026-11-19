@@ -275,3 +275,42 @@ test("a refusal by Spaces names publication or verification by their classes", a
     await setLocale(original, { reload: false });
   }
 });
+
+test("a transfer stopped without progress names its file and size, or only the stop", async () => {
+  const original = getLocale();
+  const stalled = (transfer: unknown) => ({
+    kind: "git_sync_failed",
+    repository: "lfs-test",
+    stage: "push",
+    cause: "transfer_stalled",
+    transfer,
+  });
+  const named = stalled({
+    direction: "upload",
+    path: "media/video.mov",
+    size: 99_614_720,
+  });
+  const unnamed = stalled({ direction: "upload", path: null, size: null });
+  try {
+    await setLocale("en", { reload: false });
+    expect(gitSyncErrorMessage(named)).toBe(
+      "lfs-test: Could not publish the changes. Sending the file “video.mov” (95 MB) stopped: no data was transferred for 2 minutes. Check the connection and sync again — files already sent won't be sent again.",
+    );
+    expect(gitSyncErrorMessage(unnamed)).toBe(
+      "lfs-test: Could not publish the changes. Sending the file stopped: no data was transferred for 2 minutes. Check the connection and sync again — files already sent won't be sent again.",
+    );
+    await setLocale("ru", { reload: false });
+    expect(gitSyncErrorMessage(named)).toBe(
+      "lfs-test: Не удалось опубликовать изменения. Отправка файла «video.mov» (95 МБ) остановлена: 2 минуты не было передачи данных. Проверьте подключение и синхронизируйте ещё раз — уже отправленные файлы не отправятся повторно.",
+    );
+    for (const transfer of [null, "broken", { direction: "sideways" }])
+      expect(gitSyncErrorMessage(stalled(transfer))).toBe(
+        "lfs-test: Не удалось опубликовать изменения. Отправка файла остановлена: 2 минуты не было передачи данных. Проверьте подключение и синхронизируйте ещё раз — уже отправленные файлы не отправятся повторно.",
+      );
+    expect(
+      gitSyncErrorMessage(named).includes(m.git_save_cause_unknown()),
+    ).toBe(false);
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});

@@ -830,7 +830,11 @@ impl Serialize for AppError {
                 serde_json::json!({ "kind": self.kind(), "repository": failure.repository, "stage": failure.stage, "cause": failure.cause, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
             }
             AppError::GitSyncFailed(failure) => {
-                serde_json::json!({ "kind": self.kind(), "repository": failure.repository, "stage": failure.stage, "cause": failure.cause }).serialize(serializer)
+                let mut value = serde_json::json!({ "kind": self.kind(), "repository": failure.repository, "stage": failure.stage, "cause": failure.cause });
+                if let Some(transfer) = &failure.transfer {
+                    value["transfer"] = serde_json::json!(transfer);
+                }
+                value.serialize(serializer)
             }
             AppError::RepositoryAccessDenied {
                 repository_id,
@@ -1251,6 +1255,7 @@ mod tests {
             repository: "Research".into(),
             stage,
             cause: Some(GitFailureCause::Hook),
+            transfer: None,
         };
         for core in [
             svode_core::git::GitError::SaveFailed {
@@ -1268,6 +1273,30 @@ mod tests {
             assert_eq!(value["repository"], "Research");
             assert_eq!(value["cause"], "hook");
         }
+    }
+
+    #[test]
+    fn a_stalled_transfer_keeps_its_file_in_the_core_transport_shape() {
+        use svode_core::git::diagnostics::{GitFailure, GitStage};
+        use svode_core::git::transfer::{IDLE_LIMIT, TransferDirection, TransferStall};
+        let core = svode_core::git::GitError::SyncFailed(GitFailure::transfer_stalled(
+            std::path::Path::new("/nonexistent/Research"),
+            GitStage::Push,
+            TransferStall {
+                direction: TransferDirection::Upload,
+                path: Some("media/video.mov".into()),
+                size: Some(99_614_720),
+                idle_limit: IDLE_LIMIT,
+            },
+        ));
+        let expected = serde_json::to_value(&core).unwrap();
+        let value = serde_json::to_value(AppError::from(core)).unwrap();
+        assert_eq!(value, expected);
+        assert_eq!(value["cause"], "transfer_stalled");
+        assert_eq!(
+            value["transfer"],
+            serde_json::json!({ "direction": "upload", "path": "media/video.mov", "size": 99_614_720 })
+        );
     }
 
     #[test]

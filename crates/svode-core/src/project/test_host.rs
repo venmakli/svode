@@ -17,6 +17,8 @@ pub(super) struct Host {
     pub(super) commits: Mutex<Vec<PathBuf>>,
 }
 
+impl crate::git::transfer::TransferObserver for Host {}
+
 impl GitHost for Host {
     fn authorize_repository<'a>(
         &'a self,

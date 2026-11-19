@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use super::GitError;
 use super::cli::{GitCli, GitOutput};
+use super::diagnostics::{GitFailure, GitStage};
+use super::transfer::{Transfer, TransferDirection, TransferOutcome, TransferStall};
 
 /// A project-level refusal, or every Space that blocks publication.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -257,13 +259,21 @@ pub async fn push_snapshot(
         "-c",
         &frozen_url,
         "push",
+        // Git's progress keeps the transfer alive without an overall limit.
+        "--progress",
         "--recurse-submodules=check",
         "--",
         &fixed.remote,
     ];
     args.extend(mappings.iter().map(String::as_str));
     let trace = super::diagnostics::HookTrace::new();
-    let out = sensitive_with_env(cli, repo, &args, &trace.env(&[])).await?;
+    let out = match Transfer::new(repo, TransferDirection::Upload)
+        .run(cli, &args, &trace.env(&[]))
+        .await?
+    {
+        TransferOutcome::Finished(out) => out,
+        TransferOutcome::Stalled(stall) => return Err(transfer_stalled(repo, stall)),
+    };
     if out.exit_code != 0 {
         if let Some(rejection) = super::push_rejection::push_rejection(cli, repo, &out.stderr).await
         {
@@ -285,6 +295,75 @@ pub async fn push_snapshot(
         set_upstream(cli, repo).await?;
     }
     Ok((out, Some(fixed.head)))
+}
+
+fn transfer_stalled(repo: &Path, stall: TransferStall) -> GitError {
+    GitError::SyncFailed(GitFailure::transfer_stalled(repo, GitStage::Push, stall))
+}
+
+/// The remote whose LFS content a publication of `repo` would send, from
+/// local reads only (DF-369 R2): `repo` stores files with an LFS strategy
+/// and HEAD has commits that no remote-tracking ref of the remote contains.
+pub async fn lfs_content_ahead(cli: &GitCli, repo: &Path) -> Option<String> {
+    let strategy = crate::storage::config::read_space_assets_config(repo)
+        .ok()?
+        .assets?
+        .strategy;
+    if !matches!(
+        strategy,
+        crate::storage::config::AssetsStrategy::LfsRemote
+            | crate::storage::config::AssetsStrategy::LfsS3
+    ) {
+        return None;
+    }
+    let remote = match super::upstream::of_current_branch(cli, repo).await.ok()? {
+        Some(upstream) if upstream.remote != "." => upstream.remote,
+        Some(_) => return None,
+        None => "origin".to_owned(),
+    };
+    let ahead = cli
+        .exec(
+            repo,
+            &[
+                "rev-list",
+                "--count",
+                "HEAD",
+                "--not",
+                &format!("--remotes={remote}"),
+                "--",
+            ],
+        )
+        .await
+        .ok()?;
+    (ahead.exit_code == 0 && ahead.stdout.trim() != "0").then_some(remote)
+}
+
+/// Before the publication of `repo` takes its repository lock, send the LFS
+/// content of the commits [`lfs_content_ahead`] found for `remote` (DF-369
+/// R2). The push under the lock then finds the objects on the server, and
+/// only those of commits made meanwhile travel inside it. A stalled transfer
+/// is the publication's failure; any other failure is left to the push,
+/// whose hook sends the same objects and whose refusals are recognized as
+/// before.
+pub async fn send_lfs_content(cli: &GitCli, repo: &Path, remote: &str) -> Result<(), GitError> {
+    match Transfer::new(repo, TransferDirection::Upload)
+        .run(cli, &["lfs", "push", "--", remote, "HEAD"], &[])
+        .await
+    {
+        Ok(TransferOutcome::Stalled(stall)) => return Err(transfer_stalled(repo, stall)),
+        Ok(TransferOutcome::Finished(out)) if out.exit_code != 0 => tracing::warn!(
+            repository = %repo.display(),
+            exit_code = out.exit_code,
+            stderr = %super::auth::redact_url_credentials(out.stderr.trim()),
+            "LFS content was not sent before the push"
+        ),
+        Ok(TransferOutcome::Finished(_)) => {}
+        Err(error) => tracing::warn!(
+            repository = %repo.display(),
+            "LFS content was not sent before the push: {error}"
+        ),
+    }
+    Ok(())
 }
 
 pub async fn push(cli: &GitCli, repo: &Path, first: bool) -> Result<GitOutput, GitError> {

@@ -70,6 +70,7 @@ pub fn failure(
             repository: repository_name(repo),
             stage,
             cause: None,
+            transfer: None,
         },
         reason,
         exit_code,

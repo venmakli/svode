@@ -3,6 +3,8 @@
 mod blockers_tests;
 #[path = "publication_guard_tests.rs"]
 mod guard_tests;
+#[path = "lfs_ahead_tests.rs"]
+mod lfs_ahead_tests;
 #[path = "operation_tests.rs"]
 mod operation_tests;
 #[path = "parent_hold_tests.rs"]
