@@ -457,7 +457,7 @@ async fn set(
     let active = store.active();
     Ok(Outcome {
         human: format!(
-            "Set the {} Secret {name} of {} on this device in {}.\n",
+            "Set the {} {} Secret {name} in {}.\n",
             mode(set.mode),
             selected.label,
             store_name(active.kind, &active.file)
@@ -491,7 +491,7 @@ fn remove(
         .map_err(|error| failure(error, &file, Some(&name), selected.target.clone()))?;
     let human = match (removed.mode, removed.value_removed) {
         (Mode::Local, _) => format!(
-            "Removed the local Secret {name} of {} with its value on this device.\n",
+            "Removed the local {} Secret {name} with its value on this device.\n",
             selected.label
         ),
         (Mode::Git, true) => format!(
@@ -535,6 +535,16 @@ async fn read_value(name: &str) -> Result<String, CliError> {
     } else {
         None
     };
+    // Ends the prompt line however the read ends, an interrupt included.
+    struct EndLine(bool);
+    impl Drop for EndLine {
+        fn drop(&mut self) {
+            if self.0 {
+                eprintln!();
+            }
+        }
+    }
+    let end_line = EndLine(terminal);
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
@@ -547,9 +557,7 @@ async fn read_value(name: &str) -> Result<String, CliError> {
         let _ = sender.send(read.map(|_| bytes));
     });
     let read = receiver.await;
-    if terminal {
-        eprintln!();
-    }
+    drop(end_line);
     let bytes = match read {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(error)) => {

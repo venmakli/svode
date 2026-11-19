@@ -278,7 +278,7 @@ mod unix {
         assert!(human.status.success(), "{human:?}");
         let stdout = String::from_utf8(human.stdout).unwrap();
         assert!(
-            stdout.contains("Set the local Secret TOKEN of device"),
+            stdout.contains("Set the local device Secret TOKEN in the secrets file"),
             "{stdout}"
         );
         let stored = device.stored();
