@@ -54,6 +54,7 @@ import {
 } from "./git-sync-stop-copy";
 import { GitSyncStopNotice } from "./git-sync-stop-notice";
 import { GitSyncCommits } from "./git-sync-commits";
+import { GitTransferProgress } from "./git-transfer-indicator";
 import {
   repositoryAccessPresentation,
   type RepositoryAccessPresentation,
@@ -386,6 +387,8 @@ export function GitSyncStatusWidget({
               </>
             ) : null}
           </div>
+
+          <GitTransferProgress spacePath={sync.spacePath} />
 
           <DialogFooter className="min-w-0 sm:items-center">
             {sync.visible && (

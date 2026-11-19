@@ -5,3 +5,5 @@ export type {
   SpaceSidebarGitCloneProgress,
   SpaceSidebarGitState,
 } from "./hooks/use-space-sidebar-git";
+export { GitTransferIcon } from "./ui/git-transfer-indicator";
+export { useGitTransfer } from "./hooks/use-git-transfer";

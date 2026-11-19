@@ -315,6 +315,23 @@ export interface CloneProgress {
   percent: number;
 }
 
+export type GitTransferDirection = "upload" | "download";
+
+/** Where a transfer of file contents of a repository is. */
+export interface GitTransfer {
+  direction: GitTransferDirection;
+  /** The number of the current file, from 1. */
+  file: number;
+  /** The files of the transfer known so far; 0 when unknown. */
+  files: number;
+  /** The current file, relative to the repository. */
+  path: string;
+  /** Bytes of the current file transferred so far. */
+  bytes: number;
+  /** The size of the current file; 0 when unknown. */
+  size: number;
+}
+
 export type GitCloneProgressStatus = "starting" | "progress" | "failed";
 
 export interface GitCloneProgress {

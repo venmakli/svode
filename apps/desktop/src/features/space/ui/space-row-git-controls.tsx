@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -47,22 +46,13 @@ export function useSpaceRowGitControls({
     dirty,
     inlineActivity: (
       <span className="ml-auto flex items-center gap-1">
-        <LfsIndicatorIcon lfsState={lfsState} />
+        <LfsIndicatorIcon lfsState={lfsState} spacePath={spacePath} />
         <SpaceGitActivityIndicator
           spacePath={spacePath}
           loading={loading || refreshing}
         />
       </span>
     ),
-    lfsActivity:
-      !cloning && lfsState === "pulling" ? (
-        <div className="flex items-center gap-1.5 px-2 pb-1">
-          <Loader2 className="animate-spin text-muted-foreground" />
-          <p className="truncate text-[10px] text-muted-foreground">
-            {m.storage_repair_lfs_pulling()}
-          </p>
-        </div>
-      ) : null,
     progress: (
       <>
         <RepositoryAccessPreflightDialog recovery={recovery} />

@@ -3,6 +3,7 @@ import type {
   FileGitState,
   GitCloneProgress,
   GitStatus,
+  GitTransfer,
   GitStatusFailure,
   GitPublicationStatus,
   GitSyncMerged,
@@ -26,6 +27,8 @@ import { gitStatusPathIndex } from "./git-status-index";
  *   sync shows only its result (Stage 11 1.E).
  * - `lastSynced` is when each repository last synced on this device.
  * - `cloning` tracks in-progress `git clone` operations and their percent.
+ * - `transfers` is the running transfer of file contents of each repository,
+ *   once it lasted past the short-transfer threshold.
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
  * - `syncStop` is the unfinished Git operation that stops sync.
  * - `syncMerged` are the Svode service files the last sync merged and the
@@ -69,6 +72,7 @@ interface GitState {
   ) => { current: () => boolean; finish: () => void };
   branchError: Record<string, string>;
   cloning: Record<string, GitCloneProgress>;
+  transfers: Record<string, GitTransfer>;
 
   /** Apply a status returned by a git IPC command. */
   applyStatus: (spacePath: string, status: GitStatus) => void;
@@ -94,6 +98,7 @@ interface GitState {
   setBranchError: (spacePath: string, error: string | null) => void;
 
   setCloning: (spacePath: string, progress: GitCloneProgress | null) => void;
+  setTransfer: (repository: string, transfer: GitTransfer | null) => void;
 }
 
 export const useGitStore = create<GitState>((set, get) => {
@@ -164,6 +169,7 @@ export const useGitStore = create<GitState>((set, get) => {
     remoteStatuses: {},
     branchError: {},
     cloning: {},
+    transfers: {},
 
     beginSync: (path, indicate = true) => {
       const pending = (syncRequests[path] ??= {
@@ -327,6 +333,7 @@ export const useGitStore = create<GitState>((set, get) => {
           s.remoteStatuses;
         const { [spacePath]: _rmBranchError, ...branchError } = s.branchError;
         const { [spacePath]: _rmClone, ...cloning } = s.cloning;
+        const { [spacePath]: _rmTransfer, ...transfers } = s.transfers;
         const { [spacePath]: _rmLastSynced, ...lastSynced } = s.lastSynced;
         return {
           lastSynced,
@@ -344,6 +351,7 @@ export const useGitStore = create<GitState>((set, get) => {
           remoteStatuses,
           branchError,
           cloning,
+          transfers,
         };
       }),
 
@@ -422,6 +430,14 @@ export const useGitStore = create<GitState>((set, get) => {
         if (progress) next[spacePath] = progress;
         else delete next[spacePath];
         return { cloning: next };
+      }),
+
+    setTransfer: (repository, transfer) =>
+      set((s) => {
+        const next = { ...s.transfers };
+        if (transfer) next[repository] = transfer;
+        else delete next[repository];
+        return { transfers: next };
       }),
   };
 });

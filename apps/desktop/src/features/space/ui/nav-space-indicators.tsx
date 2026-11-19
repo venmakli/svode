@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/tooltip";
 import { SidebarMenuItem, SidebarMenuSub } from "@/components/ui/sidebar";
 import * as m from "@/paraglide/messages.js";
+import { GitTransferIcon, useGitTransfer } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import type { LfsState } from "../model";
 
@@ -32,7 +33,16 @@ export function TreeLoadingRows() {
   );
 }
 
-export function LfsIndicatorIcon({ lfsState }: { lfsState: LfsState }) {
+/** The LFS place of a Space row: one icon, a running transfer before no access. */
+export function LfsIndicatorIcon({
+  lfsState,
+  spacePath,
+}: {
+  lfsState: LfsState;
+  spacePath: string;
+}) {
+  const transfer = useGitTransfer(spacePath);
+  if (transfer) return <GitTransferIcon transfer={transfer} />;
   if (lfsState !== "missing-creds") return null;
   return (
     <Tooltip>

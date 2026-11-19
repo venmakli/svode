@@ -17,7 +17,7 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
     );
     if (child.status !== 0) throw new Error(child.stdout + child.stderr);
     expect(child.status).toBe(0);
-  });
+  }, 30_000);
 } else {
   // The active Space; a widget may show another repository.
   let activeSpacePath = "/project";
@@ -513,4 +513,132 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
       await setLocale(previousLocale, { reload: false });
     }
   });
+
+  test("a transfer longer than about two seconds shows its line with the file progress above the Dialog buttons", async () => {
+    const dom = await createTestDom();
+    const path = "/project";
+    activeSpacePath = path;
+    mockNativeIpc(
+      async (command) => {
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/project.git";
+        if (command === "git_publication_status") return null;
+        if (command === "git_last_synced") return null;
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: path,
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_fetch_status" || command === "git_status")
+          return { branch: "main", ahead: 1, behind: 0, files: [] };
+        if (command === "git_unpushed_commits") return [];
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { listenGitTransfers, TRANSFER_SHOWN_AFTER_MS } =
+      await import("../api/git-transfer-events");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { emit } = await import("@/platform/native/events");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const previousLocale = getLocale();
+    const wait = (ms: number) =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    const report = (bytes: number | null) =>
+      act(async () => {
+        await emit("git:transfer", {
+          repository: path,
+          progress:
+            bytes == null
+              ? null
+              : {
+                  direction: "upload",
+                  file: 1,
+                  files: 2,
+                  path: "media/video.mov",
+                  bytes,
+                  size: 99_614_720,
+                },
+        });
+      });
+    const line = () =>
+      dom.document.querySelector<HTMLElement>("[data-git-transfer-progress]");
+    const stop = await listenGitTransfers();
+    try {
+      await setLocale("ru", { reload: false });
+      expect(TRANSFER_SHOWN_AFTER_MS).toBe(2000);
+      await dom.render(
+        <TooltipProvider>
+          <GitSyncStatusWidget repositoryPath={path} />
+        </TooltipProvider>,
+      );
+      await wait(20);
+      await act(async () => {
+        dom.document
+          .querySelector<HTMLButtonElement>("[data-repository-control]")!
+          .click();
+      });
+      await wait(20);
+      const dialog = dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+      expect(!!dialog).toBe(true);
+
+      // A short transfer shows nothing.
+      await report(1_048_576);
+      await wait(300);
+      await report(null);
+      await wait(TRANSFER_SHOWN_AFTER_MS);
+      expect(line()).toBe(null);
+
+      // A longer one shows its line once it lasted past the threshold.
+      await report(1_048_576);
+      await wait(TRANSFER_SHOWN_AFTER_MS - 500);
+      expect(line()).toBe(null);
+      await report(12_582_912);
+      await wait(700);
+      expect(line()!.textContent).toBe(
+        "Отправка 1 из 2 · video.mov · 12 из 95 МБ",
+      );
+      const progress =
+        line()!.querySelector<HTMLElement>("[role=progressbar]")!;
+      const indicator = progress.querySelector<HTMLElement>(
+        '[data-slot="progress-indicator"]',
+      )!;
+      expect(indicator.style.transform).toBe(
+        `translateX(-${100 - (12_582_912 / 99_614_720) * 100}%)`,
+      );
+      expect(
+        dom.document.getElementById(progress.getAttribute("aria-labelledby")!)
+          ?.textContent,
+      ).toBe(line()!.textContent);
+      // Over the buttons: after the body, before the footer.
+      const footer = dialog.querySelector('[data-slot="dialog-footer"]')!;
+      expect(line()!.nextElementSibling).toBe(footer);
+
+      // It follows the transfer and leaves when it ends.
+      await report(49_807_360);
+      expect(line()!.textContent).toBe(
+        "Отправка 1 из 2 · video.mov · 48 из 95 МБ",
+      );
+      await report(null);
+      expect(line()).toBe(null);
+      expect(useGitStore.getState().transfers[path]).toBeUndefined();
+    } finally {
+      stop();
+      await dom.render(null);
+      clearNativeMocks();
+      useGitStore.getState().clear(path);
+      await dom.dispose();
+      await setLocale(previousLocale, { reload: false });
+    }
+  }, 15_000);
 }

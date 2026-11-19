@@ -263,7 +263,6 @@ export function SpaceRow({
           {gitControls.inlineActivity}
         </SidebarMenuButton>
         {gitControls.progress}
-        {gitControls.lfsActivity}
         <CollapsibleTrigger asChild>
           <SidebarMenuAction
             className="left-2 bg-sidebar-accent text-sidebar-accent-foreground data-[state=open]:rotate-90"

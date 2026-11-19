@@ -16,6 +16,7 @@ import type {
   PublicationStatusDto,
   GitAvailabilityDto,
   GitStatusDto,
+  GitTransferEventDto,
   GitUserPolicyDto,
   SpacesPublicationDto,
   SyncResultDto,
@@ -368,6 +369,15 @@ export function listenCloneProgress(
   handler: (progress: CloneProgressDto) => void,
 ): Promise<UnlistenFn> {
   return listen<CloneProgressDto>("clone:progress", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** The progress of each transfer of file contents, per repository. */
+export function listenGitTransfer(
+  handler: (event: GitTransferEventDto) => void,
+): Promise<UnlistenFn> {
+  return listen<GitTransferEventDto>("git:transfer", (event) =>
     handler(event.payload),
   );
 }
