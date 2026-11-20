@@ -388,9 +388,21 @@ impl GitCli {
         }
 
         let (mut stdout, mut stderr) = (child.stdout.take(), child.stderr.take());
+        let (root_exit, stop) = (tree.root_exit(), tree.stop());
         let finished = tokio::time::timeout(timeout, async {
-            let (stdout, stderr) =
-                tokio::try_join!(read_pipe(stdout.as_mut()), read_pipe(stderr.as_mut()))?;
+            let reading =
+                async { tokio::try_join!(read_pipe(stdout.as_mut()), read_pipe(stderr.as_mut())) };
+            tokio::pin!(reading);
+            let (stdout, stderr) = tokio::select! {
+                output = &mut reading => output?,
+                () = root_exit => {
+                    // A descendant may still hold the pipes (Windows hands
+                    // them to every child): ending what `git` left running
+                    // closes them, and what `git` wrote is still read.
+                    stop.kill();
+                    reading.await?
+                }
+            };
             Ok::<_, std::io::Error>((stdout, stderr, tree.wait().await?))
         })
         .await;

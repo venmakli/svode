@@ -139,12 +139,12 @@ async fn a_dropped_call_ends_git_with_its_descendants() {
 }
 
 /// A finished call keeps its output and exit code, and what its `git` left
-/// running in the tree ends with the call.
+/// running in the tree ends with the call, also while it holds the pipes of
+/// `git` (as every child on Windows does).
 #[tokio::test]
 async fn a_finished_call_keeps_its_output_and_ends_what_git_left_running() {
     #[cfg(unix)]
-    let script =
-        "( while :; do echo tick >> descendant; sleep 0.05; done ) </dev/null >/dev/null 2>&1 &
+    let script = "( while :; do echo tick >> descendant; sleep 0.05; done ) &
 echo \"$!\" > pids
 while [ ! -s descendant ]; do sleep 0.02; done
 read input
