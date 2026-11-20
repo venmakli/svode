@@ -664,6 +664,42 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       true,
     );
 
+    // Out of network reach: no access is not claimed, files left keep
+    // their row, and the remote names the network without a badge.
+    await render(
+      storageFixture({
+        assetsStrategy: "lfs-remote",
+        savedAssetsStrategy: "lfs-remote",
+        lfsState: "ready",
+        lfsMissing: {
+          files: [{ path: "clips/video.mov", size: 99_614_720 }],
+          bytes: 99_614_720,
+          stop: { kind: "stalled" },
+        },
+        lfsRemoteDiagnostic: {
+          state: "ready",
+          reason: "unreachable",
+          authMethod: "ssh",
+          remoteUrl: "https://git.example.test/repo.git",
+          terminalCommand: null,
+          detail:
+            "ssh: connect to host lfs.example port 2222: Network is unreachable",
+        },
+      }),
+    );
+    const offline = group("Status");
+    expect(
+      offline.textContent?.includes(
+        "The Git LFS server is unreachable. Check the connection, then check again.",
+      ),
+    ).toBe(true);
+    expect(
+      offline.textContent?.includes("No access to the Git LFS remote"),
+    ).toBe(false);
+    expect(buttons("Download files", offline).length).toBe(1);
+    expect(offline.textContent?.includes("Needs setup")).toBe(false);
+    expect(offline.textContent?.includes("Ready")).toBe(false);
+
     await render(
       storageFixture({
         assetsStrategy: "lfs-s3",

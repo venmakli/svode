@@ -71,11 +71,14 @@ export function StorageStateGroup({
             }
             actions={
               <>
-                <Badge variant={ready ? "secondary" : "outline"}>
-                  {ready
-                    ? m.storage_lfs_remote_ready()
-                    : m.storage_lfs_remote_needs_setup()}
-                </Badge>
+                {/* Out of network reach says neither ready nor set up wrong. */}
+                {diagnostic?.reason === "unreachable" ? null : (
+                  <Badge variant={ready ? "secondary" : "outline"}>
+                    {ready
+                      ? m.storage_lfs_remote_ready()
+                      : m.storage_lfs_remote_needs_setup()}
+                  </Badge>
+                )}
                 <Button
                   type="button"
                   variant="outline"
@@ -164,6 +167,8 @@ function remoteDiagnosticMessage(diagnostic: RemoteDiagnostic): string {
         : m.storage_lfs_remote_auth_required_https();
     case "lfs-unavailable":
       return m.storage_lfs_remote_lfs_unavailable();
+    case "unreachable":
+      return m.storage_lfs_remote_unreachable();
     case "probe-failed":
       return m.storage_lfs_remote_probe_failed();
   }

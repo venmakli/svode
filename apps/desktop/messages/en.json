@@ -1334,6 +1334,7 @@
   "storage_lfs_remote_auth_required_https": "Remote access is missing or was rejected. Sign in with your username and token, then check again.",
   "storage_lfs_remote_auth_required_ssh": "SSH access is missing or was rejected. Make sure your key is loaded in ssh-agent, then check again.",
   "storage_lfs_remote_lfs_unavailable": "The remote responded, but Git LFS is off or unsupported for this repository. Turn on Git LFS with the provider, then check again.",
+  "storage_lfs_remote_unreachable": "The Git LFS server is unreachable. Check the connection, then check again.",
   "storage_lfs_remote_probe_failed": "Couldn't check Git LFS. Review the Git output, fix the remote, sign-in, or provider settings, then check again.",
   "storage_lfs_remote_command_label": "Terminal command",
   "storage_lfs_remote_error_label": "Git output",

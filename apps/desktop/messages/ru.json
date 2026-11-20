@@ -1336,6 +1336,7 @@
   "storage_lfs_remote_auth_required_https": "Доступ к remote отсутствует или отклонён. Войдите с именем пользователя и токеном, затем проверьте снова.",
   "storage_lfs_remote_auth_required_ssh": "SSH-доступ отсутствует или отклонён. Убедитесь, что ключ загружен в ssh-agent, затем проверьте снова.",
   "storage_lfs_remote_lfs_unavailable": "Remote ответил, но Git LFS для этого репозитория выключен или не поддерживается. Включите Git LFS у провайдера и проверьте снова.",
+  "storage_lfs_remote_unreachable": "Сервер Git LFS недоступен. Проверьте подключение и проверьте снова.",
   "storage_lfs_remote_probe_failed": "Не удалось проверить Git LFS. Посмотрите вывод Git, исправьте remote, вход или настройки провайдера и проверьте снова.",
   "storage_lfs_remote_command_label": "Команда для терминала",
   "storage_lfs_remote_error_label": "Вывод Git",

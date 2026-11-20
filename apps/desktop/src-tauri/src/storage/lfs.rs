@@ -46,6 +46,9 @@ pub enum LfsRemoteDiagnosticReason {
     RemoteMissing,
     AuthRequired,
     LfsUnavailable,
+    /// The server is out of reach of the network: no refusal of access
+    /// (DF-368 R6).
+    Unreachable,
     ProbeFailed,
 }
 
@@ -155,7 +158,7 @@ async fn diagnose_lfs_remote_with_cli(
     let raw_detail = command_detail(&out.stdout, &out.stderr);
     let reason = classify_lfs_remote_failure(&raw_detail);
     // A server out of reach is not a refusal of access (DF-368 R6).
-    let state = if is_offline_probe_failure(&out.stderr) {
+    let state = if reason == LfsRemoteDiagnosticReason::Unreachable {
         LfsState::Ready
     } else {
         LfsState::MissingCreds
@@ -173,6 +176,9 @@ async fn diagnose_lfs_remote_with_cli(
 fn classify_lfs_remote_failure(detail: &str) -> LfsRemoteDiagnosticReason {
     if ops::is_git_auth_error(detail) {
         return LfsRemoteDiagnosticReason::AuthRequired;
+    }
+    if is_offline_probe_failure(detail) {
+        return LfsRemoteDiagnosticReason::Unreachable;
     }
     let lower = detail.to_ascii_lowercase();
     if lower.contains("repository or object not found")
@@ -208,7 +214,9 @@ fn terminal_command_for(
     reason: LfsRemoteDiagnosticReason,
 ) -> Option<String> {
     match reason {
-        LfsRemoteDiagnosticReason::Ready | LfsRemoteDiagnosticReason::RemoteMissing => None,
+        LfsRemoteDiagnosticReason::Ready
+        | LfsRemoteDiagnosticReason::RemoteMissing
+        | LfsRemoteDiagnosticReason::Unreachable => None,
         LfsRemoteDiagnosticReason::GitLfsMissing => Some("git lfs install".to_string()),
         LfsRemoteDiagnosticReason::AuthRequired
             if matches!(auth_method, LfsRemoteAuthMethod::Ssh) =>
@@ -573,6 +581,24 @@ mod tests {
         );
 
         assert_eq!(reason, LfsRemoteDiagnosticReason::LfsUnavailable);
+    }
+
+    /// DF-368 R6: a server out of network reach is told from a refusal.
+    #[test]
+    fn classifies_a_server_out_of_network_reach_apart_from_a_refusal() {
+        let reason = classify_lfs_remote_failure(
+            "Fetching reference refs/heads/main\nbatch request: ssh: connect to host 213.0.113.5 port 2222: Network is unreachable\nerror: failed to fetch some objects",
+        );
+
+        assert_eq!(reason, LfsRemoteDiagnosticReason::Unreachable);
+        assert_eq!(
+            terminal_command_for(
+                LfsRemoteAuthMethod::Https,
+                "https://example.com/r.git",
+                reason
+            ),
+            None
+        );
     }
 
     #[test]

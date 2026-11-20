@@ -92,6 +92,7 @@ export type LfsRemoteDiagnosticReason =
   | "remote-missing"
   | "auth-required"
   | "lfs-unavailable"
+  | "unreachable"
   | "probe-failed";
 export type LfsRemoteAuthMethod = "https" | "ssh" | "unknown";
 
