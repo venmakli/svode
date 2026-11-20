@@ -55,6 +55,9 @@ pub enum LfsNotReady {
     LfsToolingUnavailable { detail: String },
     /// The Git LFS server of `origin` is not reachable (`lfs-remote`).
     RemoteUnreachable,
+    /// The Git LFS server of `origin` is out of reach of the network: the
+    /// probe failed without a refusal of access (`lfs-remote`).
+    RemoteOffline,
 }
 
 impl LfsNotReady {
@@ -68,7 +71,7 @@ impl LfsNotReady {
             Self::Secret(failure) => failure.error.secret_code(),
             Self::S3CheckFailed { .. } => Some(S3_CHECK_FAILED),
             Self::LfsToolingUnavailable { .. } => Some(LFS_TOOLING_UNAVAILABLE),
-            Self::RemoteUnreachable => None,
+            Self::RemoteUnreachable | Self::RemoteOffline => None,
         }
     }
 
@@ -90,7 +93,7 @@ impl LfsNotReady {
             Self::LfsToolingUnavailable { .. } => {
                 Some("install git-lfs, or reinstall Svode to restore svode-lfs".to_string())
             }
-            Self::RemoteUnreachable => None,
+            Self::RemoteUnreachable | Self::RemoteOffline => None,
         }
     }
 
@@ -98,7 +101,7 @@ impl LfsNotReady {
     /// ready` and adds the reason.
     pub fn import_message(&self) -> String {
         match self {
-            Self::RemoteUnreachable => {
+            Self::RemoteUnreachable | Self::RemoteOffline => {
                 "Git LFS route is not ready; repair the configured backend before importing"
                     .to_string()
             }
@@ -131,6 +134,9 @@ impl std::fmt::Display for LfsNotReady {
             Self::LfsToolingUnavailable { detail } => f.write_str(detail),
             Self::RemoteUnreachable => {
                 f.write_str("the Git LFS server of `origin` is not reachable")
+            }
+            Self::RemoteOffline => {
+                f.write_str("the Git LFS server of `origin` is out of reach of the network")
             }
         }
     }
@@ -228,6 +234,9 @@ pub async fn check_readiness(
             let cli = lfs_cli(git)?;
             match cli.exec(repo_dir, REMOTE_PROBE_ARGS).await {
                 Ok(out) if out.exit_code == 0 => Ok(LfsState::Ready),
+                Ok(out) if super::lfs::is_offline_probe_failure(&out.stderr) => {
+                    Err(LfsNotReady::RemoteOffline)
+                }
                 _ => Err(LfsNotReady::RemoteUnreachable),
             }
         }

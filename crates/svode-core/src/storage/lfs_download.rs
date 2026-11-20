@@ -556,16 +556,7 @@ fn stop_cause(stderr: &str) -> DownloadStop {
         .any(|marker| lower.contains(marker))
     {
         DownloadStop::NoAccess
-    } else if crate::git::diagnostics::is_network_failure(&lower)
-        || [
-            "no such host",
-            "i/o timeout",
-            "dial tcp",
-            "could not connect",
-        ]
-        .iter()
-        .any(|marker| lower.contains(marker))
-    {
+    } else if is_network_failure(&lower) {
         DownloadStop::Unreachable
     } else if [
         "does not exist on the server",
@@ -581,6 +572,21 @@ fn stop_cause(stderr: &str) -> DownloadStop {
     } else {
         other(stderr)
     }
+}
+
+/// Whether lower-cased git-lfs output says the server was out of reach:
+/// the network failures of Git and those of git-lfs and SSH.
+pub(crate) fn is_network_failure(lower: &str) -> bool {
+    crate::git::diagnostics::is_network_failure(lower)
+        || [
+            "no such host",
+            "no route to host",
+            "i/o timeout",
+            "dial tcp",
+            "could not connect",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn other(text: &str) -> DownloadStop {

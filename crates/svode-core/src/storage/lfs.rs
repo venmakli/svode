@@ -66,15 +66,26 @@ pub enum LfsState {
 /// Current LFS readiness of the assets strategy `config` of `repo_dir`,
 /// repairing a stale `svode-lfs` registration of a connected S3 scope; every
 /// reason a route is not ready is `MissingCreds` (see
-/// [`check_readiness`](super::connection::check_readiness)).
+/// [`check_readiness`](super::connection::check_readiness)), except a server
+/// out of reach: that says nothing about access, and the next download stops
+/// with it as its cause (DF-368 R6).
 pub async fn probe_readiness(
     git: &GitRuntime,
     repo_dir: &Path,
     config: &AssetsSpaceConfig,
 ) -> LfsState {
-    check_readiness(git, repo_dir, config, true)
-        .await
-        .unwrap_or(LfsState::MissingCreds)
+    match check_readiness(git, repo_dir, config, true).await {
+        Ok(state) => state,
+        Err(LfsNotReady::RemoteOffline) => LfsState::Ready,
+        Err(_) => LfsState::MissingCreds,
+    }
+}
+
+/// Whether a failed Git LFS readiness probe with output `detail` failed on
+/// the network rather than on a refusal of access.
+pub fn is_offline_probe_failure(detail: &str) -> bool {
+    !crate::git::ops::is_git_auth_error(detail)
+        && super::lfs_download::is_network_failure(&detail.to_ascii_lowercase())
 }
 
 /// A managed import of every host answers its Git LFS route with the live
@@ -911,6 +922,85 @@ mod tests {
         );
         assert!(git.lfs_ready(repo, &config).await.is_err());
         assert_eq!(std::fs::read(repo.join(".git/config")).ok(), git_config);
+        Ok(())
+    }
+
+    #[test]
+    fn a_probe_that_failed_on_the_network_is_told_from_a_refusal_of_access() {
+        for offline in [
+            "batch request: ssh: connect to host lfs.example port 2222: Network is unreachable",
+            "ssh: connect to host lfs.example port 2222: No route to host",
+            "batch response: Post \"http://127.0.0.1:9/info/lfs/objects/batch\": dial tcp 127.0.0.1:9: connect: connection refused",
+            "ssh: Could not resolve hostname lfs.example: nodename nor servname provided",
+        ] {
+            assert!(is_offline_probe_failure(offline), "{offline}");
+        }
+        for refused in [
+            "batch request: git@lfs.example: Permission denied (publickey).",
+            "batch response: Authentication required: Authorization error",
+            "Could not fetch",
+        ] {
+            assert!(!is_offline_probe_failure(refused), "{refused}");
+        }
+    }
+
+    /// DF-368 R6: a Git LFS server out of reach is no refusal of access, so
+    /// the scope is not `MissingCreds`; an import is still refused.
+    #[tokio::test]
+    async fn a_remote_route_out_of_network_reach_is_not_a_refusal_of_access() -> TestResult {
+        let git = GitRuntime::new();
+        let Some(cli) = git.detected() else {
+            return Ok(());
+        };
+        if !cli.lfs_available() {
+            return Ok(());
+        }
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        init_repo(cli, &repo).await?;
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+        )?;
+        std::fs::write(
+            repo.join("a.bin"),
+            "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n",
+        )?;
+        // A closed local port refuses the connection; nothing answers about access.
+        for args in [
+            &["remote", "add", "origin", "http://127.0.0.1:9/repo.git"][..],
+            &["config", "lfs.url", "http://127.0.0.1:9/repo.git/info/lfs"],
+            &[
+                "-c",
+                "filter.lfs.clean=cat",
+                "-c",
+                "filter.lfs.required=false",
+                "add",
+                ".",
+            ],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "pointer",
+            ],
+        ] {
+            git_ok(cli, &repo, args).await?;
+        }
+        let remote = AssetsSpaceConfig {
+            strategy: AssetsStrategy::LfsRemote,
+            ..AssetsSpaceConfig::default()
+        };
+
+        assert_eq!(probe_readiness(&git, &repo, &remote).await, LfsState::Ready);
+        assert!(matches!(
+            check_readiness(&git, &repo, &remote, false).await,
+            Err(LfsNotReady::RemoteOffline)
+        ));
+        assert!(git.lfs_ready(&repo, &remote).await.is_err());
         Ok(())
     }
 

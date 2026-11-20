@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use svode_core::storage::lfs::{LfsState, REMOTE_PROBE_ARGS, probe_readiness};
+use svode_core::storage::lfs::{
+    LfsState, REMOTE_PROBE_ARGS, is_offline_probe_failure, probe_readiness,
+};
 use svode_core::storage::lfs_download::{
     DownloadPlan, LfsStatus, MissingFiles, download, plan_download,
 };
@@ -152,8 +154,14 @@ async fn diagnose_lfs_remote_with_cli(
 
     let raw_detail = command_detail(&out.stdout, &out.stderr);
     let reason = classify_lfs_remote_failure(&raw_detail);
+    // A server out of reach is not a refusal of access (DF-368 R6).
+    let state = if is_offline_probe_failure(&out.stderr) {
+        LfsState::Ready
+    } else {
+        LfsState::MissingCreds
+    };
     Ok(LfsRemoteDiagnostic {
-        state: LfsState::MissingCreds,
+        state,
         reason,
         auth_method,
         remote_url: Some(safe_remote_url),
