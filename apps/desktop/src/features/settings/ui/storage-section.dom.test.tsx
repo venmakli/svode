@@ -700,6 +700,18 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     expect(offline.textContent?.includes("Needs setup")).toBe(false);
     expect(offline.textContent?.includes("Ready")).toBe(false);
 
+    // A running download is a ready route, not one that needs setup.
+    await render(
+      storageFixture({
+        assetsStrategy: "lfs-remote",
+        savedAssetsStrategy: "lfs-remote",
+        lfsState: "pulling",
+      }),
+    );
+    const pulling = group("Status");
+    expect(pulling.textContent?.includes("Needs setup")).toBe(false);
+    expect(pulling.textContent?.includes("Ready")).toBe(true);
+
     await render(
       storageFixture({
         assetsStrategy: "lfs-s3",

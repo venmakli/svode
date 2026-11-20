@@ -29,7 +29,8 @@ export function StorageStateGroup({
   const [updating, runUpdate] = useStorageAction();
   const remote = settings.savedAssetsStrategy === "lfs-remote";
   const state = settings.lfsState;
-  const ready = state === "ready";
+  // A download runs only on a ready route.
+  const ready = state === "ready" || state === "pulling";
   const diagnostic = settings.lfsRemoteDiagnostic;
   const checking = settings.lfsRemoteDiagnosticInFlight;
 
