@@ -8,8 +8,8 @@
       "commit": "32a0beed598227a7f603d5ef66a97371dc02e170",
       "sourceRef": "main",
       "runId": 44671359415,
-      "publishedAt": "2026-11-20T04:50:10.926Z",
-      "expiresAt": "2026-11-23T04:50:10.926Z",
+      "publishedAt": "2026-11-20T05:07:16.375Z",
+      "expiresAt": "2026-11-23T05:07:16.375Z",
       "reason": "Передача LFS-файлов",
       "platforms": {
         "linux": {
@@ -21,6 +21,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/44671359415/artifacts/14601639190",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/44671359415",
           "artifactName": "Svode-windows-nsis"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/44671359415/artifacts/14603242432",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/44671359415",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     }
