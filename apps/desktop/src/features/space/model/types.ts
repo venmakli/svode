@@ -18,6 +18,12 @@ export type LfsMissing = LfsMissingDto;
 /** Why the last LFS download stopped with files still missing. */
 export type LfsDownloadStop = LfsDownloadStopDto;
 
+/** The LFS state of one repository and, with `ready`, the files left. */
+export interface LfsStatus {
+  state: LfsState;
+  missing: LfsMissing | null;
+}
+
 export type WindowOpenIntent =
   | { kind: "home" }
   | { kind: "project"; projectId: string };

@@ -19,10 +19,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { TreeNode } from "../model/types";
+import type { LfsStatus, TreeNode } from "../model/types";
 import { SpaceGitActivityIndicator } from "@/features/git/sidebar";
 import { SortableFileTree } from "./sortable-file-tree";
-import { TreeLoadingRows } from "./nav-space-indicators";
+import { LfsIndicatorIcon, TreeLoadingRows } from "./nav-space-indicators";
 
 interface RootScopeRowProps {
   active: boolean;
@@ -39,6 +39,8 @@ interface RootScopeRowProps {
   onNewTerminal?: () => void;
   spaceId: string;
   rootPath: string;
+  /** The project repository is the root Space: same LFS place as a Space row. */
+  lfs: LfsStatus;
   loading: boolean;
   refreshing: boolean;
   treeLoaded: boolean;
@@ -65,6 +67,7 @@ export function RootScopeRow({
   onNewTerminal,
   spaceId,
   rootPath,
+  lfs,
   loading,
   refreshing,
   treeLoaded,
@@ -79,6 +82,11 @@ export function RootScopeRow({
           <span>{icon || "\u{1F4C1}"}</span>
           <span className="flex-1 truncate">{name || "Project"}</span>
           <span className="ml-auto flex items-center gap-1">
+            <LfsIndicatorIcon
+              lfsState={lfs.state}
+              lfsMissing={lfs.missing}
+              spacePath={rootPath}
+            />
             <SpaceGitActivityIndicator
               spacePath={rootPath}
               loading={loading || refreshing}

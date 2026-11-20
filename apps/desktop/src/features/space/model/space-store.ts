@@ -12,6 +12,7 @@ import {
   type SpaceTreeState,
 } from "./space-tree-state";
 import type {
+  LfsStatus,
   ProjectWindowRequest,
   RootEntry,
   SpaceGitType,
@@ -27,6 +28,8 @@ export interface SpaceState extends SpaceTreeState {
   activeRootName: string | null;
   activeRootIcon: string | null;
   activeRootPath: string | null;
+  /** The LFS status of the active project's own repository, the root Space. */
+  activeRootLfs: LfsStatus;
 
   // Nested spaces inside the active project
   spaces: SpaceInfo[];
@@ -139,6 +142,8 @@ function syncMcpContext(
     .catch((err) => console.warn("mcp_set_active_context failed:", err));
 }
 
+const NO_LFS: LfsStatus = { state: "n/a", missing: null };
+
 export const useSpaceStore = create<SpaceState>((set, get) => ({
   rootSpaces: [],
   rootsLoaded: false,
@@ -146,6 +151,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   activeRootName: null,
   activeRootIcon: null,
   activeRootPath: null,
+  activeRootLfs: NO_LFS,
   spaces: [],
   activeSpaceId: null,
   isLoadingRoots: false,
@@ -224,6 +230,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
             activeRootName: null,
             activeRootIcon: null,
             activeRootPath: null,
+            activeRootLfs: NO_LFS,
             spaces: [],
             activeSpaceId: null,
             ...createEmptyLoadedSpaceTreeState(),
@@ -471,6 +478,7 @@ async function enterRoot(
       activeRootName: config.name,
       activeRootIcon: config.icon,
       activeRootPath: project.path,
+      activeRootLfs: NO_LFS,
       activeSpaceId: null,
       spaces: [],
       ...createEmptyLoadedSpaceTreeState(),

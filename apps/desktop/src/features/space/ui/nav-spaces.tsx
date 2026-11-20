@@ -55,6 +55,7 @@ export function NavSpaces({
     activeRevealRequest,
     activeRootIcon,
     activeRootId,
+    activeRootLfs,
     activeRootName,
     activeRootPath,
     deleteTarget,
@@ -145,6 +146,7 @@ export function NavSpaces({
               }
               spaceId={activeRootId}
               rootPath={activeRootPath}
+              lfs={activeRootLfs}
               loading={treeLoading[activeRootId] ?? false}
               refreshing={treeRefreshing[activeRootId] ?? false}
               treeLoaded={hasRecordKey(fileTrees, activeRootId)}

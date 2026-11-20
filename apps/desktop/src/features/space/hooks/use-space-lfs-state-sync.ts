@@ -12,13 +12,18 @@ export function useSpaceLfsStateSync(projectPath: string | null): void {
     listenSpaceLfsStateChanged((event) => {
       if (cancelled) return;
       if (event.projectPath !== projectPath) return;
+      const status = { state: event.state, missing: event.missing };
       const targetId = event.spaceId;
-      if (!targetId) return;
+      // No Space id: the project's own repository, the root Space.
+      if (!targetId) {
+        useSpaceStore.setState({ activeRootLfs: status });
+        return;
+      }
 
       useSpaceStore.setState((state) => ({
         spaces: state.spaces.map((space) =>
           space.id === targetId
-            ? { ...space, lfsState: event.state, lfsMissing: event.missing }
+            ? { ...space, lfsState: status.state, lfsMissing: status.missing }
             : space,
         ),
       }));

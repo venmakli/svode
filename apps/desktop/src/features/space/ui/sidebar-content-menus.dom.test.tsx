@@ -142,6 +142,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
   const { useSpaceSidebarRename } =
     await import("../hooks/use-space-sidebar-rename");
   const { RootScopeRow } = await import("./root-scope-row");
+  type LfsStatus = import("../model").LfsStatus;
 
   const root = createRoot(document.getElementById("app")!);
   const settle = () =>
@@ -782,7 +783,8 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
 
   test("the project root menu pins and creates, with its launch group when given", async () => {
     const created: string[] = [];
-    const rootRow = (launch: boolean) => (
+    const noLfs = { state: "n/a" as const, missing: null };
+    const rootRow = (launch: boolean, lfs: LfsStatus = noLfs) => (
       <RootScopeRow
         active={false}
         icon={null}
@@ -802,6 +804,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
           : {})}
         spaceId="root"
         rootPath="/project"
+        lfs={lfs}
         loading={false}
         refreshing={false}
         treeLoaded
@@ -848,6 +851,24 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
       "session",
       "terminal",
     ]);
+
+    // The project repository is the root Space: its row has the LFS place.
+    expect(document.querySelector("[data-lfs-missing]")).toBe(null);
+    await render(
+      rootRow(false, {
+        state: "ready",
+        missing: {
+          files: [{ path: "clips/video.mov", size: 104_857_600 }],
+          bytes: 104_857_600,
+          stop: { kind: "stalled" },
+        },
+      }),
+    );
+    expect(
+      document
+        .querySelector('[data-sidebar="menu-button"] [data-lfs-missing]')
+        ?.getAttribute("aria-label"),
+    ).toContain("100");
     await act(async () => root.unmount());
   });
 }
