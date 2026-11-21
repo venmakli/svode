@@ -77,8 +77,9 @@ export function resolveGitConflictFile(
 
 /**
  * The choice in a conflict of an edit against a deletion as "Changes" make
- * it: «Оставить с правками» takes the version of the side that edited the
- * file, «Удалить» removes the path.
+ * it: «Оставить с правками» keeps the file of the side that edited it as it
+ * is now on disk, with every edit made before the choice (the version of
+ * that side when there is no file), «Удалить» removes the path.
  */
 export function resolveGitDeletionConflict(
   spacePath: string,

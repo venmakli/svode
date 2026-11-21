@@ -36,8 +36,8 @@ export function conflictResolvedByEditorWrite(kind: GitConflictKind): boolean {
 
 /**
  * The side whose file stays in a conflict against a deletion — modify/delete
- * or rename/delete: the side that edited or renamed it, whose version the
- * index holds; the other side deleted it.
+ * or rename/delete: the side that edited or renamed it, whose file keeping it
+ * resolves the path with as it is now on disk; the other side deleted it.
  */
 export function conflictEditedSide(
   file: Pick<GitConflictFile, "ours">,

@@ -17,8 +17,11 @@
 //!
 //! A file without markers — binary or LFS, modify/delete, add/add of a
 //! binary file, rename/rename and rename/delete — is resolved as a whole:
-//! the version of a side, the deletion of the path, or my version in place
-//! with the incoming one beside it as a copy.
+//! the file of a side, the deletion of the path, or my version in place
+//! with the incoming one beside it as a copy. The file of a side is its
+//! version, except that modify/delete, rename/delete and rename/rename keep
+//! the working file under the name of the side, edited before the choice
+//! (DF-354 R6).
 
 use std::path::Path;
 
@@ -165,7 +168,9 @@ pub enum FileResolution {
         choices: Vec<PlaceChoice>,
     },
     /// The version of `side` before the merge for the whole file; for a
-    /// rename/rename conflict the file under the name of `side`.
+    /// rename/rename conflict the file under the name of `side`. Modify/delete,
+    /// rename/delete and rename/rename keep the working file under that name
+    /// instead, when there is one (DF-354 R6).
     Side { side: Side },
     /// Remove the path, as the side that deleted the file did.
     Delete,
@@ -1046,11 +1051,69 @@ fn check_version(
         return Ok(None);
     }
     let content = std::fs::read(&version.file)?;
+    Ok(check_text(path, &content, size))
+}
+
+/// Why the text `content` cannot resolve `path`, if it is text and cannot;
+/// binary content is not read.
+fn check_text(path: &str, content: &[u8], size: usize) -> Option<ResolutionFinding> {
     let probe = &content[..content.len().min(BINARY_PROBE)];
     if probe.contains(&0) {
+        return None;
+    }
+    check_result(path, content, size)
+}
+
+/// The working file at the repository-relative `path` that keeps a file
+/// without markers instead of the version `stage` of its side (DF-354 R6): a
+/// regular file whose bytes differ from that version. `None` keeps the
+/// version of the side: there is no working file, it is not a regular file,
+/// or it is that version as it is, an LFS pointer whose object is missing
+/// locally included.
+async fn edited_working_file(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    stage: &service_merge::StageEntry,
+) -> Result<Option<std::path::PathBuf>, GitError> {
+    let file = repo.join(path);
+    match std::fs::symlink_metadata(&file) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    if !stage.is_regular_file() {
         return Ok(None);
     }
-    Ok(check_result(path, &content, size))
+    let out = cli
+        .exec(repo, &["hash-object", "--no-filters", "--", path])
+        .await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git hash-object failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok((out.stdout.trim() != stage.oid).then_some(file))
+}
+
+/// Why the working file `file` cannot resolve `path`, checked as a version of
+/// a side is: LFS pointers, binary content and files over the size a version
+/// is read to are not read.
+fn check_working(
+    path: &str,
+    file: &Path,
+    size: usize,
+) -> Result<Option<ResolutionFinding>, GitError> {
+    if std::fs::metadata(file)?.len() > MAX_SIDE as u64 {
+        return Ok(None);
+    }
+    let content = std::fs::read(file)?;
+    if content.starts_with(conflict_kind::LFS_POINTER) {
+        return Ok(None);
+    }
+    Ok(check_text(path, &content, size))
 }
 
 /// Move the version Git wrote into place at the repository-relative `path`.
@@ -1063,8 +1126,11 @@ fn place(repo: &Path, version: &Version, path: &str) -> Result<(), GitError> {
     Ok(())
 }
 
-/// The version of `side` for a file without markers: under the name of the
-/// side for a rename/rename conflict, the other names removed.
+/// The file of `side` for a file without markers: under the name of the side
+/// for a rename/rename conflict, the other names removed. An edit against a
+/// deletion, rename/delete and rename/rename keep the working file under
+/// that name when it is edited (DF-354 R6); a binary file and binary add/add
+/// take the version of the side from the index.
 async fn take_side(
     cli: &GitCli,
     repo: &Path,
@@ -1115,6 +1181,18 @@ async fn take_side(
             }
         )));
     };
+    if matches!(
+        kind,
+        ConflictKind::ModifyDelete | ConflictKind::RenameDelete | ConflictKind::RenameRename
+    ) && let Some(file) = edited_working_file(cli, repo, &keep, &stage).await?
+    {
+        if let Some(finding) = check_working(&keep, &file, size)? {
+            return Ok(Some(finding));
+        }
+        remove_paths(cli, repo, &drop).await?;
+        add_paths(cli, repo, &[keep]).await?;
+        return Ok(None);
+    }
     let mut temporary = Temporary::default();
     let version = match checkout_stage(cli, repo, &keep, &stage, number, &mut temporary).await? {
         Ok(version) => version,

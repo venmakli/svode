@@ -614,3 +614,243 @@ async fn rename_delete_keeps_the_new_name_or_deletes_it() {
     );
     assert!(!merge.merging());
 }
+
+/// Two Pages edited against a deletion: mine is edited by me and deleted by
+/// the colleague (`UD`), the incoming one the other way round (`DU`).
+async fn edited_against_deleted() -> Merge {
+    let (merge, result) = Merge::new(
+        "",
+        |repo| {
+            write(repo, "mine.md", b"---\ntitle: Mine\n---\nOne\n");
+            write(repo, "incoming.md", b"---\ntitle: Incoming\n---\nTwo\n");
+        },
+        |repo| {
+            std::fs::remove_file(repo.join("mine.md")).unwrap();
+            write(
+                repo,
+                "incoming.md",
+                b"---\ntitle: Incoming\n---\nTwo, theirs\n",
+            );
+        },
+        |repo| {
+            write(repo, "mine.md", b"---\ntitle: Mine\n---\nOne, ours\n");
+            std::fs::remove_file(repo.join("incoming.md")).unwrap();
+        },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(
+        git(&merge.local, &["status", "--porcelain"]),
+        "DU incoming.md\nUD mine.md"
+    );
+    merge
+}
+
+#[tokio::test]
+async fn keep_with_edits_keeps_the_working_file_edited_after_the_merge() {
+    // DF-354 R6: what was written after the merge, by the editor after
+    // «Позже», an agent or another editor, is what «Оставить с правками»
+    // keeps, in both directions.
+    let merge = edited_against_deleted().await;
+    let incoming = "---\ntitle: Incoming\n---\nTwo, theirs\nTyped after Later.\n";
+    let mine = "---\ntitle: Mine\n---\nOne, ours\nTyped after Later.\n";
+    write(&merge.local, "incoming.md", incoming.as_bytes());
+    write(&merge.local, "mine.md", mine.as_bytes());
+    let result = resolve_as(
+        &merge,
+        "incoming.md",
+        FileResolution::Side { side: Side::Theirs },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(text_of(&merge.local, "incoming.md"), incoming);
+    assert_eq!(
+        git(&merge.local, &["show", ":incoming.md"]),
+        incoming.trim_end()
+    );
+    assert!(!unmerged(&merge).contains("incoming.md"));
+    let result = resolve_as(&merge, "mine.md", FileResolution::Side { side: Side::Ours }).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert!(!merge.merging());
+    assert_eq!(text_of(&merge.local, "mine.md"), mine);
+    assert_eq!(
+        git(&merge.local, &["show", "HEAD:mine.md"]),
+        mine.trim_end()
+    );
+    assert_eq!(
+        git(&merge.local, &["show", "HEAD:incoming.md"]),
+        incoming.trim_end()
+    );
+    assert_eq!(git(&merge.local, &["rev-list", "--count", "HEAD^@"]), "3");
+    assert_eq!(git(&merge.local, &["status", "--porcelain"]), "");
+}
+
+#[tokio::test]
+async fn keep_with_edits_takes_the_version_of_the_side_without_a_working_file() {
+    let merge = edited_against_deleted().await;
+    // No file at the path, or no regular file there: the version of the side.
+    std::fs::remove_file(merge.local.join("mine.md")).unwrap();
+    std::fs::remove_file(merge.local.join("incoming.md")).unwrap();
+    std::os::unix::fs::symlink("README.md", merge.local.join("incoming.md")).unwrap();
+    let result = resolve_as(
+        &merge,
+        "incoming.md",
+        FileResolution::Side { side: Side::Theirs },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    let metadata = std::fs::symlink_metadata(merge.local.join("incoming.md")).unwrap();
+    assert!(metadata.is_file());
+    assert_eq!(
+        text_of(&merge.local, "incoming.md"),
+        "---\ntitle: Incoming\n---\nTwo, theirs\n"
+    );
+    let result = resolve_as(&merge, "mine.md", FileResolution::Side { side: Side::Ours }).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(
+        text_of(&merge.local, "mine.md"),
+        "---\ntitle: Mine\n---\nOne, ours\n"
+    );
+    assert_eq!(
+        git(&merge.local, &["show", "HEAD:mine.md"]),
+        "---\ntitle: Mine\n---\nOne, ours"
+    );
+    assert_eq!(git(&merge.local, &["status", "--porcelain"]), "");
+}
+
+#[tokio::test]
+async fn keep_with_edits_leaves_a_working_page_that_does_not_resolve_untouched() {
+    let merge = edited_against_deleted().await;
+    let marked = "---\ntitle: Mine\n---\n<<<<<<< ours\nOne\n=======\nTwo\n>>>>>>> theirs\n";
+    let unreadable = "---\ntitle: [Incoming\n---\nTwo, theirs\n";
+    write(&merge.local, "mine.md", marked.as_bytes());
+    write(&merge.local, "incoming.md", unreadable.as_bytes());
+    let result = resolve_as(&merge, "mine.md", FileResolution::Side { side: Side::Ours }).await;
+    let SyncResult::Unresolved { path, finding } = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(path, "mine.md");
+    assert_eq!(finding, ResolutionFinding::Markers);
+    let result = resolve_as(
+        &merge,
+        "incoming.md",
+        FileResolution::Side { side: Side::Theirs },
+    )
+    .await;
+    let SyncResult::Unresolved { path, finding } = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(path, "incoming.md");
+    assert!(
+        matches!(finding, ResolutionFinding::Unreadable { .. }),
+        "{finding:?}"
+    );
+    // Neither file nor index changed; the merge waits.
+    assert_eq!(text_of(&merge.local, "mine.md"), marked);
+    assert_eq!(text_of(&merge.local, "incoming.md"), unreadable);
+    assert_eq!(
+        git(&merge.local, &["status", "--porcelain"]),
+        "DU incoming.md\nUD mine.md"
+    );
+    assert!(merge.merging());
+}
+
+#[tokio::test]
+async fn keep_with_edits_of_an_untouched_lfs_pointer_keeps_the_pointer() {
+    // The object of the pointer is not here; the file as the merge left it
+    // resolves as the version of the side always did.
+    let (merge, result) = Merge::new(
+        "lfs.bin filter=lfs\n",
+        |repo| write(repo, "lfs.bin", POINTER_BASE),
+        |repo| std::fs::remove_file(repo.join("lfs.bin")).unwrap(),
+        |repo| write(repo, "lfs.bin", POINTER_OURS),
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(
+        merge.places("lfs.bin").await.kind,
+        ConflictKind::ModifyDelete
+    );
+    let result = resolve_as(&merge, "lfs.bin", FileResolution::Side { side: Side::Ours }).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(bytes_of(&merge.local, "lfs.bin"), POINTER_OURS);
+    assert_eq!(
+        git(&merge.local, &["show", "HEAD:lfs.bin"]).as_bytes(),
+        POINTER_OURS.trim_ascii_end()
+    );
+}
+
+#[tokio::test]
+async fn keep_new_name_keeps_the_working_file_edited_under_it() {
+    let merge = renames().await;
+    let renamed = "rename me\nplease\nedited under the new name\n";
+    write(&merge.local, "renamed-ours.txt", renamed.as_bytes());
+    let result = resolve_as(
+        &merge,
+        "renamed-ours.txt",
+        FileResolution::Side { side: Side::Ours },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(text_of(&merge.local, "renamed-ours.txt"), renamed);
+    assert_eq!(
+        git(&merge.local, &["show", ":renamed-ours.txt"]),
+        renamed.trim_end()
+    );
+    assert!(!unmerged(&merge).contains("renamed"));
+}
+
+#[tokio::test]
+async fn rename_rename_keeps_the_working_file_edited_under_the_chosen_name() {
+    let merge = renames().await;
+    let moved = "line 1 ours\nline 2 edited\nline 3\nline 4 theirs\n";
+    write(&merge.local, "moved-theirs.txt", moved.as_bytes());
+    let result = resolve_as(
+        &merge,
+        "moved-ours.txt",
+        FileResolution::Side { side: Side::Theirs },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(text_of(&merge.local, "moved-theirs.txt"), moved);
+    assert_eq!(
+        git(&merge.local, &["show", ":moved-theirs.txt"]),
+        moved.trim_end()
+    );
+    // The other names are gone, as before.
+    assert!(!merge.local.join("moved-ours.txt").exists());
+    assert!(!merge.local.join("moved.txt").exists());
+    assert_eq!(
+        git(&merge.local, &["ls-files", "moved-ours.txt", "moved.txt"]),
+        ""
+    );
+    assert!(!unmerged(&merge).contains("moved"));
+}
+
+#[tokio::test]
+async fn a_binary_file_takes_the_version_of_a_side_over_an_edited_working_file() {
+    // R6 leaves binary files and binary add/add on the version in the index.
+    let (merge, _) = Merge::new(
+        "",
+        |repo| write(repo, "a.png", b"PNG\0base"),
+        |repo| {
+            write(repo, "a.png", b"PNG\0theirs");
+            write(repo, "b.png", b"PNG\0theirs");
+        },
+        |repo| {
+            write(repo, "a.png", b"PNG\0ours");
+            write(repo, "b.png", b"PNG\0ours");
+        },
+    )
+    .await;
+    assert_eq!(merge.places("a.png").await.kind, ConflictKind::Binary);
+    assert_eq!(merge.places("b.png").await.kind, ConflictKind::AddAdd);
+    write(&merge.local, "a.png", b"PNG\0edited");
+    write(&merge.local, "b.png", b"PNG\0edited");
+    let result = resolve_as(&merge, "a.png", FileResolution::Side { side: Side::Ours }).await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(bytes_of(&merge.local, "a.png"), b"PNG\0ours");
+    let result = resolve_as(&merge, "b.png", FileResolution::Side { side: Side::Ours }).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(bytes_of(&merge.local, "b.png"), b"PNG\0ours");
+}
