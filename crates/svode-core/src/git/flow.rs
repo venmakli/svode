@@ -4,14 +4,14 @@ use super::host::GitHost;
 use super::operations::{
     Completion, Intent, Output, ParentEvidence, Request, SharedError, Snapshot,
 };
-use super::publication::{PublicationBlockReason, SpaceBlockClass};
+use super::publication::{LfsSend, PublicationBlockReason, SpaceBlockClass};
 use super::state::GitRuntime;
 use super::sync::{SyncMode, SyncResult};
 use super::transfer::TransferObserver;
 use super::{access, branch, ops};
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize)]
@@ -445,10 +445,13 @@ async fn execute(runtime: &GitRuntime, host: &Arc<dyn GitHost>, request: Request
     let mut read_sync = None;
     let result = async {
         let cli = runtime.require_cli()?.reporting_transfers_to(observer);
-        if let Err(error) = sent {
-            host.invalidate_repository_access(&cli, repo).await;
-            return Err(error);
-        }
+        let cli = match sent {
+            Ok(unreachable) => cli.without_file_servers_of(unreachable),
+            Err(error) => {
+                host.invalidate_repository_access(&cli, repo).await;
+                return Err(error);
+            }
+        };
         before = Snapshot::read(&cli, repo).await?;
         if before.target != request.snapshot.target {
             return Err(super::operations::target_changed(repo));
@@ -643,14 +646,17 @@ async fn execute(runtime: &GitRuntime, host: &Arc<dyn GitHost>, request: Request
 /// LFS content of the commits it would push is sent, for its repository and
 /// for the project it then publishes. Only a stalled transfer of its own
 /// repository fails the operation; the project's push sends what is left.
+/// The repositories whose file server could not be reached are returned:
+/// the rest of the operation does not contact it again (DF-378 R4).
 async fn send_ahead(
     runtime: &GitRuntime,
     host: &dyn GitHost,
     observer: &Arc<dyn TransferObserver>,
     request: &Request,
-) -> Result<(), GitError> {
+) -> Result<BTreeSet<PathBuf>, GitError> {
+    let mut unreachable = BTreeSet::new();
     let Ok(cli) = runtime.require_cli() else {
-        return Ok(());
+        return Ok(unreachable);
     };
     let cli = cli.reporting_transfers_to(observer.clone());
     let repo = request.repo.as_path();
@@ -676,8 +682,12 @@ async fn send_ahead(
         let remote = super::publication::lfs_content_ahead(&cli, repository).await?;
         (!background || host.authorize_repository(repository).await.is_ok()).then_some(remote)
     };
-    if own && let Some(remote) = ahead(repo).await {
-        super::publication::send_lfs_content(&cli, repo, &remote).await?;
+    if own
+        && let Some(remote) = ahead(repo).await
+        && super::publication::send_lfs_content(&cli, repo, &remote).await?
+            == LfsSend::ServerUnreachable
+    {
+        unreachable.insert(repo.to_path_buf());
     }
     if let Some((root, _)) = request.parent.as_ref().filter(|_| parent) {
         // The project publishes with a Space only under its own auto-sync;
@@ -685,15 +695,20 @@ async fn send_ahead(
         let retry = matches!(request.intent, Intent::RetryParent { .. });
         if (retry || super::policy::effective_user_policy(root).auto_sync)
             && let Some(remote) = ahead(root).await
-            && let Err(error) = super::publication::send_lfs_content(&cli, root, &remote).await
         {
-            tracing::warn!(
-                repository = %root.display(),
-                "LFS content of the project was not sent before the lock: {error}"
-            );
+            match super::publication::send_lfs_content(&cli, root, &remote).await {
+                Ok(LfsSend::ServerUnreachable) => {
+                    unreachable.insert(root.clone());
+                }
+                Ok(LfsSend::Done) => {}
+                Err(error) => tracing::warn!(
+                    repository = %root.display(),
+                    "LFS content of the project was not sent before the lock: {error}"
+                ),
+            }
         }
     }
-    Ok(())
+    Ok(unreachable)
 }
 
 async fn direct_push_locked(

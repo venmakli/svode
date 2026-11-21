@@ -371,15 +371,21 @@ pub async fn incoming_revision(
 }
 
 /// The outcome of a background sync for the rhythm: only an unreachable
-/// remote is retried; every other result or stop is a finished check.
+/// remote or LFS file server is retried; every other result or stop is a
+/// finished check.
 pub fn outcome(
     result: &Result<super::flow::SyncReport, super::operations::SharedError>,
     before: Option<&str>,
     after: Option<&str>,
 ) -> Outcome {
     let network = result.as_ref().err().is_some_and(|error| {
-        error.failure().and_then(|failure| failure.cause)
-            == Some(super::diagnostics::GitFailureCause::Network)
+        matches!(
+            error.failure().and_then(|failure| failure.cause),
+            Some(
+                super::diagnostics::GitFailureCause::Network
+                    | super::diagnostics::GitFailureCause::FileServerUnreachable
+            )
+        )
     });
     if network {
         Outcome::NetworkError

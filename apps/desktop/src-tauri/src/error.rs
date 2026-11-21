@@ -1276,6 +1276,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unreachable_file_server_keeps_its_cause_in_the_core_transport_shape() {
+        use svode_core::git::diagnostics::GitFailure;
+        let core = svode_core::git::GitError::SyncFailed(GitFailure::file_server_unreachable(
+            std::path::Path::new("/nonexistent/Research"),
+        ));
+        let expected = serde_json::to_value(&core).unwrap();
+        let value = serde_json::to_value(AppError::from(core)).unwrap();
+        assert_eq!(value, expected);
+        assert_eq!(value["kind"], "git_sync_failed");
+        assert_eq!(value["stage"], "push");
+        assert_eq!(value["cause"], "file_server_unreachable");
+    }
+
+    #[test]
     fn a_stalled_transfer_keeps_its_file_in_the_core_transport_shape() {
         use svode_core::git::diagnostics::{GitFailure, GitStage};
         use svode_core::git::transfer::{IDLE_LIMIT, TransferDirection, TransferStall};

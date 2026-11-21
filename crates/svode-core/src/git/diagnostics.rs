@@ -66,6 +66,10 @@ pub enum GitFailureCause {
     FileSystemDenied,
     /// The remote could not be reached.
     Network,
+    /// The LFS file server of the repository could not be reached: the
+    /// git-lfs step of a publication failed by network, not the remote Git
+    /// (DF-378 R5).
+    FileServerUnreachable,
     /// A time limit Svode puts on a Git command passed before the command
     /// finished.
     TimedOut,
@@ -96,6 +100,7 @@ impl GitFailureCause {
             Self::IndexLocked => "index_locked",
             Self::FileSystemDenied => "file_system_denied",
             Self::Network => "network",
+            Self::FileServerUnreachable => "file_server_unreachable",
             Self::TimedOut => "timed_out",
             Self::TransferStalled => "transfer_stalled",
             Self::LocalChanges => "local_changes",
@@ -107,7 +112,10 @@ impl GitFailureCause {
 
     /// A cause of this device that says nothing about access to the remote.
     pub fn is_local(self) -> bool {
-        !matches!(self, Self::Network | Self::TimedOut | Self::TransferStalled)
+        !matches!(
+            self,
+            Self::Network | Self::FileServerUnreachable | Self::TimedOut | Self::TransferStalled
+        )
     }
 }
 
@@ -128,10 +136,31 @@ impl GitFailure {
     /// The failure of `stage` in `repo` whose Git command wrote `stderr`;
     /// `hook_failed` is what a [`HookTrace`] of the command observed.
     pub fn from_output(repo: &Path, stage: GitStage, stderr: &str, hook_failed: bool) -> Self {
+        let cause = match cause(stderr, hook_failed) {
+            // The git-lfs transfer of a push runs in its pre-push hook: Git
+            // reaches its remote before it, so a hook that could not reach
+            // a server could not reach the file server (DF-378 R5).
+            Some(GitFailureCause::Network) if hook_failed && stage == GitStage::Push => {
+                Some(GitFailureCause::FileServerUnreachable)
+            }
+            cause => cause,
+        };
         Self {
             repository: repository_name(repo),
             stage,
-            cause: cause(stderr, hook_failed),
+            cause,
+            transfer: None,
+        }
+    }
+
+    /// The publication of `repo` that its push did not run: the LFS file
+    /// server of `repo` could not be reached earlier in the same sync
+    /// (DF-378 R4).
+    pub fn file_server_unreachable(repo: &Path) -> Self {
+        Self {
+            repository: repository_name(repo),
+            stage: GitStage::Push,
+            cause: Some(GitFailureCause::FileServerUnreachable),
             transfer: None,
         }
     }
@@ -184,8 +213,9 @@ pub fn repository_name(repo: &Path) -> String {
 
 /// The cause of a failed Git command from its stderr, read with `LC_ALL=C`.
 /// A failed hook is decisive: Git stops right after it and prints nothing of
-/// its own, while the hook may print anything. Only an unreachable remote is
-/// told apart, since the git-lfs transfer of a push runs in its pre-push hook.
+/// its own, while the hook may print anything. Only an unreachable server is
+/// told apart, since the git-lfs transfer of a push runs in its pre-push hook;
+/// [`GitFailure::from_output`] names it the file server for a push.
 /// A command Svode stopped at its time limit is decisive before both.
 pub fn cause(stderr: &str, hook_failed: bool) -> Option<GitFailureCause> {
     if stderr.starts_with(super::cli::TIMED_OUT_MESSAGE) {

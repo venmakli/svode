@@ -314,3 +314,32 @@ test("a transfer stopped without progress names its file and size, or only the s
     await setLocale(original, { reload: false });
   }
 });
+
+test("an unreachable file server is its own cause, apart from an unreachable remote", async () => {
+  const original = getLocale();
+  const failure = (cause: string) => ({
+    kind: "git_sync_failed",
+    repository: "lfs-test",
+    stage: "push",
+    cause,
+    transfer: null,
+  });
+  try {
+    await setLocale("en", { reload: false });
+    expect(gitSyncErrorMessage(failure("file_server_unreachable"))).toBe(
+      "lfs-test: Could not publish the changes. The file server couldn't be reached. Check the connection and sync again.",
+    );
+    expect(gitSyncErrorMessage(failure("network"))).toBe(
+      "lfs-test: Could not publish the changes. The remote couldn't be reached. Check the connection and sync again.",
+    );
+    await setLocale("ru", { reload: false });
+    expect(gitSyncErrorMessage(failure("file_server_unreachable"))).toBe(
+      "lfs-test: Не удалось опубликовать изменения. Сервер файлов недоступен. Проверьте подключение и синхронизируйте ещё раз.",
+    );
+    expect(gitSyncErrorMessage(failure("network"))).toBe(
+      "lfs-test: Не удалось опубликовать изменения. Не удалось связаться с remote. Проверьте подключение и повторите синхронизацию.",
+    );
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});

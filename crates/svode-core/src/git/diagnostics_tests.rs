@@ -122,6 +122,57 @@ fn causes_are_recognized_from_git_output() {
     );
 }
 
+/// A network failure of the LFS step of a publication is its own cause;
+/// one of the remote Git and an authorization refusal keep theirs (DF-378 R5).
+#[test]
+fn an_unreachable_file_server_is_told_apart_from_the_remote() {
+    let repo = std::path::Path::new("/nonexistent/lfs-test");
+    let ssh = "batch request: ssh: connect to host 10.255.255.1 port 2222: Operation timed out: exit status 255";
+    let failure = |stage, stderr, hook_failed| {
+        GitFailure::from_output(repo, stage, stderr, hook_failed).cause
+    };
+    // The git-lfs transfer of a push runs in its pre-push hook.
+    assert_eq!(
+        failure(GitStage::Push, ssh, true),
+        Some(GitFailureCause::FileServerUnreachable)
+    );
+    // `git push` and `git fetch` that could not reach the remote Git.
+    let remote = "ssh: connect to host git.example.test port 22: Operation timed out\nfatal: Could not read from remote repository.";
+    assert_eq!(
+        failure(GitStage::Push, remote, false),
+        Some(GitFailureCause::Network)
+    );
+    assert_eq!(
+        failure(GitStage::Fetch, remote, false),
+        Some(GitFailureCause::Network)
+    );
+    // A hook of another step is not the transfer of a push.
+    assert_eq!(
+        failure(GitStage::Commit, ssh, true),
+        Some(GitFailureCause::Network)
+    );
+    assert!(matches!(
+        crate::git::ops::git_remote_command_error(
+            repo,
+            GitStage::Push,
+            "git@example.test: Permission denied (publickey).\nfatal: Could not read from remote repository."
+        ),
+        GitError::AuthRequired(_)
+    ));
+    // The push a sync did not run after the file server was out of reach.
+    let error = GitError::SyncFailed(GitFailure::file_server_unreachable(repo));
+    assert_eq!(
+        serde_json::to_value(&error).unwrap(),
+        serde_json::json!({
+            "kind": "git_sync_failed",
+            "repository": "repository",
+            "stage": "push",
+            "cause": "file_server_unreachable",
+        })
+    );
+    assert!(!error.is_local_failure());
+}
+
 #[test]
 fn a_command_svode_stopped_at_its_time_limit_is_the_timed_out_cause() {
     let out = crate::git::cli::GitOutput::timed_out(std::time::Duration::from_secs(120));
@@ -171,6 +222,7 @@ fn only_local_causes_keep_repository_access() {
         assert!(cause.is_local(), "{cause:?}");
     }
     assert!(!GitFailureCause::Network.is_local());
+    assert!(!GitFailureCause::FileServerUnreachable.is_local());
     assert!(!GitFailureCause::TimedOut.is_local());
     assert!(!GitFailureCause::TransferStalled.is_local());
     let failure = |cause| {

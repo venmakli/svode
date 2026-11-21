@@ -38,6 +38,7 @@ export function gitFailureCauseMessage(cause: GitFailureCauseDto): string {
     index_locked: m.git_failure_cause_index_locked,
     file_system_denied: m.git_failure_cause_file_system_denied,
     network: m.git_failure_cause_network,
+    file_server_unreachable: m.git_failure_cause_file_server_unreachable,
     timed_out: m.git_failure_cause_timed_out,
     transfer_stalled: m.git_failure_cause_transfer_stalled,
     local_changes: m.git_failure_cause_local_changes,

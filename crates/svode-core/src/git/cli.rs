@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
@@ -129,6 +130,9 @@ pub struct GitCli {
     version: Arc<RwLock<Option<GitVersion>>>,
     /// Where the transfers this CLI runs report their progress.
     transfer_observer: Option<Arc<dyn TransferObserver>>,
+    /// Repositories whose LFS file server the operation of this CLI could
+    /// not reach (DF-378 R4): their publication does not contact it again.
+    file_servers_unreachable: Arc<BTreeSet<PathBuf>>,
 }
 
 impl std::fmt::Debug for GitCli {
@@ -137,6 +141,7 @@ impl std::fmt::Debug for GitCli {
             .field("git_path", &self.git_path)
             .field("version", &self.version)
             .field("transfer_observer", &self.transfer_observer.is_some())
+            .field("file_servers_unreachable", &self.file_servers_unreachable)
             .finish()
     }
 }
@@ -148,6 +153,7 @@ impl GitCli {
             git_path,
             version: Arc::default(),
             transfer_observer: None,
+            file_servers_unreachable: Arc::default(),
         }
     }
 
@@ -167,6 +173,27 @@ impl GitCli {
     pub(crate) fn transfer_observer_handle(&self) -> Option<Arc<dyn TransferObserver>> {
         self.transfer_observer.clone()
     }
+
+    /// This CLI for the rest of an operation that could not reach the LFS
+    /// file servers of `repositories` (DF-378 R4).
+    pub(crate) fn without_file_servers_of(&self, repositories: BTreeSet<PathBuf>) -> Self {
+        Self {
+            file_servers_unreachable: Arc::new(
+                repositories
+                    .into_iter()
+                    .map(|repo| std::fs::canonicalize(&repo).unwrap_or(repo))
+                    .collect(),
+            ),
+            ..self.clone()
+        }
+    }
+
+    /// Whether the operation of this CLI could not reach the LFS file
+    /// server of the repository at `repository`, a canonical path.
+    pub(crate) fn file_server_unreachable(&self, repository: &Path) -> bool {
+        self.file_servers_unreachable.contains(repository)
+    }
+
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, GitError> {
         Ok(Self::detect_at(resolve_git_binary()?))
@@ -198,6 +225,7 @@ impl GitCli {
             git_path,
             version: Arc::new(RwLock::new(version)),
             transfer_observer: None,
+            file_servers_unreachable: Arc::default(),
         }
     }
 

@@ -360,3 +360,29 @@ fn the_counters_wait_out_the_pause_after_a_network_error() {
     assert!(!rhythm.counters(repo(), start + MIN_GAP));
     assert!(rhythm.counters(repo(), start + secs(1) + RETRY_FIRST));
 }
+
+/// A background sync that could not reach the LFS file server is retried
+/// like an unreachable remote (DF-378 R5).
+#[test]
+fn an_unreachable_file_server_is_retried_like_the_network() {
+    use super::super::diagnostics::{GitFailure, GitFailureCause, GitStage};
+    use super::super::{GitError, operations::SharedError};
+    let failed = |cause| {
+        Err(SharedError::from(GitError::SyncFailed(GitFailure {
+            repository: "Project".into(),
+            stage: GitStage::Push,
+            cause: Some(cause),
+            transfer: None,
+        })))
+    };
+    for cause in [
+        GitFailureCause::Network,
+        GitFailureCause::FileServerUnreachable,
+    ] {
+        assert_eq!(outcome(&failed(cause), None, None), Outcome::NetworkError);
+    }
+    assert_eq!(
+        outcome(&failed(GitFailureCause::Hook), None, None),
+        NO_INCOMING
+    );
+}

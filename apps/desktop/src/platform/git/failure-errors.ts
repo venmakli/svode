@@ -8,6 +8,7 @@ export type GitFailureCauseDto =
   | "index_locked"
   | "file_system_denied"
   | "network"
+  | "file_server_unreachable"
   | "timed_out"
   | "transfer_stalled"
   | "local_changes"
@@ -50,6 +51,7 @@ const CAUSES: readonly string[] = [
   "index_locked",
   "file_system_denied",
   "network",
+  "file_server_unreachable",
   "timed_out",
   "transfer_stalled",
   "local_changes",

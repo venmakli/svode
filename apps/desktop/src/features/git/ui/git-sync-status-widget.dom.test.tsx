@@ -369,7 +369,7 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
     }
   });
 
-  test("a sync step Svode stopped at its time limit or without transfer progress is named, not an unknown cause, after background and explicit sync", async () => {
+  test("a sync step Svode stopped at its time limit or without transfer progress, or whose file server could not be reached, is named, not an unknown cause, after background and explicit sync", async () => {
     const dom = await createTestDom();
     const path = "/project";
     activeSpacePath = path;
@@ -389,6 +389,12 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
         path: "media/video.mov",
         size: 99_614_720,
       },
+    };
+    const fileServerUnreachable = {
+      kind: "git_sync_failed",
+      repository: "lfs-test",
+      stage: "push",
+      cause: "file_server_unreachable",
     };
     let refusal: object = timedOut;
     mockNativeIpc(
@@ -444,6 +450,14 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
         expected: {
           en: "lfs-test: Could not publish the changes. Sending the file “video.mov” (95 MB) stopped: no data was transferred for 2 minutes. Check the connection and sync again — files already sent won't be sent again.",
           ru: "lfs-test: Не удалось опубликовать изменения. Отправка файла «video.mov» (95 МБ) остановлена: 2 минуты не было передачи данных. Проверьте подключение и синхронизируйте ещё раз — уже отправленные файлы не отправятся повторно.",
+        },
+      },
+      // DF-378 R5: the LFS file server of the repository could not be reached.
+      {
+        error: fileServerUnreachable,
+        expected: {
+          en: "lfs-test: Could not publish the changes. The file server couldn't be reached. Check the connection and sync again.",
+          ru: "lfs-test: Не удалось опубликовать изменения. Сервер файлов недоступен. Проверьте подключение и синхронизируйте ещё раз.",
         },
       },
     ];
