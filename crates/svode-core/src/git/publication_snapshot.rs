@@ -88,6 +88,8 @@ impl LocalFacts {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Snapshot {
+    /// The single push URL of the remote as Git returns it, user and
+    /// credentials included; the dry run only confirms it (DF-379 R1).
     pub(super) destination: String,
     pub(super) updates: BTreeMap<String, String>,
     pub(super) head: String,
@@ -217,13 +219,13 @@ pub(super) async fn snapshot(
         .find_map(|line| line.strip_suffix(" HEAD"))
         .ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?
         .to_owned();
-    let mut destination = None;
+    let mut reported = None;
     let mut updates = BTreeMap::new();
     let mut sources = BTreeMap::new();
     let mut mappings = BTreeMap::new();
     for line in out.stdout.lines() {
         if let Some(url) = line.strip_prefix("To ") {
-            if destination.replace(url.to_owned()).is_some() {
+            if reported.replace(url.to_owned()).is_some() {
                 return Err(blocked(repo, PublicationBlockReason::Configuration));
             }
         } else if let Some((flag, rest)) = line.split_once('\t') {
@@ -245,8 +247,7 @@ pub(super) async fn snapshot(
     if !sources.values().any(|oid| oid == &head) {
         return Err(blocked(repo, PublicationBlockReason::Configuration));
     }
-    let destination =
-        destination.ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?;
+    let reported = reported.ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?;
     let mut remote = "origin".to_owned();
     if !first {
         for key in [
@@ -265,9 +266,11 @@ pub(super) async fn snapshot(
         &["remote", "get-url", "--push", "--all", &remote],
     )
     .await?;
-    if urls.exit_code != 0 || urls.stdout.lines().collect::<Vec<_>>() != [destination.as_str()] {
-        return Err(blocked(repo, PublicationBlockReason::Configuration));
-    }
+    // Git reports the push URL without its user part.
+    let destination = match urls.stdout.lines().collect::<Vec<_>>()[..] {
+        [url] if urls.exit_code == 0 && anonymized_url(url) == reported => url.to_owned(),
+        _ => return Err(blocked(repo, PublicationBlockReason::Configuration)),
+    };
     let fetch_urls = checked(cli, repo, &["remote", "get-url", "--all", &remote]).await?;
     let advertised = advertisement(cli, repo, &destination).await?;
     if advertised.exit_code != 0 {
@@ -285,3 +288,60 @@ pub(super) async fn snapshot(
         fetch_urls,
     }))
 }
+
+/// The URL Git prints for `url` in a push report: Git's
+/// `transport_anonymize_url`, which leaves out everything up to the first `@`
+/// of a URL with a user part, after the scheme in the URL form.
+fn anonymized_url(url: &str) -> String {
+    let Some(at) = url.find('@') else {
+        return url.to_owned();
+    };
+    if url_is_local_not_ssh(url) {
+        return url.to_owned();
+    }
+    let user_free = &url[at + 1..];
+    let Some(scheme) = url.find("://") else {
+        // Only `user@host:path` has a user part in the scp form.
+        return if user_free.contains(':') {
+            user_free.to_owned()
+        } else {
+            url.to_owned()
+        };
+    };
+    let reasonable_scheme = url[..scheme]
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'.' | b'-'));
+    // An `@` past the first slash after the scheme belongs to the path.
+    let in_path = url[scheme + 3..]
+        .find('/')
+        .is_some_and(|slash| scheme + 3 + slash < at);
+    if !reasonable_scheme || in_path {
+        return url.to_owned();
+    }
+    format!("{}{user_free}", &url[..scheme + 3])
+}
+
+/// Git's `url_is_local_not_ssh`: no colon, a slash before the first colon,
+/// or a valid path with a drive prefix on Windows.
+fn url_is_local_not_ssh(url: &str) -> bool {
+    match url.find(':') {
+        None => true,
+        Some(colon) => {
+            url.find('/').is_some_and(|slash| slash < colon) || (cfg!(windows) && drive_path(url))
+        }
+    }
+}
+
+/// Git for Windows' `has_dos_drive_prefix` followed by `is_valid_path`,
+/// narrowed to the characters Windows refuses in a path: one character
+/// before a colon, then no further colon or other refused character.
+fn drive_path(url: &str) -> bool {
+    let mut chars = url.chars();
+    chars.next().is_some()
+        && chars.next() == Some(':')
+        && !chars.any(|c| matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*') || c < ' ')
+}
+
+#[cfg(test)]
+#[path = "publication_snapshot_tests.rs"]
+mod tests;

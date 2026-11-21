@@ -1,6 +1,8 @@
 #![cfg(unix)]
 #[path = "publication_blockers_tests.rs"]
 mod blockers_tests;
+#[path = "publication_destination_tests.rs"]
+mod destination_tests;
 #[path = "publication_guard_tests.rs"]
 mod guard_tests;
 #[path = "lfs_ahead_tests.rs"]
