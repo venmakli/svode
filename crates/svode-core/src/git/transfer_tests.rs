@@ -91,7 +91,10 @@ mod process {
         let path = dir.path().join("git");
         svode_testkit::write_executable(
             &path,
-            format!("#!/bin/sh\n[ -n \"$WARM_UP\" ] && exit 0\n{script}"),
+            // The read of the SSH settings of the user (DF-378) finds none.
+            format!(
+                "#!/bin/sh\n[ -n \"$WARM_UP\" ] && exit 0\n[ \"$1\" = config ] && exit 0\n{script}"
+            ),
         )
         .unwrap();
         // The first start of a new executable may wait for a system check,

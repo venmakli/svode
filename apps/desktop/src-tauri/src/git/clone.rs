@@ -7,7 +7,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::{AppError, process};
-use svode_core::git::cli::GitCli;
+use svode_core::git::cli::{self as git_cli, GitCli};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +43,7 @@ pub async fn clone_with_progress(
     // LFS credential would fail the entire clone.
     let mut cmd = Command::new(cli.git_path());
     process::hide_tokio_window(&mut cmd);
-    cli.configure_process_env(&mut cmd);
+    git_cli::configure_process_env(&mut cmd, None).await;
     let mut child = cmd
         .args([
             "-c",
@@ -171,7 +171,7 @@ pub async fn submodule_add_with_progress(
 
     let mut cmd = Command::new(cli.git_path());
     process::hide_tokio_window(&mut cmd);
-    cli.configure_process_env(&mut cmd);
+    git_cli::configure_process_env(&mut cmd, Some(project_path)).await;
     let mut child = cmd
         .args([
             "-c",
@@ -183,7 +183,6 @@ pub async fn submodule_add_with_progress(
             url,
             space_folder,
         ])
-        .current_dir(project_path)
         .env("GIT_LFS_SKIP_SMUDGE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -6,10 +6,9 @@ use anyhow::{Context, Result, ensure};
 
 fn temporary_directory(repo: &Path) -> Result<PathBuf> {
     let mut command = Command::new("git");
+    svode_core::git::cli::configure_std_process_env(&mut command, Some(repo));
     command
         .args(["rev-parse", "--absolute-git-dir"])
-        .current_dir(repo)
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null());
     #[cfg(windows)]
     {

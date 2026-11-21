@@ -486,12 +486,13 @@ mod tests {
         let entered = bin.path().join("entered");
         let finished = bin.path().join("finished");
         fs::write(&hold, "").unwrap();
-        // Git that does not start until the test removes the hold file.
+        // Git that does not start until the test removes the hold file; the
+        // read of the SSH settings of the user (DF-378) passes at once.
         let fake = bin.path().join("git");
         svode_testkit::write_executable(
             &fake,
             format!(
-                "#!/bin/sh\ntouch '{entered}'\nwhile [ -e '{hold}' ]; do sleep 0.05; done\n'{git}' \"$@\"\nstatus=$?\ntouch '{finished}'\nexit $status\n",
+                "#!/bin/sh\n[ \"$1\" = config ] && exec '{git}' \"$@\"\ntouch '{entered}'\nwhile [ -e '{hold}' ]; do sleep 0.05; done\n'{git}' \"$@\"\nstatus=$?\ntouch '{finished}'\nexit $status\n",
                 entered = entered.display(),
                 hold = hold.display(),
                 git = cli.git_path().display(),

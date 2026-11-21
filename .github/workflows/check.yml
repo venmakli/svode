@@ -232,6 +232,12 @@ jobs:
       # the budget.
       - name: Git path sets beyond the command line limit
         run: cargo test -p svode-core --lib -- git::path_set_tests git::cli::tests
+      # The SSH defaults of every Git process (DF-378): a time limit for each
+      # SSH connection and one git-lfs retry, left out where the user set an
+      # SSH command or retries, as Git for Windows reads them. The process
+      # tests with a fake `ssh` run on Linux with the workspace tests.
+      - name: SSH defaults of Git processes
+        run: cargo test -p svode-core --lib -- git::cli::ssh_tests
       # A root commit that moves an initialized Space to a published revision
       # passes the publication proof with Git for Windows and is pushed
       # (DF-364): the proof hands Git no verbatim `\\?\` local path.

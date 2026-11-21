@@ -116,7 +116,7 @@ impl<'a> Transfer<'a> {
             GitError::GitCommandFailed(format!("Failed to {action} git: {error}"))
         };
         let report_path = tempfile::NamedTempFile::new()?.into_temp_path();
-        let mut command = cli.transfer_command(self.repository, args, env);
+        let mut command = cli.transfer_command(self.repository, args, env).await;
         command.env("GIT_LFS_PROGRESS", &report_path);
         let _slot = super::cli::process_slot().await;
         let mut tree = ProcessTree::spawn_without_terminal(&mut command)

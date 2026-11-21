@@ -165,7 +165,9 @@ async fn an_exact_commit_of_a_moved_folder_beyond_the_command_line_limit_is_one_
 }
 
 /// A Git wrapper that logs the command line cost of every call, counted as
-/// the budget counts it, before it runs the real Git.
+/// the budget counts it, before it runs the real Git. The read of the SSH
+/// settings of the user (DF-378), which follows the expiry of the last one
+/// rather than the path set, is not counted.
 #[cfg(unix)]
 fn counting_cli(dir: &Path, real: &GitCli) -> (GitCli, std::path::PathBuf) {
     let script = dir.join("counting-git");
@@ -173,7 +175,7 @@ fn counting_cli(dir: &Path, real: &GitCli) -> (GitCli, std::path::PathBuf) {
     svode_testkit::write_executable(
         &script,
         format!(
-            "#!/bin/sh\nn=$(( ${{#0}} + 3 ))\nfor arg in \"$@\"; do n=$(( n + ${{#arg}} + 3 )); done\necho \"$n\" >> '{}'\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\n[ \"$1 $2\" = 'config --list' ] && exec '{1}' \"$@\"\nn=$(( ${{#0}} + 3 ))\nfor arg in \"$@\"; do n=$(( n + ${{#arg}} + 3 )); done\necho \"$n\" >> '{0}'\nexec '{1}' \"$@\"\n",
             log.display(),
             real.git_path().display()
         ),

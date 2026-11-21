@@ -174,12 +174,8 @@ impl Drop for NativeEvidence {
         for (repo, reference, oid) in &self.refs {
             let mut command = std::process::Command::new(&self.git);
             super::cli::hide_window(&mut command);
-            super::cli::configure_std_process_env(&mut command);
-            match command
-                .current_dir(repo)
-                .args(["update-ref", "-d", reference, oid])
-                .output()
-            {
+            super::cli::configure_std_process_env(&mut command, Some(repo));
+            match command.args(["update-ref", "-d", reference, oid]).output() {
                 Ok(output) if output.status.success() => {}
                 _ => tracing::warn!("could not remove temporary Git publication evidence"),
             }

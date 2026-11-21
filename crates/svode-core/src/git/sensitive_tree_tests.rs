@@ -27,18 +27,24 @@ for /l %%i in (0,0,1) do @(echo tick>>root & ping -n 2 127.0.0.1 >nul)
 ";
 
 /// A fake `git` in `dir` running `script`: a shell script on Unix, a batch
-/// file on Windows.
+/// file on Windows. Its read of the SSH settings of the user (DF-378) finds
+/// none.
 fn fake_git(dir: &Path, script: &str) -> GitCli {
     #[cfg(unix)]
     let path = {
         let path = dir.join("git");
-        svode_testkit::write_executable(&path, format!("#!/bin/sh\n{script}")).unwrap();
+        svode_testkit::write_executable(
+            &path,
+            format!("#!/bin/sh\n[ \"$1\" = config ] && exit 0\n{script}"),
+        )
+        .unwrap();
         path
     };
     #[cfg(windows)]
     let path = {
         let path = dir.join("git.cmd");
-        let script = format!("@echo off\n{script}").replace('\n', "\r\n");
+        let script =
+            format!("@echo off\nif \"%1\"==\"config\" exit /b 0\n{script}").replace('\n', "\r\n");
         std::fs::write(&path, script).unwrap();
         path
     };

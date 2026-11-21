@@ -47,6 +47,7 @@ impl Fixture {
                 r#"#!/bin/sh
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 REAL_GIT='{real_path}'
+[ "$1" = config ] && exec '{real_path}' "$@"
 shift 4
 printf '%s\n' "$1" >> .git/probe-calls
 {fault}

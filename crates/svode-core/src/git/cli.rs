@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
-use std::ffi::OsString;
+use std::collections::{BTreeSet, HashMap};
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -283,11 +283,6 @@ impl GitCli {
         detect_lfs_extension(&self.git_path).available
     }
 
-    /// Apply the environment Svode expects for direct git subprocesses.
-    pub fn configure_process_env(&self, cmd: &mut Command) {
-        apply_common_git_env(cmd);
-    }
-
     /// Execute a git command in the given space directory.
     pub async fn exec(&self, space_dir: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
         self.exec_with_env(space_dir, args, &[]).await
@@ -338,9 +333,8 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
+        configure_process_env(&mut cmd, Some(space_dir)).await;
         cmd.args(&git_args)
-            .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8");
         for (k, v) in extra_env {
@@ -358,6 +352,7 @@ impl GitCli {
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             exit_code: output.status.code().unwrap_or(-1),
         };
+        forget_user_ssh_after(args);
 
         if log_output && result.exit_code != 0 {
             tracing::debug!(
@@ -386,9 +381,8 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
+        configure_process_env(&mut cmd, Some(space_dir)).await;
         cmd.args(&git_args)
-            .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8")
             .stdin(Stdio::piped())
@@ -453,7 +447,7 @@ impl GitCli {
 
     /// The command of a [`super::transfer::Transfer`]: the environment of
     /// [`Self::exec_sensitive_with_stdin`], no stdin and piped output.
-    pub(crate) fn transfer_command(
+    pub(crate) async fn transfer_command(
         &self,
         space_dir: &Path,
         args: &[&str],
@@ -463,9 +457,8 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
+        configure_process_env(&mut cmd, Some(space_dir)).await;
         cmd.args(&git_args)
-            .current_dir(space_dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8")
             .stdin(Stdio::null())
@@ -491,9 +484,8 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
+        configure_process_env(&mut cmd, Some(space_dir)).await;
         cmd.args(&git_args)
-            .current_dir(space_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -545,7 +537,7 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
+        configure_process_env(&mut cmd, None).await;
         let _slot = process_slot().await;
         let output = cmd
             .args(&git_args)
@@ -560,6 +552,7 @@ impl GitCli {
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             exit_code: output.status.code().unwrap_or(-1),
         };
+        forget_user_ssh_after(args);
 
         Ok(result)
     }
@@ -577,7 +570,7 @@ impl GitCli {
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
+        configure_process_env(&mut cmd, None).await;
         cmd.args(&git_args)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C.UTF-8")
@@ -615,11 +608,10 @@ impl GitCli {
     }
 
     async fn version_output(&self) -> Option<String> {
+        let mut command = Command::from(version_command(&self.git_path));
+        configure_process_env(&mut command, None).await;
         let _slot = process_slot().await;
-        let output = Command::from(version_command(&self.git_path))
-            .output()
-            .await
-            .ok()?;
+        let output = command.output().await.ok()?;
         Some(version_stdout(&output))
     }
 
@@ -649,10 +641,10 @@ impl GitCli {
 /// one would decide for the whole process.
 pub(crate) const VERSION_ARGS: [&str; 1] = ["--version"];
 
+/// The command without its environment, which each read applies.
 fn version_command(git_path: &Path) -> StdCommand {
     let mut cmd = StdCommand::new(git_path);
     hide_window(&mut cmd);
-    apply_common_std_git_env(&mut cmd);
     cmd.args(VERSION_ARGS);
     cmd
 }
@@ -662,7 +654,9 @@ fn version_stdout(output: &std::process::Output) -> String {
 }
 
 fn read_version_blocking(git_path: &Path) -> Option<String> {
-    let output = version_command(git_path).output().ok()?;
+    let mut command = version_command(git_path);
+    configure_std_process_env(&mut command, None);
+    let output = command.output().ok()?;
     Some(version_stdout(&output))
 }
 
@@ -686,38 +680,250 @@ fn version_change(previous: Option<GitVersion>, observed: Option<GitVersion>) ->
 /// lock still takes it.
 const OPTIONAL_LOCKS: (&str, &str) = ("GIT_OPTIONAL_LOCKS", "0");
 
-fn apply_common_git_env(cmd: &mut Command) {
-    // Do not inherit editor askpass helpers into backend IPC commands. Svode
-    // needs git to fail fast with AuthRequired instead of waiting on another UI.
-    cmd.env(OPTIONAL_LOCKS.0, OPTIONAL_LOCKS.1)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ASKPASS", "")
-        .env("SSH_ASKPASS", "")
-        .env("SSH_ASKPASS_REQUIRE", "never")
-        .env("GCM_INTERACTIVE", "never")
-        .env("LC_ALL", "C.UTF-8");
+/// The environment of every Git process Svode starts, without the SSH
+/// defaults. Editor askpass helpers are not inherited: Svode needs Git to
+/// fail fast with `AuthRequired` instead of waiting on another UI.
+fn base_env() -> Vec<(OsString, OsString)> {
+    let mut env: Vec<(OsString, OsString)> = [
+        OPTIONAL_LOCKS,
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GIT_ASKPASS", ""),
+        ("SSH_ASKPASS", ""),
+        ("SSH_ASKPASS_REQUIRE", "never"),
+        ("GCM_INTERACTIVE", "never"),
+        ("LC_ALL", "C.UTF-8"),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.into(), value.into()))
+    .collect();
     if let Some(path) = git_subprocess_path_env() {
-        cmd.env("PATH", path);
+        env.push(("PATH".into(), path));
+    }
+    env
+}
+
+/// The SSH command of a Git process whose user set none (DF-378 R1): an
+/// SSH connection and its handshake to a host that does not answer give up
+/// after 10 seconds instead of the TCP timeout of the system. `ssh` resolves
+/// through `PATH` as Git's default does, so Git and git-lfs still recognize
+/// OpenSSH and pass the port.
+const SSH_COMMAND: &str = "ssh -o ConnectTimeout=10";
+
+/// git-lfs retries a failed SSH connection once instead of five times
+/// (DF-378 R1), unless the user set the number.
+const LFS_SSH_RETRIES: (&str, &str) = ("lfs.ssh.retries", "1");
+
+/// How long a read of the SSH settings of the user holds for one directory:
+/// a change to them reaches the Git processes of Svode within this time.
+const USER_SSH_HOLD: Duration = Duration::from_secs(10);
+
+/// Longest wait for that read; a read that takes longer counts as none set.
+const USER_SSH_READ_LIMIT: Duration = Duration::from_secs(5);
+
+/// SSH settings of the user that Svode does not replace (DF-378 R2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct UserSsh {
+    /// `GIT_SSH_COMMAND` or `GIT_SSH` in the environment of Svode, or
+    /// `core.sshCommand` in the Git configuration of the directory.
+    command: bool,
+    /// `lfs.ssh.retries` in the Git configuration of the directory.
+    retries: bool,
+}
+
+/// The variables that give a Git process the SSH defaults of DF-378 R1 the
+/// user did not set. The retries go after the `config_count` configuration
+/// entries the environment already holds; with an unreadable count they are
+/// left out rather than replace those entries.
+fn ssh_defaults(user: UserSsh, config_count: Option<usize>) -> Vec<(OsString, OsString)> {
+    let mut env = Vec::new();
+    if !user.command {
+        env.push(("GIT_SSH_COMMAND".into(), SSH_COMMAND.into()));
+    }
+    if let (false, Some(index)) = (user.retries, config_count) {
+        env.push((
+            format!("GIT_CONFIG_KEY_{index}").into(),
+            LFS_SSH_RETRIES.0.into(),
+        ));
+        env.push((
+            format!("GIT_CONFIG_VALUE_{index}").into(),
+            LFS_SSH_RETRIES.1.into(),
+        ));
+        env.push(("GIT_CONFIG_COUNT".into(), (index + 1).to_string().into()));
+    }
+    env
+}
+
+/// The configuration entries `GIT_CONFIG_COUNT` of the environment of Svode
+/// declares: none when unset or empty, `None` when Git could not read it.
+fn config_count() -> Option<usize> {
+    match std::env::var("GIT_CONFIG_COUNT") {
+        Err(std::env::VarError::NotPresent) => Some(0),
+        Ok(count) if count.is_empty() => Some(0),
+        Ok(count) => count.parse().ok(),
+        Err(std::env::VarError::NotUnicode(_)) => None,
     }
 }
 
-/// The environment of [`GitCli`] for a blocking Git process.
-pub(crate) fn configure_std_process_env(cmd: &mut StdCommand) {
-    apply_common_std_git_env(cmd);
+/// Whether the environment of Svode names an SSH command of the user.
+fn ssh_command_in_env() -> bool {
+    ["GIT_SSH_COMMAND", "GIT_SSH"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
 }
 
-fn apply_common_std_git_env(cmd: &mut StdCommand) {
-    // Keep sync and blocking detection paths consistent with async git calls.
-    cmd.env(OPTIONAL_LOCKS.0, OPTIONAL_LOCKS.1)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ASKPASS", "")
-        .env("SSH_ASKPASS", "")
-        .env("SSH_ASKPASS_REQUIRE", "never")
-        .env("GCM_INTERACTIVE", "never")
-        .env("LC_ALL", "C.UTF-8");
-    if let Some(path) = git_subprocess_path_env() {
-        cmd.env("PATH", path);
+/// What the names `git config --list --name-only` printed say the user set.
+fn user_config(names: &[u8]) -> UserSsh {
+    let mut user = UserSsh::default();
+    for name in String::from_utf8_lossy(names).lines() {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "core.sshcommand" => user.command = true,
+            "lfs.ssh.retries" => user.retries = true,
+            _ => {}
+        }
     }
+    user
+}
+
+type UserSshKey = (OsString, Option<PathBuf>);
+
+/// Recent reads of the configuration by Git executable and directory.
+static USER_SSH: LazyLock<Mutex<HashMap<UserSshKey, (Instant, UserSsh)>>> =
+    LazyLock::new(Mutex::default);
+
+/// One asynchronous read at a time, so a burst of Git processes in one
+/// directory reads its configuration once.
+static USER_SSH_READ: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn recent_user_config(key: &UserSshKey) -> Option<UserSsh> {
+    let reads = USER_SSH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    reads
+        .get(key)
+        .filter(|(read, _)| read.elapsed() < USER_SSH_HOLD)
+        .map(|(_, user)| *user)
+}
+
+/// Keep `output` of a read for `key` when Git read the configuration.
+fn remember_user_config(key: UserSshKey, output: &std::process::Output) -> UserSsh {
+    if !output.status.success() {
+        return UserSsh::default();
+    }
+    let user = user_config(&output.stdout);
+    let mut reads = USER_SSH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    reads.retain(|_, (read, _)| read.elapsed() < USER_SSH_HOLD);
+    reads.insert(key, (Instant::now(), user));
+    user
+}
+
+/// Forget every read of the SSH settings of the user after a Git call with
+/// `args` that may have written the configuration, so a setting Svode itself
+/// wrote, in any repository or globally, applies to the next Git process
+/// instead of after [`USER_SSH_HOLD`].
+fn forget_user_ssh_after(args: &[&str]) {
+    const READS: [&str; 8] = [
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--list",
+        "-l",
+        "get",
+        "list",
+    ];
+    let Some(config) = args.iter().position(|arg| *arg == "config") else {
+        return;
+    };
+    if args[config + 1..].iter().any(|arg| READS.contains(arg)) {
+        return;
+    }
+    USER_SSH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+}
+
+/// The read of the configuration names of `dir` (`None`: the working
+/// directory of Svode) by the Git executable `git`; it connects nowhere, so
+/// it gets no SSH defaults.
+fn user_config_command(git: &OsStr, dir: Option<&Path>) -> StdCommand {
+    let mut cmd = StdCommand::new(git);
+    hide_window(&mut cmd);
+    cmd.envs(base_env())
+        .args(["config", "--list", "--name-only"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    cmd
+}
+
+async fn user_ssh(git: &OsStr, dir: Option<&Path>) -> UserSsh {
+    let key = (git.to_owned(), dir.map(Path::to_path_buf));
+    let config = match recent_user_config(&key) {
+        Some(config) => config,
+        None => {
+            let _reading = USER_SSH_READ.lock().await;
+            match recent_user_config(&key) {
+                Some(config) => config,
+                None => {
+                    let mut cmd = Command::from(user_config_command(git, dir));
+                    cmd.kill_on_drop(true);
+                    let _slot = process_slot().await;
+                    match tokio::time::timeout(USER_SSH_READ_LIMIT, cmd.output()).await {
+                        Ok(Ok(output)) => remember_user_config(key, &output),
+                        _ => UserSsh::default(),
+                    }
+                }
+            }
+        }
+    };
+    UserSsh {
+        command: config.command || ssh_command_in_env(),
+        ..config
+    }
+}
+
+fn user_ssh_blocking(git: &OsStr, dir: Option<&Path>) -> UserSsh {
+    let key = (git.to_owned(), dir.map(Path::to_path_buf));
+    let config =
+        recent_user_config(&key).unwrap_or_else(|| match user_config_command(git, dir).output() {
+            Ok(output) => remember_user_config(key, &output),
+            Err(_) => UserSsh::default(),
+        });
+    UserSsh {
+        command: config.command || ssh_command_in_env(),
+        ..config
+    }
+}
+
+/// The environment and working directory (`None`: the one of Svode) of a
+/// Git process Svode starts as `cmd`: the one place every Git process of
+/// Svode gets them, whichever host, transfer or sidecar starts it. Besides
+/// [`base_env`] it carries the SSH defaults of DF-378 R1 the user did not
+/// set (R2), read from the configuration Git applies in that directory.
+pub async fn configure_process_env(cmd: &mut Command, dir: Option<&Path>) {
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let user = user_ssh(cmd.as_std().get_program(), dir).await;
+    cmd.envs(base_env())
+        .envs(ssh_defaults(user, config_count()));
+}
+
+/// [`configure_process_env`] of a blocking Git process, for a caller that
+/// already blocks its thread on the process.
+pub fn configure_std_process_env(cmd: &mut StdCommand, dir: Option<&Path>) {
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let user = user_ssh_blocking(cmd.get_program(), dir);
+    cmd.envs(base_env())
+        .envs(ssh_defaults(user, config_count()));
 }
 
 /// Longest command line a Git call with a path set may take: the Windows
@@ -848,7 +1054,7 @@ struct LfsDetection {
 fn detect_lfs_extension(git_path: &Path) -> LfsDetection {
     let mut cmd = StdCommand::new(git_path);
     hide_window(&mut cmd);
-    apply_common_std_git_env(&mut cmd);
+    configure_std_process_env(&mut cmd, None);
     let output = cmd
         .args(["-c", "core.quotePath=false", "lfs", "version"])
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -974,6 +1180,10 @@ fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
     .map(PathBuf::from)
     .collect()
 }
+
+#[cfg(test)]
+#[path = "cli_ssh_tests.rs"]
+mod ssh_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1130,7 +1340,7 @@ mod tests {
         svode_testkit::write_executable(
             &recorder,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"${{GIT_OPTIONAL_LOCKS-unset}}\" >> '{}'\nprintf 'a\\0'\n",
+                "#!/bin/sh\n[ \"$1\" = config ] && exit 0\nprintf '%s\\n' \"${{GIT_OPTIONAL_LOCKS-unset}}\" >> '{}'\nprintf 'a\\0'\n",
                 log.display()
             ),
         )
@@ -1162,37 +1372,45 @@ mod tests {
             .await
             .unwrap();
         let mut blocking = std::process::Command::new(cli.git_path());
-        super::configure_std_process_env(&mut blocking);
-        blocking.current_dir(repo).output().unwrap();
+        super::configure_std_process_env(&mut blocking, Some(repo));
+        blocking.output().unwrap();
         let mut direct = tokio::process::Command::new(cli.git_path());
-        cli.configure_process_env(&mut direct);
-        direct.current_dir(repo).output().await.unwrap();
+        super::configure_process_env(&mut direct, Some(repo)).await;
+        direct.output().await.unwrap();
 
         let recorded = std::fs::read_to_string(&log).unwrap();
         assert_eq!(recorded.lines().collect::<Vec<_>>(), vec!["0"; 13]);
     }
 
     /// Inventory of Git processes: production code starts Git only through
-    /// [`GitCli`] and the few owners below, each with its environment, so no
-    /// read takes optional locks.
+    /// [`GitCli`] and the few owners below, each with the one environment of
+    /// [`super::configure_process_env`], so no read takes optional locks and
+    /// every SSH connection has its time limit (DF-378 R1), set in one place.
     #[test]
     fn git_processes_start_only_through_the_cli_environment() {
         let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         // Owner → how it applies the environment of every Git process.
         let owners = [
-            ("crates/svode-core/src/git/cli.rs", "apply_common_git_env"),
+            ("crates/svode-core/src/git/cli.rs", "configure_process_env("),
             (
                 "crates/svode-core/src/git/publication.rs",
-                "configure_std_process_env",
+                "configure_std_process_env(",
             ),
-            ("crates/svode-core/src/page/dates.rs", "GIT_OPTIONAL_LOCKS"),
-            ("crates/svode-lfs/src/download.rs", "GIT_OPTIONAL_LOCKS"),
+            (
+                "crates/svode-core/src/page/dates.rs",
+                "configure_process_env(",
+            ),
+            (
+                "crates/svode-lfs/src/download.rs",
+                "configure_std_process_env(",
+            ),
             (
                 "apps/desktop/src-tauri/src/git/clone.rs",
-                "configure_process_env",
+                "configure_process_env(",
             ),
         ];
         let mut found = Vec::new();
+        let mut connect_timeouts = Vec::new();
         let mut stack = vec![app.join("crates"), app.join("apps/desktop/src-tauri/src")];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap().flatten() {
@@ -1213,6 +1431,17 @@ mod tests {
                     .replace("\r\n", "\n");
                 // Inline test modules sit after the production code.
                 let production = source.split("#[cfg(test)]\nmod tests {").next().unwrap();
+                let relative = path
+                    .strip_prefix(&app)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                connect_timeouts.extend(
+                    production
+                        .lines()
+                        .filter(|line| line.contains("ConnectTimeout="))
+                        .map(|_| relative.clone()),
+                );
                 let starts_git = production.lines().any(|line| {
                     line.split_once("Command::new(")
                         .is_some_and(|(before, program)| {
@@ -1224,11 +1453,6 @@ mod tests {
                         })
                 });
                 if starts_git {
-                    let relative = path
-                        .strip_prefix(&app)
-                        .unwrap()
-                        .to_string_lossy()
-                        .replace('\\', "/");
                     found.push((relative, production.to_string()));
                 }
             }
@@ -1249,6 +1473,11 @@ mod tests {
             let (_, source) = found.iter().find(|(found, _)| found == name).unwrap();
             assert!(source.contains(marker), "{name} does not apply {marker}");
         }
+        assert_eq!(
+            connect_timeouts,
+            ["crates/svode-core/src/git/cli.rs"],
+            "the SSH connection time limit is set in one place"
+        );
         // Asynchronous Git processes of the app wait for a place. Outside the
         // bound: the blocking removal of publication evidence, the LFS
         // transfer agent (a process of its own) and the clone or Submodule
@@ -1278,7 +1507,7 @@ mod tests {
         svode_testkit::write_executable(
             &recorder,
             format!(
-                "#!/bin/sh\ntouch '{running}/'$$\nls '{running}' | wc -l >> '{counts}'\nsleep 0.05\nrm '{running}/'$$\nprintf 'a\\0'\n",
+                "#!/bin/sh\n[ \"$1\" = config ] && exit 0\ntouch '{running}/'$$\nls '{running}' | wc -l >> '{counts}'\nsleep 0.05\nrm '{running}/'$$\nprintf 'a\\0'\n",
                 running = running.display(),
                 counts = counts.display(),
             ),
@@ -1375,10 +1604,9 @@ pub async fn read_bounded(
 ) -> Result<(bool, Vec<u8>), GitError> {
     let mut command = Command::new(cli.git_path());
     hide_tokio_window(&mut command);
-    cli.configure_process_env(&mut command);
+    configure_process_env(&mut command, Some(repo)).await;
     command
         .args(args)
-        .current_dir(repo)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1480,10 +1708,9 @@ pub async fn read_with_input(
 ) -> Result<Option<Vec<u8>>, GitError> {
     let mut command = Command::new(cli.git_path());
     hide_tokio_window(&mut command);
-    cli.configure_process_env(&mut command);
+    configure_process_env(&mut command, Some(repo)).await;
     command
         .args(args)
-        .current_dir(repo)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1534,10 +1761,9 @@ pub async fn read_records(
 ) -> Result<Option<bool>, GitError> {
     let mut command = Command::new(cli.git_path());
     hide_tokio_window(&mut command);
-    cli.configure_process_env(&mut command);
+    configure_process_env(&mut command, Some(repo)).await;
     command
         .args(args)
-        .current_dir(repo)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1579,10 +1805,9 @@ pub async fn write_within(
 ) -> Result<Option<bool>, GitError> {
     let mut command = Command::new(cli.git_path());
     hide_tokio_window(&mut command);
-    cli.configure_process_env(&mut command);
+    configure_process_env(&mut command, Some(repo)).await;
     command
         .args(args)
-        .current_dir(repo)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
