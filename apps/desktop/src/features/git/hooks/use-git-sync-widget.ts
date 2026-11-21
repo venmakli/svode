@@ -19,6 +19,7 @@ import { notifyGitSyncOutcome } from "../effects/git-notifications";
 import {
   useGitStore,
   type GitAuthChallenge,
+  type GitLfsUnsent,
   type GitPublicationBlock,
   type GitRemoteAuthCredentials,
   type GitStatus,
@@ -52,6 +53,8 @@ export interface GitSyncWidget {
    * and the items it renumbered.
    */
   syncMerged: GitSyncMerged;
+  /** LFS content the last successful sync left to send: a warning. */
+  syncUnsent: GitLfsUnsent | null;
   /** Spaces that stopped the project publication; replaces the sync error. */
   publicationBlock: GitPublicationBlock | null;
   syncing: boolean;
@@ -156,6 +159,9 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     repository
       ? (state.syncMerged[repository] ?? NOTHING_MERGED)
       : NOTHING_MERGED,
+  );
+  const syncUnsent = useGitStore((state) =>
+    repository ? (state.syncUnsent[repository] ?? null) : null,
   );
   const lastSynced = useGitStore((state) =>
     repository ? (state.lastSynced[repository] ?? null) : null,
@@ -325,7 +331,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       return outcome;
     }
     notifyGitSyncOutcome(outcome);
-    if (isFullSyncSuccess(outcome)) {
+    // Files left to send keep the Dialog open with the warning.
+    if (isFullSyncSuccess(outcome) && !hasUnsent(outcome)) {
       toast.success(m.git_sync_success());
       closeAfterSync();
     }
@@ -355,7 +362,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
         if (active.current !== identity) return;
         const outcome = await syncGitNow(spacePath);
         if (active.current !== identity) return;
-        if (isFullSyncSuccess(outcome)) {
+        if (isFullSyncSuccess(outcome) && !hasUnsent(outcome)) {
           toast.success(m.git_sync_success());
           setAuthOpenState(false);
           setAuthChallenge(null);
@@ -412,6 +419,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     branchError,
     stop,
     syncMerged,
+    syncUnsent,
     publicationBlock,
     syncing,
     autoSync,
@@ -438,6 +446,16 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
 }
 
 const NOTHING_MERGED: GitSyncMerged = { files: [], renumbered: [] };
+
+/** The sync, or the project publication it ran, left LFS content to send. */
+function hasUnsent(outcome: GitSyncOutcome): boolean {
+  return (
+    outcome.type === "Success" &&
+    (!!outcome.unsent ||
+      (outcome.parent?.result?.type === "Success" &&
+        !!outcome.parent.result.unsent))
+  );
+}
 
 function branchLabel(status: GitStatus | undefined): string {
   const branch = status?.branch?.trim();

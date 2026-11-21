@@ -158,7 +158,8 @@ fn the_status_follows_the_plan_the_download_and_readiness_checks() {
         complete,
         LfsStatus {
             state: LfsState::Ready,
-            missing: None
+            missing: None,
+            unsent: None,
         }
     );
 
@@ -175,7 +176,8 @@ fn the_status_follows_the_plan_the_download_and_readiness_checks() {
         nothing,
         LfsStatus {
             state: LfsState::Ready,
-            missing: None
+            missing: None,
+            unsent: None,
         }
     );
     assert_eq!(
@@ -196,7 +198,8 @@ fn the_status_follows_the_plan_the_download_and_readiness_checks() {
                 "files": [{ "path": "a.png", "size": 10 }, { "path": "v.mov", "size": 90 }],
                 "bytes": 100,
                 "stop": { "kind": "stalled" }
-            }
+            },
+            "unsent": null
         })
     );
     assert_eq!(

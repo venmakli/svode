@@ -4,7 +4,10 @@
 use super::git;
 use crate::git::cli::GitCli;
 use crate::git::flow;
+use crate::git::sync::SyncResult;
 use crate::git::{host::GitHost, staging_tests::TestHost, state::GitRuntime};
+use crate::storage::lfs_download::LfsFile;
+use crate::storage::lfs_unsent::{LfsUnsent, SendStop};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -248,6 +251,13 @@ exit 255
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND='{ssh}'
 case \" $* \" in
 *' push --progress '*) touch '{marks}/pushed' ;;
+*' --object-id '*)
+  if [ -e '{marks}/hold' ]; then
+    git -c protocol.file.allow=always \"$@\" || exit $?
+    touch '{marks}/resent'
+    while [ ! -e '{marks}/release' ]; do sleep 0.05; done
+    exit 0
+  fi ;;
 esac
 exec git -c protocol.file.allow=always \"$@\"
 ",
@@ -322,6 +332,16 @@ fn out_of_reach() -> OutOfReach {
 /// [`Server::URL`].
 fn lfs_remote_project(root: &Path) {
     git(root, &["lfs", "install", "--local"]);
+    // A hook of the user beside the transfer of git-lfs.
+    let hooks = PathBuf::from(git(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    ));
+    svode_testkit::write_executable(
+        &hooks.join("pre-push"),
+        "#!/bin/sh\ntouch \"$(dirname \"$0\")/user-hook-ran\"\nexec git lfs pre-push \"$@\"\n",
+    )
+    .unwrap();
     git(root, &["lfs", "track", "*.bin"]);
     std::fs::create_dir_all(root.join(".svode")).unwrap();
     std::fs::write(
@@ -341,42 +361,187 @@ fn commit_video(repo: &Path) {
     git(repo, &["commit", "-m", "video"]);
 }
 
-fn file_server_unreachable(failure: Option<&crate::git::diagnostics::GitFailure>) -> bool {
-    failure.is_some_and(|failure| {
-        failure.stage == crate::git::diagnostics::GitStage::Push
-            && failure.cause
-                == Some(crate::git::diagnostics::GitFailureCause::FileServerUnreachable)
-    })
+/// The hook of the user in the `pre-push` of `repo` ran since the last call.
+fn user_hook_ran(repo: &Path) -> bool {
+    let hooks = PathBuf::from(git(
+        repo,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    ));
+    std::fs::remove_file(hooks.join("user-hook-ran")).is_ok()
 }
 
-/// DF-378 R4, R5: after the LFS send before the lock could not reach the
-/// file server, the sync does not connect to it again: no push, whose hook
-/// would, no download after the sync; it ends with its own cause.
+/// Move the file server of `repo` back to its Git remote, which serves LFS
+/// from the store next to it.
+fn file_server_back(repo: &Path) {
+    git(repo, &["config", "--unset", "lfs.url"]);
+}
+
+async fn queued(cli: &GitCli, repo: &Path) -> Option<LfsUnsent> {
+    crate::storage::lfs_unsent::unsent(cli, repo).await
+}
+
+/// DF-377 R3, R4, DF-378 R4: after the LFS send before the lock could not
+/// reach the file server, the commits are published without their LFS
+/// content, which is queued; the sync does not connect to the file server
+/// again, the user's hook still runs, and no download follows the sync.
 #[tokio::test]
-async fn an_unreachable_file_server_ends_the_sync_without_contacting_it_again() {
+async fn an_unreachable_file_server_publishes_the_commits_and_queues_their_lfs_content() {
     if !lfs_available() {
         eprintln!("git-lfs is not installed; skipped");
         return;
     }
     let f = out_of_reach();
     commit_video(&f.root);
+    let video = lfs_oid(&f.root, "video.bin");
+    std::fs::write(f.root.join("note.md"), "text\n").unwrap();
+    git(&f.root, &["add", "note.md"]);
+    git(&f.root, &["commit", "-m", "note after the video"]);
     let once = f.server.connections_of_one_push(&f.root).await;
 
     let runtime = Arc::new(GitRuntime::with_cli(f.server.cli.clone()));
     let test_host = Arc::new(TestHost::default());
     let host: Arc<dyn GitHost> = test_host.clone();
-    let error = flow::sync(&runtime, &host, &f.root, false)
-        .await
-        .unwrap_err();
-    assert!(file_server_unreachable(error.failure()), "{error:?}");
+    let report = flow::sync(&runtime, &host, &f.root, false).await.unwrap();
+    assert!(report.synced(), "{report:?}");
     assert_eq!(f.server.connections(), once);
-    assert!(!f.server.pushed());
+    assert!(f.server.pushed());
+    assert!(user_hook_ran(&f.root));
+    assert_eq!(
+        git(&f.remote, &["rev-parse", "main"]),
+        git(&f.root, &["rev-parse", "HEAD"])
+    );
+    assert!(!stored(&f.remote, &video));
+    let expected = LfsUnsent {
+        files: vec![LfsFile {
+            path: "video.bin".into(),
+            size: 12 * 4096,
+        }],
+        bytes: 12 * 4096,
+        stop: SendStop::Unreachable,
+    };
+    assert_eq!(queued(&f.server.cli, &f.root).await, Some(expected.clone()));
+    // The sync succeeded with a warning that names the queue.
+    let SyncResult::Success { unsent, .. } = &report.child else {
+        panic!("{report:?}")
+    };
+    assert_eq!(unsent.as_ref(), Some(&expected));
+    // The download of DF-368 does not contact the server again.
+    assert_eq!(test_host.refreshed.lock().unwrap().len(), 1);
+    assert!(test_host.downloads.lock().unwrap().is_empty());
+}
+
+/// DF-377 R4: the queue outlives the runtime that wrote it; once the file
+/// server is back, the next sync sends it without the repository lock, and
+/// a fresh clone gets the content.
+#[tokio::test]
+async fn the_next_sync_sends_the_queue_outside_the_lock_once_the_file_server_is_back() {
+    if !lfs_available() {
+        eprintln!("git-lfs is not installed; skipped");
+        return;
+    }
+    let f = out_of_reach();
+    commit_video(&f.root);
+    let video = lfs_oid(&f.root, "video.bin");
+    {
+        let runtime = Arc::new(GitRuntime::with_cli(f.server.cli.clone()));
+        let host: Arc<dyn GitHost> = Arc::new(TestHost::default());
+        let report = flow::sync(&runtime, &host, &f.root, false).await.unwrap();
+        assert!(report.synced(), "{report:?}");
+    }
+    file_server_back(&f.root);
+    std::fs::write(f.server.marks.join("hold"), "").unwrap();
+
+    let runtime = Arc::new(GitRuntime::with_cli(f.server.cli.clone()));
+    assert!(queued(&f.server.cli, &f.root).await.is_some());
+    let test_host = Arc::new(TestHost::default());
+    let host: Arc<dyn GitHost> = test_host.clone();
+    let sync = tokio::spawn({
+        let (runtime, host, root) = (runtime.clone(), host.clone(), f.root.clone());
+        async move { flow::sync(&runtime, &host, &root, false).await }
+    });
+    appears(&f.server.marks.join("resent")).await;
+    assert!(stored(&f.remote, &video));
+    // A commit under the repository lock does not wait for the send.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let lock = runtime.get_lock(&f.root).await;
+        let _guard = lock.lock().await;
+        std::fs::write(f.root.join("note.md"), "text\n").unwrap();
+        git(&f.root, &["add", "note.md"]);
+        git(&f.root, &["commit", "-m", "note"]);
+    })
+    .await
+    .expect("a commit waits for the send of the queue");
+    std::fs::write(f.server.marks.join("release"), "").unwrap();
+    let report = sync.await.unwrap().unwrap();
+    assert!(report.synced(), "{report:?}");
+    let SyncResult::Success { unsent, .. } = &report.child else {
+        panic!("{report:?}")
+    };
+    assert_eq!(unsent, &None);
+    assert_eq!(queued(&f.server.cli, &f.root).await, None);
+    assert_eq!(test_host.downloads.lock().unwrap().len(), 1);
+
+    let clone = f._temp.path().join("clone");
+    git(
+        f._temp.path(),
+        &["clone", f.remote.to_str().unwrap(), clone.to_str().unwrap()],
+    );
+    git(&clone, &["lfs", "install", "--local"]);
+    git(&clone, &["lfs", "pull"]);
+    assert_eq!(
+        std::fs::read_to_string(clone.join("video.bin")).unwrap(),
+        "LFS content\n".repeat(4096)
+    );
+}
+
+/// DF-377 R4: a queued object the server already has leaves the queue.
+#[tokio::test]
+async fn a_queued_object_already_on_the_server_leaves_the_queue() {
+    if !lfs_available() {
+        eprintln!("git-lfs is not installed; skipped");
+        return;
+    }
+    let f = out_of_reach();
+    commit_video(&f.root);
+    let runtime = Arc::new(GitRuntime::with_cli(f.server.cli.clone()));
+    let host: Arc<dyn GitHost> = Arc::new(TestHost::default());
+    flow::sync(&runtime, &host, &f.root, false).await.unwrap();
+    file_server_back(&f.root);
+    git(&f.root, &["lfs", "push", "--all", "origin", "main"]);
+    assert!(queued(&f.server.cli, &f.root).await.is_some());
+
+    let report = flow::sync(&runtime, &host, &f.root, false).await.unwrap();
+    assert!(report.synced(), "{report:?}");
+    assert_eq!(queued(&f.server.cli, &f.root).await, None);
+}
+
+/// DF-377 R3: a refusal of the remote Git still ends the sync with its
+/// error, and nothing is queued for commits it did not publish.
+#[tokio::test]
+async fn a_refusal_of_the_remote_git_ends_the_sync_without_queueing() {
+    if !lfs_available() {
+        eprintln!("git-lfs is not installed; skipped");
+        return;
+    }
+    let f = out_of_reach();
+    svode_testkit::write_executable(
+        &f.remote.join("hooks/pre-receive"),
+        "#!/bin/sh\necho 'refused by policy' >&2\nexit 1\n",
+    )
+    .unwrap();
+    commit_video(&f.root);
+    let runtime = Arc::new(GitRuntime::with_cli(f.server.cli.clone()));
+    let host: Arc<dyn GitHost> = Arc::new(TestHost::default());
+    let result = flow::sync(&runtime, &host, &f.root, false).await;
+    assert!(
+        result.as_ref().map_or(true, |report| !report.synced()),
+        "{result:?}"
+    );
     assert_ne!(
         git(&f.remote, &["rev-parse", "main"]),
         git(&f.root, &["rev-parse", "HEAD"])
     );
-    // The download of DF-368 follows only a successful sync.
-    assert!(test_host.refreshed.lock().unwrap().is_empty());
+    assert_eq!(queued(&f.server.cli, &f.root).await, None);
 }
 
 /// DF-378 R4: commits without LFS content to send publish as before while
@@ -401,11 +566,12 @@ async fn commits_without_lfs_content_publish_while_the_file_server_is_out_of_rea
     );
 }
 
-/// DF-378 R4: a Space sync whose project could not reach its file server
-/// publishes the Space, and its pointer step does not push the project,
-/// whose hook would contact the server again.
+/// DF-377 R3, DF-378 R4: a Space sync whose project could not reach its
+/// file server publishes the Space, and its pointer step publishes the
+/// project without its LFS content and without contacting the server again.
 #[tokio::test]
-async fn the_pointer_step_does_not_push_a_project_whose_file_server_is_out_of_reach() {
+async fn the_pointer_step_publishes_a_project_whose_file_server_is_out_of_reach_without_its_files()
+{
     if !lfs_available() {
         eprintln!("git-lfs is not installed; skipped");
         return;
@@ -437,11 +603,18 @@ async fn the_pointer_step_does_not_push_a_project_whose_file_server_is_out_of_re
     );
     let parent = report.parent.as_ref().expect("the pointer step");
     assert!(
-        file_server_unreachable(parent.error.as_ref().and_then(|error| error.failure())),
+        matches!(parent.pointer, flow::PointerState::Published),
         "{parent:?}"
     );
+    let Some(SyncResult::Success { unsent, .. }) = &parent.result else {
+        panic!("{parent:?}")
+    };
+    assert_eq!(
+        unsent.as_ref().map(|unsent| unsent.stop.clone()),
+        Some(SendStop::Unreachable)
+    );
     assert_eq!(server.connections(), once);
-    assert_ne!(
+    assert_eq!(
         git(&f.remote, &["rev-parse", "main"]),
         git(&f.root, &["rev-parse", "HEAD"])
     );

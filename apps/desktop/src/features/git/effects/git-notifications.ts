@@ -10,6 +10,7 @@ import {
 } from "../model";
 import type { GitCommitRefusal } from "../model/page-save-owner";
 import { gitSaveErrorDescription } from "../ui/git-save-error-copy";
+import { lfsUnsentWarning } from "../ui/lfs-content-copy";
 import {
   gitRenumberedMessage,
   gitServiceMergedMessage,
@@ -36,6 +37,22 @@ function notifyGitServiceMerged(files: string[] | undefined): void {
 /** The sync result names the items it renumbered (DF-237 R5). */
 function notifyGitRenumbered(items: GitRenumberedItem[] | undefined): void {
   if (items?.length) toast.info(gitRenumberedMessage(items));
+}
+
+/**
+ * The sync, and the project publication it ran, published changes whose
+ * LFS content is still to send: a warning, not a failure.
+ */
+function notifyGitSyncUnsent(
+  outcome: Extract<GitSyncOutcome, { type: "Success" }>,
+): void {
+  const parent = outcome.parent?.result;
+  for (const unsent of [
+    outcome.unsent,
+    parent?.type === "Success" ? parent.unsent : undefined,
+  ]) {
+    if (unsent) toast.warning(lfsUnsentWarning(unsent));
+  }
 }
 
 export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
@@ -67,6 +84,7 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
       else notifyGitSyncFailed();
       break;
     case "Success":
+      notifyGitSyncUnsent(outcome);
       if (outcome.parent?.pointer === "newer")
         toast.info(m.git_publication_newer_summary());
       else if (outcome.parent?.unpublishedCommits !== undefined)

@@ -153,18 +153,6 @@ impl GitFailure {
         }
     }
 
-    /// The publication of `repo` that its push did not run: the LFS file
-    /// server of `repo` could not be reached earlier in the same sync
-    /// (DF-378 R4).
-    pub fn file_server_unreachable(repo: &Path) -> Self {
-        Self {
-            repository: repository_name(repo),
-            stage: GitStage::Push,
-            cause: Some(GitFailureCause::FileServerUnreachable),
-            transfer: None,
-        }
-    }
-
     /// The failure of `stage` in `repo` whose transfer Svode stopped without
     /// progress; the log names the step, the limit and the file.
     pub fn transfer_stalled(repo: &Path, stage: GitStage, stall: TransferStall) -> Self {

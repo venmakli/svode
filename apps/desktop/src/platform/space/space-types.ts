@@ -26,14 +26,34 @@ export interface LfsMissingDto {
   stop: LfsDownloadStopDto;
 }
 
+/** Why the LFS content of published commits was not sent. */
+export type LfsSendStopDto =
+  | { kind: "unreachable" }
+  | { kind: "no-access" }
+  | { kind: "stalled"; path: string | null; size: number | null }
+  | { kind: "not-on-device" }
+  | { kind: "other"; detail: string };
+
+/**
+ * The send queue of a repository: LFS files of published commits whose
+ * content the next sync sends, and why the last send failed.
+ */
+export interface LfsUnsentDto {
+  files: LfsFileDto[];
+  bytes: number;
+  stop: LfsSendStopDto;
+}
+
 /**
  * LFS status of a repository: `pulling` while a download runs,
  * `missing-creds` without access; with `ready`, `missing` set means not
- * every file is downloaded.
+ * every file is downloaded. `unsent` is set while the send queue is not
+ * empty.
  */
 export interface LfsStatusDto {
   state: LfsStateDto;
   missing: LfsMissingDto | null;
+  unsent: LfsUnsentDto | null;
 }
 
 export type LfsRemoteDiagnosticReasonDto =

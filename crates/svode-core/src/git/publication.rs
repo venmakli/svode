@@ -6,6 +6,7 @@ use super::GitError;
 use super::cli::{GitCli, GitOutput};
 use super::diagnostics::{GitFailure, GitStage};
 use super::transfer::{Transfer, TransferDirection, TransferOutcome, TransferStall};
+use crate::storage::lfs_unsent::SendStop;
 
 /// A project-level refusal, or every Space that blocks publication.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -262,24 +263,32 @@ pub async fn push_snapshot(
         &fixed.remote,
     ];
     args.extend(mappings.iter().map(String::as_str));
-    // The push would send the LFS content in its pre-push hook, to a file
-    // server this sync could not reach (DF-378 R4).
-    if cli.file_server_unreachable(repo) {
-        tracing::warn!(
-            repository = %repo.display(),
-            "push not run: the LFS file server of the repository could not be reached earlier in this sync"
-        );
-        return Err(GitError::SyncFailed(GitFailure::file_server_unreachable(
-            repo,
-        )));
-    }
-    let trace = super::diagnostics::HookTrace::new();
-    let out = match Transfer::new(repo, TransferDirection::Upload)
-        .run(cli, &args, &trace.env(&[]))
-        .await?
-    {
-        TransferOutcome::Finished(out) => out,
-        TransferOutcome::Stalled(stall) => return Err(transfer_stalled(repo, stall)),
+    let mut trace = super::diagnostics::HookTrace::new();
+    let out = match cli.lfs_send_failure(repo).cloned() {
+        // The push would send the LFS content in its pre-push hook, which
+        // this sync could not send (DF-377 R3), to a file server it may not
+        // contact again (DF-378 R4).
+        Some(stop) => push_without_lfs(cli, repo, &fixed, &args, &trace, stop).await?,
+        None => {
+            let outcome = Transfer::new(repo, TransferDirection::Upload)
+                .run(cli, &args, &trace.env(&[]))
+                .await?;
+            match outcome {
+                TransferOutcome::Finished(out) => out,
+                // The git-lfs transfer of the hook stopped: the commits go
+                // without it (DF-377 R3).
+                TransferOutcome::Stalled(stall) if stall.path.is_some() => {
+                    tracing::warn!(
+                        repository = %repo.display(),
+                        "the LFS transfer of the push stalled; publishing without LFS content"
+                    );
+                    trace = super::diagnostics::HookTrace::new();
+                    let stop = SendStop::of_stall(&stall);
+                    push_without_lfs(cli, repo, &fixed, &args, &trace, stop).await?
+                }
+                TransferOutcome::Stalled(stall) => return Err(transfer_stalled(repo, stall)),
+            }
+        }
     };
     if out.exit_code != 0 {
         if let Some(rejection) = super::push_rejection::push_rejection(cli, repo, &out.stderr).await
@@ -306,6 +315,45 @@ pub async fn push_snapshot(
 
 fn transfer_stalled(repo: &Path, stall: TransferStall) -> GitError {
     GitError::SyncFailed(GitFailure::transfer_stalled(repo, GitStage::Push, stall))
+}
+
+/// The push `args` of `fixed` without the LFS transfer of its pre-push hook
+/// (`GIT_LFS_SKIP_PUSH`; the other hooks run), whose LFS objects, read
+/// before it under the lock, join the send queue with `stop` once the push
+/// published them (DF-377 R3, R4).
+async fn push_without_lfs(
+    cli: &GitCli,
+    repo: &Path,
+    fixed: &Snapshot,
+    args: &[&str],
+    trace: &super::diagnostics::HookTrace,
+    stop: SendStop,
+) -> Result<GitOutput, GitError> {
+    let revisions = fixed
+        .updates
+        .values()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let objects =
+        crate::storage::lfs_unsent::objects_to_publish(cli, repo, &fixed.remote, &revisions)
+            .await?;
+    let out = match Transfer::new(repo, TransferDirection::Upload)
+        .run(cli, args, &trace.env(&[("GIT_LFS_SKIP_PUSH", "1")]))
+        .await?
+    {
+        TransferOutcome::Finished(out) => out,
+        TransferOutcome::Stalled(stall) => return Err(transfer_stalled(repo, stall)),
+    };
+    if out.exit_code == 0 && !objects.is_empty() {
+        tracing::warn!(
+            repository = %repo.display(),
+            objects = objects.len(),
+            reason = ?stop,
+            "commits published without their LFS content; the content is queued"
+        );
+        crate::storage::lfs_unsent::enqueue(cli, repo, &fixed.remote, objects, stop).await?;
+    }
+    Ok(out)
 }
 
 /// The remote whose LFS content a publication of `repo` would send, from
@@ -345,60 +393,60 @@ pub async fn lfs_content_ahead(cli: &GitCli, repo: &Path) -> Option<String> {
     (ahead.exit_code == 0 && ahead.stdout.trim() != "0").then_some(remote)
 }
 
-/// What the LFS send before the lock leaves for the push of a repository
-/// (DF-378 R4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the LFS send before the lock leaves for the push of a repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LfsSend {
-    /// Sent, or refused otherwise: the push sends what is left in its hook.
+    /// Sent: the push finds the objects on the server.
     Done,
-    /// The file server could not be reached: the sync does not contact it
-    /// again for this repository.
-    ServerUnreachable,
+    /// Not sent, and why: the push publishes the commits without their LFS
+    /// content, which joins the send queue (DF-377 R3); an unreachable file
+    /// server is not contacted again in the sync (DF-378 R4).
+    Failed(SendStop),
 }
 
 /// Before the publication of `repo` takes its repository lock, send the LFS
 /// content of the commits [`lfs_content_ahead`] found for `remote` (DF-369
 /// R2). The push under the lock then finds the objects on the server, and
-/// only those of commits made meanwhile travel inside it. A stalled transfer
-/// is the publication's failure, and an unreachable file server is
-/// [`LfsSend::ServerUnreachable`]; any other failure is left to the push,
-/// whose hook sends the same objects and whose refusals are recognized as
-/// before.
-pub async fn send_lfs_content(
-    cli: &GitCli,
-    repo: &Path,
-    remote: &str,
-) -> Result<LfsSend, GitError> {
-    match Transfer::new(repo, TransferDirection::Upload)
+/// only those of commits made meanwhile travel inside it.
+pub async fn send_lfs_content(cli: &GitCli, repo: &Path, remote: &str) -> LfsSend {
+    let stop = match Transfer::new(repo, TransferDirection::Upload)
         .run(cli, &["lfs", "push", "--", remote, "HEAD"], &[])
         .await
     {
-        Ok(TransferOutcome::Stalled(stall)) => return Err(transfer_stalled(repo, stall)),
-        Ok(TransferOutcome::Finished(out)) if out.exit_code != 0 => {
-            let stderr = out.stderr.to_ascii_lowercase();
-            // A refused key is authorization, never an unreachable server.
-            let unreachable = super::diagnostics::is_network_failure(&stderr)
-                && !super::diagnostics::is_authorization_denial(&out.stderr);
+        Ok(TransferOutcome::Finished(out)) if out.exit_code == 0 => return LfsSend::Done,
+        Ok(TransferOutcome::Finished(out)) => {
+            let stop = SendStop::of_failure(&out.stderr);
             tracing::warn!(
                 repository = %repo.display(),
                 step = "LFS send before the push",
                 exit_code = out.exit_code,
-                file_server_unreachable = unreachable,
-                connect_timeout = unreachable && stderr.contains("timed out"),
+                file_server_unreachable = stop == SendStop::Unreachable,
+                connect_timeout = stop == SendStop::Unreachable
+                    && out.stderr.to_ascii_lowercase().contains("timed out"),
                 stderr = %super::auth::redact_url_credentials(out.stderr.trim()),
                 "LFS content was not sent before the push"
             );
-            if unreachable {
-                return Ok(LfsSend::ServerUnreachable);
+            stop
+        }
+        Ok(TransferOutcome::Stalled(stall)) => {
+            tracing::warn!(
+                repository = %repo.display(),
+                step = "LFS send before the push",
+                "the LFS send stalled"
+            );
+            SendStop::of_stall(&stall)
+        }
+        Err(error) => {
+            tracing::warn!(
+                repository = %repo.display(),
+                "LFS content was not sent before the push: {error}"
+            );
+            SendStop::Other {
+                detail: crate::storage::lfs_download::detail_text(&error.to_string()),
             }
         }
-        Ok(TransferOutcome::Finished(_)) => {}
-        Err(error) => tracing::warn!(
-            repository = %repo.display(),
-            "LFS content was not sent before the push: {error}"
-        ),
-    }
-    Ok(LfsSend::Done)
+    };
+    LfsSend::Failed(stop)
 }
 
 pub async fn push(cli: &GitCli, repo: &Path, first: bool) -> Result<GitOutput, GitError> {

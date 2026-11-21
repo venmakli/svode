@@ -85,6 +85,7 @@ export function RootScopeRow({
             <LfsIndicatorIcon
               lfsState={lfs.state}
               lfsMissing={lfs.missing}
+              lfsUnsent={lfs.unsent}
               spacePath={rootPath}
             />
             <SpaceGitActivityIndicator

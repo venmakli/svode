@@ -7,3 +7,4 @@ export type {
 } from "./hooks/use-space-sidebar-git";
 export { GitTransferIcon } from "./ui/git-transfer-indicator";
 export { useGitTransfer } from "./hooks/use-git-transfer";
+export { lfsUnsentHint } from "./ui/lfs-content-copy";

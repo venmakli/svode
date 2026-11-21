@@ -17,9 +17,10 @@ import { toGitStatus, toSyncResult } from "./git-mappers";
 import { refreshGitRemoteStatus } from "./git-status-actions";
 
 /**
- * Keep the repository's sync stop, the service files it names as merged and
- * the items it renumbered in step with what a sync reported. A refused automatic commit is not a
- * sync state: it lasts until the next automatic version.
+ * Keep the repository's sync stop, the service files it names as merged,
+ * the items it renumbered and the LFS content it left to send in step with
+ * what a sync reported. A refused automatic commit is not a sync state: it
+ * lasts until the next automatic version.
  */
 export function recordSyncStop(path: string, result: SyncResult) {
   const git = useGitStore.getState();
@@ -28,6 +29,7 @@ export function recordSyncStop(path: string, result: SyncResult) {
   if (stop !== undefined && !keepCommitStop) git.setSyncStop(path, stop);
   const merged = syncMergedFromResult(result);
   if (merged !== undefined) git.setSyncMerged(path, merged);
+  if (result.type === "Success") git.setSyncUnsent(path, result.unsent ?? null);
 }
 
 /**

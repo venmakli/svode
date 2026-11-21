@@ -1321,6 +1321,42 @@
   "storage_lfs_files_show": "Показать файлы",
   "storage_lfs_files_hide": "Скрыть файлы",
   "storage_lfs_files_list": "Нескачанные файлы",
+  "storage_lfs_unsent_files": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Не отправлен {count} файл",
+        "countPlural=few": "Не отправлено {count} файла",
+        "countPlural=many": "Не отправлено {count} файлов",
+        "countPlural=*": "Не отправлено {count} файла"
+      }
+    }
+  ],
+  "storage_lfs_send_stop_unreachable": "Сервер файлов недоступен",
+  "storage_lfs_send_stop_no_access": "Нет доступа к серверу файлов",
+  "storage_lfs_send_stop_stalled": "Отправка остановлена: 2 минуты не было передачи данных",
+  "storage_lfs_send_stop_stalled_file": "Отправка файла «{name}» ({size}) остановлена: 2 минуты не было передачи данных",
+  "storage_lfs_send_stop_not_on_device": "Файла нет на устройстве",
+  "storage_lfs_unsent_outcome_next_sync": "изменения опубликованы, файлы отправятся при следующей синхронизации.",
+  "storage_lfs_unsent_outcome_kept": "изменения опубликованы, файлы сохранены на устройстве.",
+  "storage_lfs_unsent_sync_warning": [
+    {
+      "declarations": [
+        "input count",
+        "input reason",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Изменения опубликованы, но {count} файл не отправлен: {reason}. Он отправится при следующей синхронизации.",
+        "countPlural=few": "Изменения опубликованы, но {count} файла не отправлены: {reason}. Они отправятся при следующей синхронизации.",
+        "countPlural=many": "Изменения опубликованы, но {count} файлов не отправлены: {reason}. Они отправятся при следующей синхронизации.",
+        "countPlural=*": "Изменения опубликованы, но {count} файла не отправлены: {reason}. Они отправятся при следующей синхронизации."
+      }
+    }
+  ],
+  "storage_lfs_unsent_list": "Неотправленные файлы",
   "storage_lfs_objects_missing_s3": "Нужны ключи S3: выберите их в группе «Хранилище S3» и сохраните.",
   "storage_lfs_objects_missing_remote": "Нет доступа к Git LFS remote — проверьте его ниже.",
   "storage_lfs_banner_missing_remote_title": "Git LFS server требует аутентификации",

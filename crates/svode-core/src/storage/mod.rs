@@ -3,6 +3,7 @@ pub mod connection;
 pub mod lfs;
 pub mod lfs_declaration;
 pub mod lfs_download;
+pub mod lfs_unsent;
 pub mod local_release;
 pub mod local_rules;
 pub mod managed_route;

@@ -29,6 +29,7 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
   const { useSpaceRowGitControls } = await import("./space-row-git-controls");
   type LfsState = import("../model").LfsState;
   type LfsMissing = import("../model").LfsMissing;
+  type LfsUnsent = import("../model").LfsUnsent;
 
   const SPACE = "/df369d-project/media";
   const PROJECT = "/df369d-project";
@@ -36,13 +37,16 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
   function Row({
     lfsState,
     lfsMissing,
+    lfsUnsent,
   }: {
     lfsState: LfsState;
     lfsMissing: LfsMissing | null;
+    lfsUnsent: LfsUnsent | null;
   }) {
     const controls = useSpaceRowGitControls({
       lfsState,
       lfsMissing,
+      lfsUnsent,
       loading: false,
       refreshing: false,
       rootPath: PROJECT,
@@ -56,10 +60,18 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
     );
   }
 
-  const render = (lfsState: LfsState, lfsMissing: LfsMissing | null = null) =>
+  const render = (
+    lfsState: LfsState,
+    lfsMissing: LfsMissing | null = null,
+    lfsUnsent: LfsUnsent | null = null,
+  ) =>
     dom.render(
       <TooltipProvider>
-        <Row lfsState={lfsState} lfsMissing={lfsMissing} />
+        <Row
+          lfsState={lfsState}
+          lfsMissing={lfsMissing}
+          lfsUnsent={lfsUnsent}
+        />
       </TooltipProvider>,
     );
   const row = () => doc.querySelector("[data-row]")!;
@@ -71,6 +83,8 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
   const noAccessIcon = () => row().querySelector(".lucide-cloud-off");
   const missingIcon = () =>
     row().querySelector<HTMLElement>("[data-lfs-missing]");
+  const unsentIcon = () =>
+    row().querySelector<HTMLElement>("[data-lfs-unsent]");
   const mockStatus = (repository?: string) =>
     mockNativeIpc(
       (command) =>
@@ -256,6 +270,97 @@ if (process.env.SVODE_SPACE_ROW_LFS_PLACE_DOM !== "1") {
       expect(missingIcon()!.getAttribute("aria-label")).toBe(
         "Не скачано 3 файла · 120 МБ. 2 минуты не было передачи данных.",
       );
+    } finally {
+      await dom.render(null);
+      git.setTransfer(SPACE, null);
+      git.clear(SPACE);
+      clearNativeMocks();
+      await setLocale(previousLocale, { reload: false });
+    }
+  });
+
+  test("files not sent take the LFS place after no access and before files not downloaded, as a calm icon with count, size and cause", async () => {
+    mockStatus();
+    const git = useGitStore.getState();
+    const previousLocale = getLocale();
+    const unsent: LfsUnsent = {
+      files: [
+        { path: "clips/recording.mov", size: 31_457_280 },
+        { path: "photos/b.jpg", size: 10_485_760 },
+      ],
+      bytes: 41_943_040,
+      stop: { kind: "unreachable" },
+    };
+    const missing: LfsMissing = {
+      files: [{ path: "photos/a.jpg", size: 104_858 }],
+      bytes: 104_858,
+      stop: { kind: "not-on-server" },
+    };
+    try {
+      await setLocale("ru", { reload: false });
+      git.updateBackendSyncing(SPACE, true);
+
+      await render("ready", missing, unsent);
+      const icon = unsentIcon()!;
+      expect(missingIcon()).toBe(null);
+      expect(icon.getAttribute("role")).toBe("img");
+      expect(icon.getAttribute("aria-label")).toBe(
+        "Не отправлено 2 файла · 40 МБ. Сервер файлов недоступен — изменения опубликованы, файлы отправятся при следующей синхронизации.",
+      );
+      expect(!!icon.querySelector(".lucide-cloud-upload")).toBe(true);
+      expect(icon.outerHTML.includes("animate-")).toBe(false);
+      expect(icon.outerHTML.includes("destructive")).toBe(false);
+      expect(icon.querySelector("svg")!.classList).toContain(
+        "text-muted-foreground",
+      );
+      const gitIndicator = syncingIcon()!.closest("span.size-4")!.outerHTML;
+
+      // A running transfer, the send of the queue, takes the place.
+      await act(async () =>
+        git.setTransfer(SPACE, {
+          direction: "upload",
+          file: 1,
+          files: 2,
+          path: "clips/recording.mov",
+          bytes: 1_048_576,
+          size: 31_457_280,
+        }),
+      );
+      expect(unsentIcon()).toBe(null);
+      expect(transferIcon()?.dataset.gitTransfer).toBe("upload");
+      expect(syncingIcon()!.closest("span.size-4")!.outerHTML).toBe(
+        gitIndicator,
+      );
+      await act(async () => git.setTransfer(SPACE, null));
+
+      // No access comes first, with its own icon.
+      await render("missing-creds", missing, {
+        ...unsent,
+        stop: { kind: "no-access" },
+      });
+      expect(!!noAccessIcon()).toBe(true);
+      expect(unsentIcon()).toBe(null);
+
+      await render("ready", null, { ...unsent, stop: { kind: "no-access" } });
+      expect(unsentIcon()!.getAttribute("aria-label")).toBe(
+        "Не отправлено 2 файла · 40 МБ. Нет доступа к серверу файлов — изменения опубликованы, файлы сохранены на устройстве.",
+      );
+      await render("ready", null, {
+        ...unsent,
+        stop: {
+          kind: "stalled",
+          path: "clips/recording.mov",
+          size: 31_457_280,
+        },
+      });
+      expect(unsentIcon()!.getAttribute("aria-label")).toBe(
+        "Не отправлено 2 файла · 40 МБ. Отправка файла «recording.mov» (30 МБ) остановлена: 2 минуты не было передачи данных — изменения опубликованы, файлы отправятся при следующей синхронизации.",
+      );
+
+      // Sent: the files not downloaded show again.
+      await render("ready", missing, null);
+      expect(unsentIcon()).toBe(null);
+      expect(!!missingIcon()).toBe(true);
     } finally {
       await dom.render(null);
       git.setTransfer(SPACE, null);

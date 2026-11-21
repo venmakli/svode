@@ -1,3 +1,4 @@
+import type { LfsUnsentDto } from "@/platform/space/space-types";
 import type { GitPublicationBlock } from "./publication-block";
 import type { GitSyncStop } from "./sync-stop";
 
@@ -71,6 +72,8 @@ export type SyncResult =
       merged?: string[];
       /** Items this sync gave a new `unique_id` number. */
       renumbered?: GitRenumberedItem[];
+      /** LFS content of published commits still to send: a warning. */
+      unsent?: GitLfsUnsent;
       parent?: ParentPublication;
     }
   | {
@@ -256,6 +259,12 @@ export interface GitSyncMerged {
   files: string[];
   renumbered: GitRenumberedItem[];
 }
+
+/**
+ * The LFS files of published commits whose content the next sync sends, and
+ * why the last send failed: a sync that leaves them succeeds with a warning.
+ */
+export type GitLfsUnsent = LfsUnsentDto;
 
 /** Unfinished Git operation other than a merge, which is a sync conflict. */
 export type GitOperation = "rebase" | "cherry_pick" | "revert" | "sequencer";

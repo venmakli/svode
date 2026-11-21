@@ -20,6 +20,9 @@ pub(super) struct TestHost {
     pub(super) sync_states: Mutex<Vec<(PathBuf, bool)>>,
     pub(super) publications: Mutex<Vec<(PathBuf, String)>>,
     pub(super) refreshed: Mutex<Vec<PathBuf>>,
+    /// Refreshed repositories whose download after the sync may start, as
+    /// the Desktop host decides it (DF-378 R4).
+    pub(super) downloads: Mutex<Vec<PathBuf>>,
     pub(super) content_recorded: Mutex<Vec<PathBuf>>,
     pub(super) transfers: Mutex<Vec<(PathBuf, Option<TransferProgress>)>>,
 }
@@ -101,7 +104,7 @@ impl GitHost for TestHost {
 
     fn refresh_synced_repository<'a>(
         &'a self,
-        _: &'a GitCli,
+        cli: &'a GitCli,
         repository: &'a Path,
     ) -> HostFuture<'a, ()> {
         Box::pin(async move {
@@ -109,6 +112,12 @@ impl GitHost for TestHost {
                 .lock()
                 .unwrap()
                 .push(repository.to_path_buf());
+            if !cli.file_server_unreachable(repository) {
+                self.downloads
+                    .lock()
+                    .unwrap()
+                    .push(repository.to_path_buf());
+            }
         })
     }
 

@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Check,
   CircleHelp,
+  CloudUpload,
   GitBranch,
   LoaderCircle,
   LockKeyhole,
@@ -55,6 +56,7 @@ import {
 import { GitSyncStopNotice } from "./git-sync-stop-notice";
 import { GitSyncCommits } from "./git-sync-commits";
 import { GitTransferProgress } from "./git-transfer-indicator";
+import { lfsUnsentWarning } from "./lfs-content-copy";
 import {
   repositoryAccessPresentation,
   type RepositoryAccessPresentation,
@@ -356,6 +358,14 @@ export function GitSyncStatusWidget({
                   >
                     {gitRenumberedMessage(sync.syncMerged.renumbered)}
                   </p>
+                )}
+                {sync.syncUnsent && !stop && !hasSyncError && (
+                  <Alert data-git-sync-unsent>
+                    <CloudUpload />
+                    <AlertDescription className="whitespace-pre-wrap break-words">
+                      {lfsUnsentWarning(sync.syncUnsent)}
+                    </AlertDescription>
+                  </Alert>
                 )}
                 {!parentBlock && publish.block && (
                   <GitPublicationBlockNotice

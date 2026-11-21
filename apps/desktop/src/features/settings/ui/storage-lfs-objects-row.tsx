@@ -3,20 +3,23 @@ import { LoaderCircle } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import { gitTransferLabel } from "@/features/git";
-import { useGitTransfer } from "@/features/git/sidebar";
 import {
+  gitTransferLabel,
   lfsMegabytes,
-  lfsMissingDescription,
-  type LfsMissing,
-} from "@/features/space";
+  lfsUnsentDescription,
+} from "@/features/git";
+import { useGitTransfer } from "@/features/git/sidebar";
+import { lfsMissingDescription, type LfsMissing } from "@/features/space";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
 import { SettingsDisclosureTrigger, SettingsItem } from "./settings-layout";
 
 const VISIBLE_FILE_LIMIT = 50;
 
-// The LFS objects of the repository on this device: all downloaded, the
-// running download, the files the last download left and why, or no access.
+type LfsFiles = LfsMissing["files"];
+
+// The LFS objects of the repository on this device: the files not sent
+// first, then all downloaded, the running download, the files the last
+// download left and why, or no access.
 export function StorageLfsObjectsRow({
   settings,
 }: {
@@ -29,8 +32,9 @@ export function StorageLfsObjectsRow({
   const pulling = state === "pulling";
   const noAccess = state === "missing-creds";
   const missing = state === "ready" ? settings.lfsMissing : null;
+  const unsent = settings.lfsUnsent;
   const busy = pulling || settings.lfsRepairInFlight;
-  const description = pulling
+  const download = pulling
     ? transfer?.direction === "download"
       ? gitTransferLabel(transfer)
       : m.storage_lfs_downloading()
@@ -40,23 +44,35 @@ export function StorageLfsObjectsRow({
         : m.storage_lfs_objects_missing_s3()
       : missing
         ? lfsMissingDescription(missing)
-        : m.storage_lfs_objects_downloaded();
+        : unsent
+          ? null
+          : m.storage_lfs_objects_downloaded();
   const action =
     pulling || missing
       ? m.storage_lfs_download()
       : noAccess && !remote
         ? m.storage_lfs_retry()
         : null;
+  const listed = !!unsent || !!missing;
 
   return (
-    <Collapsible open={filesOpen && !!missing} onOpenChange={setFilesOpen}>
+    <Collapsible open={filesOpen && listed} onOpenChange={setFilesOpen}>
       <SettingsItem
         title={m.storage_lfs_objects()}
-        description={description}
+        description={
+          <>
+            {unsent ? (
+              <span className="block" data-lfs-unsent-description>
+                {lfsUnsentDescription(unsent)}
+              </span>
+            ) : null}
+            {download ? <span className="block">{download}</span> : null}
+          </>
+        }
         actions={
-          action ? (
+          action || listed ? (
             <>
-              {missing ? (
+              {listed ? (
                 <SettingsDisclosureTrigger
                   open={filesOpen}
                   label={
@@ -66,28 +82,43 @@ export function StorageLfsObjectsRow({
                   }
                 />
               ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => void settings.repairLfs()}
-              >
-                {busy ? (
-                  <LoaderCircle
-                    data-icon="inline-start"
-                    className="animate-spin"
-                  />
-                ) : null}
-                {action}
-              </Button>
+              {action ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void settings.repairLfs()}
+                >
+                  {busy ? (
+                    <LoaderCircle
+                      data-icon="inline-start"
+                      className="animate-spin"
+                    />
+                  ) : null}
+                  {action}
+                </Button>
+              ) : null}
             </>
           ) : null
         }
       >
-        {missing ? (
-          <CollapsibleContent className="basis-full">
-            <LfsMissingFiles missing={missing} />
+        {listed ? (
+          <CollapsibleContent className="flex basis-full flex-col gap-3">
+            {unsent ? (
+              <LfsFileList
+                label={m.storage_lfs_unsent_list()}
+                captioned={!!missing}
+                files={unsent.files}
+              />
+            ) : null}
+            {missing ? (
+              <LfsFileList
+                label={m.storage_lfs_files_list()}
+                captioned={!!unsent}
+                files={missing.files}
+              />
+            ) : null}
           </CollapsibleContent>
         ) : null}
       </SettingsItem>
@@ -95,27 +126,48 @@ export function StorageLfsObjectsRow({
   );
 }
 
-function LfsMissingFiles({ missing }: { missing: LfsMissing }) {
-  const visible = missing.files.slice(0, VISIBLE_FILE_LIMIT);
-  const hiddenCount = missing.files.length - visible.length;
+// One list of files with their sizes; its label shows above it when it is
+// one of two lists.
+function LfsFileList({
+  label,
+  captioned,
+  files,
+}: {
+  label: string;
+  captioned: boolean;
+  files: LfsFiles;
+}) {
+  const visible = files.slice(0, VISIBLE_FILE_LIMIT);
+  const hiddenCount = files.length - visible.length;
   return (
-    <ul
-      aria-label={m.storage_lfs_files_list()}
-      className="flex min-w-0 flex-col gap-1 rounded-md bg-muted/50 p-3 font-mono text-xs text-muted-foreground"
-    >
-      {visible.map((file) => (
-        <li key={file.path} className="flex min-w-0 items-baseline gap-3">
-          <span className="min-w-0 flex-1 break-all">{file.path}</span>
-          <span className="shrink-0 font-sans tabular-nums">
-            {lfsMegabytes(file.size)}
-          </span>
-        </li>
-      ))}
-      {hiddenCount > 0 ? (
-        <li className="font-sans">
-          {m.storage_lfs_policy_more({ count: String(hiddenCount) })}
-        </li>
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {captioned ? (
+        <p className="text-xs font-medium text-muted-foreground" aria-hidden>
+          {label}
+        </p>
       ) : null}
-    </ul>
+      <ul
+        aria-label={label}
+        className="flex min-w-0 flex-col gap-1 rounded-md bg-muted/50 p-3 font-mono text-xs text-muted-foreground"
+      >
+        {/* Two versions of one file are two objects to send. */}
+        {visible.map((file, index) => (
+          <li
+            key={`${index}:${file.path}`}
+            className="flex min-w-0 items-baseline gap-3"
+          >
+            <span className="min-w-0 flex-1 break-all">{file.path}</span>
+            <span className="shrink-0 font-sans tabular-nums">
+              {lfsMegabytes(file.size)}
+            </span>
+          </li>
+        ))}
+        {hiddenCount > 0 ? (
+          <li className="font-sans">
+            {m.storage_lfs_policy_more({ count: String(hiddenCount) })}
+          </li>
+        ) : null}
+      </ul>
+    </div>
   );
 }

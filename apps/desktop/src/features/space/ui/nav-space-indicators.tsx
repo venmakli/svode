@@ -1,4 +1,9 @@
-import { CloudDownload, CloudOff, TriangleAlert } from "lucide-react";
+import {
+  CloudDownload,
+  CloudOff,
+  CloudUpload,
+  TriangleAlert,
+} from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -7,9 +12,13 @@ import {
 } from "@/components/ui/tooltip";
 import { SidebarMenuItem, SidebarMenuSub } from "@/components/ui/sidebar";
 import * as m from "@/paraglide/messages.js";
-import { GitTransferIcon, useGitTransfer } from "@/features/git/sidebar";
+import {
+  GitTransferIcon,
+  lfsUnsentHint,
+  useGitTransfer,
+} from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
-import type { LfsMissing, LfsState } from "../model";
+import type { LfsMissing, LfsState, LfsUnsent } from "../model";
 import { lfsMissingDescription } from "./lfs-missing-copy";
 
 export function TreeLoadingRows() {
@@ -36,15 +45,17 @@ export function TreeLoadingRows() {
 
 /**
  * The LFS place of a Space row: one icon, a running transfer before no
- * access before files left without content.
+ * access before files not sent before files left without content.
  */
 export function LfsIndicatorIcon({
   lfsState,
   lfsMissing,
+  lfsUnsent,
   spacePath,
 }: {
   lfsState: LfsState;
   lfsMissing: LfsMissing | null;
+  lfsUnsent: LfsUnsent | null;
   spacePath: string;
 }) {
   const transfer = useGitTransfer(spacePath);
@@ -63,10 +74,36 @@ export function LfsIndicatorIcon({
       </Tooltip>
     );
   }
+  // Colleagues wait for the files not sent; not those not downloaded.
+  if (lfsUnsent) {
+    return <LfsUnsentIcon unsent={lfsUnsent} />;
+  }
   if (lfsState === "ready" && lfsMissing) {
     return <LfsMissingIcon missing={lfsMissing} />;
   }
   return null;
+}
+
+/** A calm static cloud with an arrow up: files whose content is still to send. */
+function LfsUnsentIcon({ unsent }: { unsent: LfsUnsent }) {
+  const label = lfsUnsentHint(unsent);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex size-4 shrink-0 items-center justify-center"
+          role="img"
+          aria-label={label}
+          data-lfs-unsent=""
+        >
+          <CloudUpload className="size-3! text-muted-foreground" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="[overflow-wrap:anywhere]">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** A calm static cloud: not every LFS file is on this device, and why. */

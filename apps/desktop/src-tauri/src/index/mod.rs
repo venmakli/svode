@@ -23,6 +23,7 @@ use svode_core::index::backlinks::BacklinkIndex;
 use svode_core::index::backlinks::{is_external_or_anchor_url, markdown_url_path};
 use svode_core::storage::lfs::LfsState;
 use svode_core::storage::lfs_download::LfsStatus;
+use svode_core::storage::lfs_unsent::LfsUnsent;
 use svode_core::system_path;
 
 use crate::storage::lfs::LfsDownloads;
@@ -165,21 +166,52 @@ impl IndexState {
     pub async fn set_lfs_state_with(&self, app: &AppHandle, key: &IndexKey, state: LfsState) {
         let status = {
             let mut map = self.lfs_states.lock().await;
-            let status = map.get(key).cloned().unwrap_or_default().probed(state);
+            let previous = map.get(key).cloned().unwrap_or_default();
+            let status = LfsStatus {
+                unsent: previous.unsent.clone(),
+                ..previous.probed(state)
+            };
             map.insert(key.clone(), status.clone());
             status
         };
         self.emit_lfs_status(app, key, &status);
     }
 
-    /// Cache the LFS status a download gave `key` and emit
-    /// `space:lfs_state_changed`. All setters emit, so the frontend never
-    /// misses a transition.
+    /// Cache the LFS status a download gave `key`, with the send queue it
+    /// does not change, and emit `space:lfs_state_changed`. All setters
+    /// emit, so the frontend never misses a transition.
     pub async fn set_lfs_status(&self, app: &AppHandle, key: &IndexKey, status: LfsStatus) {
-        self.lfs_states
-            .lock()
-            .await
-            .insert(key.clone(), status.clone());
+        let status = {
+            let mut map = self.lfs_states.lock().await;
+            let status = LfsStatus {
+                unsent: map.get(key).and_then(|previous| previous.unsent.clone()),
+                ..status
+            };
+            map.insert(key.clone(), status.clone());
+            status
+        };
+        self.emit_lfs_status(app, key, &status);
+    }
+
+    /// Cache the send queue of the repository of `key` (DF-377 R5) and emit
+    /// `space:lfs_state_changed` when it changed or `always`.
+    pub async fn set_lfs_unsent(
+        &self,
+        app: &AppHandle,
+        key: &IndexKey,
+        unsent: Option<LfsUnsent>,
+        always: bool,
+    ) {
+        let status = {
+            let mut map = self.lfs_states.lock().await;
+            let previous = map.get(key).cloned().unwrap_or_default();
+            if previous.unsent == unsent && !always {
+                return;
+            }
+            let status = LfsStatus { unsent, ..previous };
+            map.insert(key.clone(), status.clone());
+            status
+        };
         self.emit_lfs_status(app, key, &status);
     }
 
@@ -193,6 +225,7 @@ impl IndexState {
                 "spaceId": space_id,
                 "state": status.state,
                 "missing": status.missing,
+                "unsent": status.unsent,
             }),
         );
     }

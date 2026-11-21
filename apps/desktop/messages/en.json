@@ -1319,6 +1319,38 @@
   "storage_lfs_files_show": "Show files",
   "storage_lfs_files_hide": "Hide files",
   "storage_lfs_files_list": "Files not downloaded",
+  "storage_lfs_unsent_files": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} file not sent",
+        "countPlural=*": "{count} files not sent"
+      }
+    }
+  ],
+  "storage_lfs_send_stop_unreachable": "The file server is unreachable",
+  "storage_lfs_send_stop_no_access": "No access to the file server",
+  "storage_lfs_send_stop_stalled": "Sending stopped: no data was transferred for 2 minutes",
+  "storage_lfs_send_stop_stalled_file": "Sending “{name}” ({size}) stopped: no data was transferred for 2 minutes",
+  "storage_lfs_send_stop_not_on_device": "The file is not on this device",
+  "storage_lfs_unsent_outcome_next_sync": "changes are published, the files will be sent with the next sync.",
+  "storage_lfs_unsent_outcome_kept": "changes are published, the files are kept on this device.",
+  "storage_lfs_unsent_sync_warning": [
+    {
+      "declarations": [
+        "input count",
+        "input reason",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Changes are published, but {count} file is not sent: {reason}. It will be sent with the next sync.",
+        "countPlural=*": "Changes are published, but {count} files are not sent: {reason}. They will be sent with the next sync."
+      }
+    }
+  ],
+  "storage_lfs_unsent_list": "Unsent files",
   "storage_lfs_objects_missing_s3": "S3 keys are needed: choose them under “S3 storage” and save.",
   "storage_lfs_objects_missing_remote": "No access to the Git LFS remote — check it below.",
   "storage_lfs_banner_missing_remote_title": "The Git LFS server requires authentication",

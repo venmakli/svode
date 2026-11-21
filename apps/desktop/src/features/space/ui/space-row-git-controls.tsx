@@ -5,13 +5,14 @@ import {
   useSpaceSidebarGit,
   type SpaceSidebarGitCloneProgress,
 } from "@/features/git/sidebar";
-import type { LfsMissing, LfsState } from "../model";
+import type { LfsMissing, LfsState, LfsUnsent } from "../model";
 import { RepositoryAccessPreflightDialog } from "@/features/git";
 import { LfsIndicatorIcon } from "./nav-space-indicators";
 
 interface SpaceRowGitControlsProps {
   lfsState: LfsState;
   lfsMissing: LfsMissing | null;
+  lfsUnsent: LfsUnsent | null;
   loading: boolean;
   refreshing: boolean;
   rootPath: string;
@@ -32,6 +33,7 @@ function cloneProgressLabel(cloning: SpaceSidebarGitCloneProgress): string {
 export function useSpaceRowGitControls({
   lfsState,
   lfsMissing,
+  lfsUnsent,
   loading,
   refreshing,
   rootPath,
@@ -51,6 +53,7 @@ export function useSpaceRowGitControls({
         <LfsIndicatorIcon
           lfsState={lfsState}
           lfsMissing={lfsMissing}
+          lfsUnsent={lfsUnsent}
           spacePath={spacePath}
         />
         <SpaceGitActivityIndicator

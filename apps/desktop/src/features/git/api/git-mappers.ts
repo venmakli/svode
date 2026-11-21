@@ -68,6 +68,7 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         ...(dto.renumbered?.length
           ? { renumbered: dto.renumbered.map((item) => ({ ...item })) }
           : {}),
+        ...(dto.unsent ? { unsent: dto.unsent } : {}),
         ...(dto.parent
           ? {
               parent: toParentPublication(dto.parent),

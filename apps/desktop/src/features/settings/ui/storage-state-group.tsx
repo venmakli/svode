@@ -37,7 +37,7 @@ export function StorageStateGroup({
   return (
     <>
       <SettingsGroup title={m.storage_state_group()}>
-        {state === "n/a" ? null : (
+        {state === "n/a" && !settings.lfsUnsent ? null : (
           <StorageLfsObjectsRow key="objects" settings={settings} />
         )}
         <StorageLfsPolicyRow

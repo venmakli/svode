@@ -528,6 +528,143 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
     }
   });
 
+  test("a sync that published changes without their LFS content warns in the Dialog and a toast, without the error state", async () => {
+    const dom = await createTestDom();
+    const path = "/project";
+    activeSpacePath = path;
+    const unsent = {
+      files: [
+        { path: "clips/video.mov", size: 31_457_280 },
+        { path: "photos/b.jpg", size: 10_485_760 },
+      ],
+      bytes: 41_943_040,
+      stop: { kind: "unreachable" as const },
+    };
+    let report: object = { type: "success", publishedHead: "abc", unsent };
+    mockNativeIpc(
+      async (command) => {
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/project.git";
+        if (command === "git_publication_status") return null;
+        if (command === "git_last_synced") return null;
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: path,
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_fetch_status" || command === "git_status")
+          return { branch: "main", ahead: 0, behind: 0, files: [] };
+        if (command === "git_unpushed_commits") return [];
+        if (command === "git_sync") return report;
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { recordGitOperationOutcome } =
+      await import("../api/git-operation-events");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const m = await import("@/paraglide/messages.js");
+    const previousLocale = getLocale();
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+    const warning = () =>
+      dom.document.querySelector("[role=dialog] [data-git-sync-unsent]")
+        ?.textContent ?? null;
+    const expected = {
+      en: "Changes are published, but 2 files are not sent: the file server is unreachable. They will be sent with the next sync.",
+      ru: "Изменения опубликованы, но 2 файла не отправлены: сервер файлов недоступен. Они отправятся при следующей синхронизации.",
+    };
+    try {
+      for (const locale of ["en", "ru"] as const) {
+        await setLocale(locale, { reload: false });
+        report = { type: "success", publishedHead: "abc", unsent };
+
+        // A background sync records the warning on the repository, no toast.
+        toasts.length = 0;
+        recordGitOperationOutcome({
+          repository: path,
+          active: false,
+          report: { type: "success", publishedHead: "abc", unsent },
+          error: null,
+        });
+        expect(toasts).toEqual([]);
+        await dom.render(
+          <TooltipProvider>
+            <GitSyncStatusWidget key={locale} repositoryPath={path} />
+          </TooltipProvider>,
+        );
+        await settle();
+        // Not a failure: the status has neither the error nor a stop.
+        expect(dom.document.querySelector("[data-git-sync-error]")).toBe(null);
+        expect(dom.document.querySelector("[data-git-sync-stopped]")).toBe(
+          null,
+        );
+        expect(
+          dom.document.querySelector("[data-git-sync-synced]") === null,
+        ).toBe(false);
+        await act(async () => {
+          dom.document
+            .querySelector<HTMLButtonElement>("[data-repository-control]")!
+            .click();
+        });
+        await settle();
+        expect(warning()).toBe(expected[locale]);
+        expect(
+          dom.document
+            .querySelector("[data-git-sync-unsent]")!
+            .classList.contains("text-destructive"),
+        ).toBe(false);
+
+        // An explicit sync warns with a toast instead of the success toast
+        // and keeps the Dialog open with the warning.
+        const sync = Array.from(
+          dom.document.querySelectorAll<HTMLButtonElement>(
+            "[role=dialog] button",
+          ),
+        ).find((button) => button.textContent === m.git_sync_action());
+        toasts.length = 0;
+        await act(async () => {
+          sync!.click();
+        });
+        await settle();
+        expect(toasts).toEqual([expected[locale]]);
+        expect(dom.document.querySelector("[role=dialog]") === null).toBe(
+          false,
+        );
+        expect(warning()).toBe(expected[locale]);
+
+        // The queue sent: the next sync succeeds without the warning.
+        report = { type: "success", publishedHead: "abc" };
+        toasts.length = 0;
+        await act(async () => {
+          sync!.click();
+        });
+        await settle();
+        expect(toasts).toEqual([m.git_sync_success()]);
+        expect(useGitStore.getState().syncUnsent[path]).toBeUndefined();
+        await dom.render(null);
+        useGitStore.getState().clear(path);
+      }
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+      await setLocale(previousLocale, { reload: false });
+    }
+  });
+
   test("a transfer longer than about two seconds shows its line with the file progress above the Dialog buttons", async () => {
     const dom = await createTestDom();
     const path = "/project";

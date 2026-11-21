@@ -92,6 +92,7 @@ if (process.env.SVODE_SPACE_LFS_STATE_SYNC_DOM !== "1") {
       expect(useSpaceStore.getState().activeRootLfs).toEqual({
         state: "ready",
         missing: null,
+        unsent: null,
       });
       await report({
         projectPath: PROJECT,
@@ -102,6 +103,7 @@ if (process.env.SVODE_SPACE_LFS_STATE_SYNC_DOM !== "1") {
       expect(useSpaceStore.getState().activeRootLfs).toEqual({
         state: "ready",
         missing,
+        unsent: null,
       });
 
       await report({
@@ -111,6 +113,78 @@ if (process.env.SVODE_SPACE_LFS_STATE_SYNC_DOM !== "1") {
         missing: null,
       });
       expect(spaceOf("media").lfsMissing).toBe(null);
+    } finally {
+      await dom.render(null);
+      useSpaceStore.setState({
+        spaces: previous,
+        activeRootLfs: previousRoot,
+      });
+      clearNativeMocks();
+    }
+  });
+
+  test("the window asks for the send queues once it listens, and a status event gives a Space its files not sent", async () => {
+    const asked: unknown[] = [];
+    mockNativeIpc(
+      (command, args) => {
+        if (command === "refresh_lfs_unsent") asked.push(args);
+        return null;
+      },
+      { shouldMockEvents: true },
+    );
+    const previous = useSpaceStore.getState().spaces;
+    const previousRoot = useSpaceStore.getState().activeRootLfs;
+    const unsent = {
+      files: [{ path: "clips/video.mov", size: 41_943_040 }],
+      bytes: 41_943_040,
+      stop: { kind: "unreachable" as const },
+    };
+    const spaceOf = (id: string) =>
+      useSpaceStore.getState().spaces.find((item) => item.id === id)!;
+    const report = (payload: Record<string, unknown>) =>
+      act(async () => {
+        await emit("space:lfs_state_changed", payload);
+      });
+    try {
+      useSpaceStore.setState({ spaces: [space("media")] });
+      await dom.render(<Sync />);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(asked).toEqual([{ projectPath: PROJECT }]);
+
+      // A Space that appears asks again.
+      await act(async () => {
+        useSpaceStore.setState({ spaces: [space("media"), space("docs")] });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(asked.length).toBe(2);
+
+      await report({
+        projectPath: PROJECT,
+        spaceId: "media",
+        state: "ready",
+        missing: null,
+        unsent,
+      });
+      expect(spaceOf("media").lfsUnsent).toEqual(unsent);
+      await report({
+        projectPath: PROJECT,
+        spaceId: null,
+        state: "n/a",
+        missing: null,
+        unsent,
+      });
+      expect(useSpaceStore.getState().activeRootLfs.unsent).toEqual(unsent);
+
+      await report({
+        projectPath: PROJECT,
+        spaceId: "media",
+        state: "ready",
+        missing: null,
+        unsent: null,
+      });
+      expect(spaceOf("media").lfsUnsent).toBe(null);
     } finally {
       await dom.render(null);
       useSpaceStore.setState({

@@ -63,6 +63,10 @@ pub enum SyncResult {
         /// Items this sync gave a new `unique_id` number (DF-237 R5).
         #[serde(skip_serializing_if = "Vec::is_empty")]
         renumbered: Vec<RenumberedItem>,
+        /// LFS content of published commits that is still to be sent: the
+        /// sync succeeded with a warning (DF-377 R3).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unsent: Option<crate::storage::lfs_unsent::LfsUnsent>,
     },
     Conflict {
         files: Vec<String>,
@@ -223,6 +227,7 @@ pub async fn sync_with(
             published_head: head.unwrap_or_default(),
             merged,
             renumbered,
+            unsent: None,
         });
     }
 
@@ -246,6 +251,7 @@ pub async fn sync_with(
         published_head: published_head.unwrap_or_default(),
         merged,
         renumbered,
+        unsent: None,
     })
 }
 
@@ -329,6 +335,7 @@ async fn sync_without_upstream(
         published_head: published_head.unwrap_or_default(),
         merged,
         renumbered,
+        unsent: None,
     })
 }
 
@@ -1238,6 +1245,7 @@ pub(crate) async fn continue_merge(
         published_head: published_head.unwrap_or_default(),
         merged,
         renumbered: Vec::new(),
+        unsent: None,
     })
 }
 

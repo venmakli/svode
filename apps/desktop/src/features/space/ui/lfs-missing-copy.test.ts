@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import type { LfsMissing } from "../model";
-import { lfsMegabytes, lfsMissingDescription } from "./lfs-missing-copy";
+import { lfsMissingDescription } from "./lfs-missing-copy";
 
 const MIB = 1024 * 1024;
 
@@ -74,17 +74,5 @@ test("every stop names its cause; other shows the git-lfs text once punctuated",
     expect(of({ kind: "other", detail: "  " })).toBe(
       "Не скачан 1 файл · 1 МБ.",
     );
-  });
-});
-
-test("sizes read in megabytes and a tiny file is not shown as zero", async () => {
-  await inLocale("ru", () => {
-    expect(lfsMegabytes(125_829_120)).toBe("120 МБ");
-    expect(lfsMegabytes(419_430)).toBe("0,4 МБ");
-    expect(lfsMegabytes(60_000)).toBe("0,1 МБ");
-    expect(lfsMegabytes(2_048)).toBe("< 0,1 МБ");
-  });
-  await inLocale("en", () => {
-    expect(lfsMegabytes(2_048)).toBe("< 0.1 MB");
   });
 });

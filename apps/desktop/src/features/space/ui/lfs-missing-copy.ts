@@ -1,18 +1,6 @@
 import * as m from "@/paraglide/messages.js";
-import { transferMegabytes } from "@/features/git";
+import { lfsMegabytes } from "@/features/git";
 import type { LfsDownloadStop, LfsMissing } from "../model";
-
-const MEBIBYTE = 1024 * 1024;
-const SMALLEST_SHOWN = MEBIBYTE / 10;
-
-/** Megabytes of LFS content; a file below 0.05 MB reads "< 0.1 MB", not "0 MB". */
-export function lfsMegabytes(bytes: number): string {
-  const size =
-    bytes > 0 && bytes < SMALLEST_SHOWN / 2
-      ? `< ${transferMegabytes(SMALLEST_SHOWN)}`
-      : transferMegabytes(bytes);
-  return m.storage_lfs_missing_size({ size });
-}
 
 /** "3 files not downloaded · 120 MB". */
 export function lfsMissingSummary(missing: LfsMissing): string {

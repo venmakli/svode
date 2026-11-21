@@ -28,7 +28,7 @@ use crate::git::transfer::{
 
 const POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
 /// A pointer file is well under this size; a larger file is content.
-const POINTER_MAX_BYTES: u64 = 200;
+pub(crate) const POINTER_MAX_BYTES: u64 = 200;
 
 /// Files up to this size share one fetch whatever their sizes.
 const SMALL_FILE: u64 = 256 * 1024;
@@ -132,12 +132,15 @@ impl LfsMissing {
 ///
 /// `state` is `Pulling` while a download runs, `MissingCreds` when the
 /// readiness check or the storage refused this device; with `Ready`, a
-/// `missing` set means not every file is downloaded.
+/// `missing` set means not every file is downloaded. `unsent` is the send
+/// queue of the repository (DF-377 R5), which a download does not change:
+/// the transitions below leave it to the host.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LfsStatus {
     pub state: LfsState,
     pub missing: Option<LfsMissing>,
+    pub unsent: Option<super::lfs_unsent::LfsUnsent>,
 }
 
 impl LfsStatus {
@@ -151,6 +154,7 @@ impl LfsStatus {
             (state, _) => Self {
                 state,
                 missing: self.missing.clone(),
+                unsent: None,
             },
         }
     }
@@ -165,14 +169,17 @@ impl LfsStatus {
                     state => state,
                 },
                 missing: None,
+                unsent: None,
             },
             DownloadPlan::NotReady { state, missing } => Self {
                 state: *state,
                 missing: LfsMissing::of(missing, DownloadStop::NoAccess),
+                unsent: None,
             },
             DownloadPlan::Download(_) => Self {
                 state: LfsState::Pulling,
                 missing: None,
+                unsent: None,
             },
         }
     }
@@ -190,6 +197,7 @@ impl LfsStatus {
         Self {
             state,
             missing: LfsMissing::of(&outcome.missing, stop),
+            unsent: None,
         }
     }
 }
@@ -241,10 +249,9 @@ pub async fn missing_files(cli: &GitCli, repo_dir: &Path) -> Result<MissingFiles
             let (_, rest) = line.split_once(' ')?;
             let (_, path) = rest.split_once(' ')?;
             let (oid, size) = read_pointer(&repo_dir.join(path))?;
-            let local = store.as_deref().is_some_and(|store| {
-                std::fs::metadata(store.join(&oid[..2]).join(&oid[2..4]).join(&oid))
-                    .is_ok_and(|object| object.len() == size)
-            });
+            let local = store
+                .as_deref()
+                .is_some_and(|store| stored_locally(store, &oid, size));
             Some(Pointer {
                 file: LfsFile {
                     path: path.to_owned(),
@@ -261,13 +268,20 @@ pub async fn missing_files(cli: &GitCli, repo_dir: &Path) -> Result<MissingFiles
 }
 
 /// The local object store of git-lfs, `<common Git dir>/lfs/objects`.
-async fn object_store(cli: &GitCli, repo_dir: &Path) -> Option<PathBuf> {
+pub(crate) async fn object_store(cli: &GitCli, repo_dir: &Path) -> Option<PathBuf> {
     let out = cli
         .exec_redacted(repo_dir, &["rev-parse", "--git-common-dir"])
         .await
         .ok()?;
     let dir = out.stdout.trim();
     (out.exit_code == 0 && !dir.is_empty()).then(|| repo_dir.join(dir).join("lfs/objects"))
+}
+
+/// Whether the local object store `store` holds the whole object `oid`.
+pub(crate) fn stored_locally(store: &Path, oid: &str, size: u64) -> bool {
+    oid.len() > 4
+        && std::fs::metadata(store.join(&oid[..2]).join(&oid[2..4]).join(oid))
+            .is_ok_and(|object| object.len() == size)
 }
 
 /// The object and size of the LFS pointer file at `path`, when it is one:
@@ -283,7 +297,14 @@ fn read_pointer(path: &Path) -> Option<(String, u64)> {
     let read = std::fs::File::open(path)
         .and_then(|mut file| file.read(&mut head))
         .ok()?;
-    let text = std::str::from_utf8(&head[..read]).ok()?;
+    parse_pointer(std::str::from_utf8(&head[..read]).ok()?)
+}
+
+/// The object and size named by the LFS pointer `text`, when it is one.
+pub(crate) fn parse_pointer(text: &str) -> Option<(String, u64)> {
+    if text.len() >= POINTER_MAX_BYTES as usize {
+        return None;
+    }
     let mut lines = text.lines();
     if lines.next() != Some(POINTER_PREFIX) {
         return None;
@@ -597,7 +618,7 @@ fn other(text: &str) -> DownloadStop {
 
 /// The lines of git-lfs that say what went wrong, without credentials in
 /// URLs and without its own progress, at most [`DETAIL_MAX_CHARS`].
-fn detail_text(text: &str) -> String {
+pub(crate) fn detail_text(text: &str) -> String {
     let redacted = crate::git::auth::redact_url_credentials(text);
     let lines = redacted
         .lines()

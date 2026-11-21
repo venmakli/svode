@@ -6,6 +6,7 @@ import type {
   GitTransfer,
   GitStatusFailure,
   GitPublicationStatus,
+  GitLfsUnsent,
   GitSyncMerged,
 } from "./types";
 import type { GitSyncStop } from "./sync-stop";
@@ -33,6 +34,8 @@ import { gitStatusPathIndex } from "./git-status-index";
  * - `syncStop` is the unfinished Git operation that stops sync.
  * - `syncMerged` are the Svode service files the last sync merged and the
  *   items it renumbered.
+ * - `syncUnsent` is the LFS content the last successful sync left to send:
+ *   a warning, not a sync error.
  * - `publicationBlock` lists the Spaces that stopped the project publication;
  *   like a stop, it is not a sync error.
  */
@@ -54,6 +57,7 @@ interface GitState {
   syncError: Record<string, string>;
   syncStop: Record<string, GitSyncStop>;
   syncMerged: Record<string, GitSyncMerged>;
+  syncUnsent: Record<string, GitLfsUnsent>;
   publicationBlock: Record<string, GitPublicationBlock>;
   remoteError: Record<string, string>;
   remoteChecked: Record<string, boolean>;
@@ -89,6 +93,7 @@ interface GitState {
   setSyncError: (spacePath: string, error: string | null) => void;
   setSyncStop: (spacePath: string, stop: GitSyncStop | null) => void;
   setSyncMerged: (spacePath: string, merged: GitSyncMerged) => void;
+  setSyncUnsent: (spacePath: string, unsent: GitLfsUnsent | null) => void;
   setPublicationBlock: (
     spacePath: string,
     block: GitPublicationBlock | null,
@@ -163,6 +168,7 @@ export const useGitStore = create<GitState>((set, get) => {
     syncError: {},
     syncStop: {},
     syncMerged: {},
+    syncUnsent: {},
     publicationBlock: {},
     remoteError: {},
     remoteChecked: {},
@@ -261,6 +267,7 @@ export const useGitStore = create<GitState>((set, get) => {
         syncError: repositoryState(s.syncError, spacePath, status.repository),
         syncStop: repositoryState(s.syncStop, spacePath, status.repository),
         syncMerged: repositoryState(s.syncMerged, spacePath, status.repository),
+        syncUnsent: repositoryState(s.syncUnsent, spacePath, status.repository),
         publicationBlock: repositoryState(
           s.publicationBlock,
           spacePath,
@@ -324,6 +331,7 @@ export const useGitStore = create<GitState>((set, get) => {
         const { [spacePath]: _rmError, ...syncError } = s.syncError;
         const { [spacePath]: _rmStop, ...syncStop } = s.syncStop;
         const { [spacePath]: _rmMerged, ...syncMerged } = s.syncMerged;
+        const { [spacePath]: _rmUnsent, ...syncUnsent } = s.syncUnsent;
         const { [spacePath]: _rmBlock, ...publicationBlock } =
           s.publicationBlock;
         const { [spacePath]: _rmRemoteError, ...remoteError } = s.remoteError;
@@ -345,6 +353,7 @@ export const useGitStore = create<GitState>((set, get) => {
           syncError,
           syncStop,
           syncMerged,
+          syncUnsent,
           publicationBlock,
           remoteError,
           remoteChecked,
@@ -390,6 +399,16 @@ export const useGitStore = create<GitState>((set, get) => {
         if (named) next[repository] = merged;
         else delete next[repository];
         return { syncMerged: next };
+      }),
+
+    setSyncUnsent: (spacePath, unsent) =>
+      set((s) => {
+        const repository = s.statuses[spacePath]?.repository ?? spacePath;
+        if (!unsent && !s.syncUnsent[repository]) return s;
+        const next = { ...s.syncUnsent };
+        if (unsent) next[repository] = unsent;
+        else delete next[repository];
+        return { syncUnsent: next };
       }),
 
     setPublicationBlock: (spacePath, block) =>

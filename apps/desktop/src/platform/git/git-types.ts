@@ -1,3 +1,5 @@
+import type { LfsUnsentDto } from "@/platform/space/space-types";
+
 export interface GitAvailabilityDto {
   git: boolean;
   gitLfs: boolean;
@@ -68,6 +70,8 @@ export type SyncResultDto =
       merged?: string[];
       /** Items this sync gave a new `unique_id` number. */
       renumbered?: GitRenumberedItemDto[];
+      /** LFS content of published commits still to send: a warning. */
+      unsent?: LfsUnsentDto;
       parent?: ParentPublicationDto;
       remoteStatus?: GitStatusDto;
     }

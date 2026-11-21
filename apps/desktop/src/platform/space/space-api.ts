@@ -16,6 +16,7 @@ import type {
   LfsRemoteDiagnosticDto,
   LfsStateDto,
   LfsStatusDto,
+  LfsUnsentDto,
   EnterProjectResultDto,
   ProjectWindowRequestDto,
   SpaceDirtyEventDto,
@@ -78,6 +79,7 @@ export interface LfsStateChangedEventDto {
   spaceId: string | null;
   state: LfsStateDto;
   missing: LfsMissingDto | null;
+  unsent: LfsUnsentDto | null;
 }
 
 export type SpaceFileEventName =
@@ -293,6 +295,14 @@ export function diagnoseLfsPolicy(
 
 export function repairLfs(input: SpacePoolInputDto): Promise<LfsStateDto> {
   return invokeCommand<LfsStateDto>("repair_lfs", input);
+}
+
+/**
+ * Publish the send queues of the repositories of an open project as
+ * `space:lfs_state_changed`, for the files a previous run left unsent.
+ */
+export function refreshLfsUnsent(projectPath: string): Promise<void> {
+  return invokeCommand<void>("refresh_lfs_unsent", { projectPath });
 }
 
 export function listenLfsStateChanged(

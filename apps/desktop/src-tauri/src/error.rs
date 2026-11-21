@@ -1313,8 +1313,12 @@ mod tests {
     #[test]
     fn an_unreachable_file_server_keeps_its_cause_in_the_core_transport_shape() {
         use svode_core::git::diagnostics::GitFailure;
-        let core = svode_core::git::GitError::SyncFailed(GitFailure::file_server_unreachable(
+        use svode_core::git::diagnostics::GitStage;
+        let core = svode_core::git::GitError::SyncFailed(GitFailure::from_output(
             std::path::Path::new("/nonexistent/Research"),
+            GitStage::Push,
+            "ssh: connect to host 10.255.255.1 port 2222: Operation timed out",
+            true,
         ));
         let expected = serde_json::to_value(&core).unwrap();
         let value = serde_json::to_value(AppError::from(core)).unwrap();

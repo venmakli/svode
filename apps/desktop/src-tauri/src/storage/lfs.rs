@@ -6,6 +6,8 @@
 //! - `download_in_background` runs the core download of the missing LFS files
 //!   after a clone or a sync (DF-368 R1), one per repository (R5).
 //! - `repair_lfs` is the "Download files" gesture: the same download.
+//! - The send queue of a repository (DF-377 R5) is read from disk after
+//!   every publication and when a window asks for its project.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -450,6 +452,69 @@ async fn download_missing(app: &AppHandle, key: IndexKey) {
     }
 }
 
+/// Read the send queue of `repository` after a publication in the
+/// background and publish it with the LFS status of its repository.
+pub fn refresh_unsent_in_background(app: &AppHandle, repository: &Path) {
+    let app = app.clone();
+    let repository = repository.to_path_buf();
+    tauri::async_runtime::spawn(async move {
+        let index = app.state::<IndexState>();
+        let key = index
+            .key_for_space_dir(&repository)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(repository.clone()));
+        refresh_unsent(&app, &index, &key, &repository, false).await;
+    });
+}
+
+/// Cache the send queue of the repository at `repo_dir` for `key`, and
+/// publish the status of `key` when the queue changed or `always`.
+async fn refresh_unsent(
+    app: &AppHandle,
+    index: &IndexState,
+    key: &IndexKey,
+    repo_dir: &Path,
+    always: bool,
+) {
+    let Some(cli) = app.state::<GitState>().runtime().detected().cloned() else {
+        return;
+    };
+    let unsent = svode_core::storage::lfs_unsent::unsent(&cli, repo_dir).await;
+    index.set_lfs_unsent(app, key, unsent, always).await;
+}
+
+/// IPC: publish the send queues of the repositories of an open project
+/// (DF-377 R5) with their LFS status, so a window shows the files a
+/// previous run left unsent. The repositories of the queues are the
+/// project and its Spaces with a repository of their own.
+#[tauri::command]
+pub async fn refresh_lfs_unsent(
+    app: AppHandle,
+    project_path: String,
+    index_state: State<'_, IndexState>,
+) -> Result<(), AppError> {
+    let project = PathBuf::from(&project_path);
+    for key in index_state.keys_for_project(&project).await {
+        let scope = match resolve_effective_storage_scope_for_key(
+            &index_state,
+            &project,
+            key.clone(),
+        )
+        .await
+        {
+            Ok(scope) if scope.pool_key == key => scope,
+            Ok(_) => continue,
+            Err(error) => {
+                tracing::warn!(?key, "LFS send queue: storage scope failed: {error}");
+                continue;
+            }
+        };
+        // A window that asks shows nothing yet: it hears every status.
+        refresh_unsent(&app, &index_state, &key, &scope.repo_dir, true).await;
+    }
+    Ok(())
+}
+
 /// IPC: the "Download files" gesture of Settings → Storage — the download of
 /// the missing LFS files of the scope (DF-368 R1). While one runs, it runs
 /// again after it. Returns the LFS state the download left.
@@ -473,7 +538,8 @@ pub async fn repair_lfs(
 }
 
 /// IPC: the LFS state of the scope with the files the last download left
-/// without content and why it stopped (DF-368 R6). S3 readiness resolves the
+/// without content and why it stopped (DF-368 R6), and its send queue
+/// (DF-377 R5). S3 readiness resolves the
 /// current Variables snapshot on every read; active transfers keep their
 /// state; remote-provider probes remain cached.
 #[tauri::command]
@@ -494,12 +560,13 @@ async fn lfs_status(
 ) -> Result<LfsStatus, AppError> {
     let project = PathBuf::from(project_path);
     let scope = resolve_effective_storage_scope(index_state, &project, space_id.as_deref()).await?;
+    refresh_unsent(app, index_state, &scope.pool_key, &scope.repo_dir, false).await;
 
     // Only probe if the strategy is LFS-flavoured — otherwise NotApplicable
     // is correct and re-probing would be wasted work.
     if !strategy_uses_lfs_runtime(&scope.config.strategy) {
         reset_lfs_state_if_needed(app, index_state, &scope.pool_key).await;
-        return Ok(LfsStatus::default());
+        return Ok(index_state.get_lfs_status(&scope.pool_key).await);
     }
 
     let cached = index_state.get_lfs_status(&scope.pool_key).await;

@@ -165,6 +165,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       s3Prefix: "svode/abc",
       lfsState: "ready",
       lfsMissing: null,
+      lfsUnsent: null,
       lfsRepairInFlight: false,
       lfsRemoteDiagnostic: null,
       lfsRemoteDiagnosticInFlight: false,
@@ -837,6 +838,82 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     expect(buttons("Download files", objectsRow()).length).toBe(0);
     await press(buttons("Retry", objectsRow())[0]);
     expect(calls).toEqual(["repairLfs"]);
+  });
+
+  test("LFS objects: files not sent first with count, size, cause and their own list, without an action", async () => {
+    const lfsRemote = {
+      assetsStrategy: "lfs-remote",
+      savedAssetsStrategy: "lfs-remote",
+    } as const;
+    const objectsRow = () =>
+      Array.from(
+        group("Status").querySelectorAll<HTMLElement>('[data-slot="item"]'),
+      ).find((item) => item.textContent?.startsWith("LFS objects"))!;
+    const files = Array.from({ length: 60 }, (_, index) => ({
+      path: `media/very/long/folder/name/that/keeps/going/clip-${index}.mov`,
+      size: 1024 * 1024,
+    }));
+    const unsent = {
+      files,
+      bytes: 60 * 1024 * 1024,
+      stop: { kind: "unreachable" as const },
+    };
+
+    // A local strategy has no row: the list of an earlier one is closed.
+    await render(storageFixture());
+    expect(document.body.textContent).not.toContain("LFS objects");
+
+    // Files not sent: the description, the list on request, no action.
+    await render(storageFixture({ ...lfsRemote, lfsUnsent: unsent }));
+    expect(objectsRow().textContent).toContain(
+      "60 files not sent · 60 MB. The file server is unreachable.",
+    );
+    expect(objectsRow().textContent).not.toContain("All files downloaded.");
+    expect(buttons("Download files", objectsRow()).length).toBe(0);
+    await press(buttons("Show files", objectsRow())[0]);
+    const lists = objectsRow().querySelectorAll("ul");
+    expect(lists.length).toBe(1);
+    expect(lists[0].getAttribute("aria-label")).toBe("Unsent files");
+    const items = Array.from(lists[0].querySelectorAll("li"));
+    expect(items.length).toBe(51);
+    expect(items[50].textContent).toBe("And 10 more.");
+    await press(buttons("Hide files", objectsRow())[0]);
+
+    // With files not downloaded too: files not sent first, two lists, the
+    // download only for the files not downloaded.
+    await render(
+      storageFixture({
+        ...lfsRemote,
+        lfsUnsent: {
+          ...unsent,
+          files: files.slice(0, 2),
+          bytes: 2 * 1024 * 1024,
+        },
+        lfsMissing: {
+          files: [{ path: "photos/a.jpg", size: 1024 * 1024 }],
+          bytes: 1024 * 1024,
+          stop: { kind: "unreachable" },
+        },
+      }),
+    );
+    const text = objectsRow().textContent!;
+    expect(text).toContain("2 files not sent · 2 MB.");
+    expect(text.indexOf("not sent")).toBeLessThan(
+      text.indexOf("not downloaded"),
+    );
+    expect(buttons("Download files", objectsRow()).length).toBe(1);
+    await press(buttons("Show files", objectsRow())[0]);
+    expect(
+      Array.from(objectsRow().querySelectorAll("ul")).map((list) =>
+        list.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Unsent files", "Files not downloaded"]);
+
+    // The strategy not probed yet still shows the files not sent.
+    await render(
+      storageFixture({ ...lfsRemote, lfsState: "n/a", lfsUnsent: unsent }),
+    );
+    expect(objectsRow().textContent).toContain("60 files not sent");
   });
 
   test("a space repository offers the project setting first and says why it cannot take it", async () => {

@@ -116,6 +116,7 @@ export function SpaceRow({
   const gitControls = useSpaceRowGitControls({
     lfsState: ws.lfsState,
     lfsMissing: ws.lfsMissing ?? null,
+    lfsUnsent: ws.lfsUnsent ?? null,
     loading,
     refreshing,
     rootPath,

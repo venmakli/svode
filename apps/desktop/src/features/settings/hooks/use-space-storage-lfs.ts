@@ -6,7 +6,7 @@ import {
   saveGitRemoteCredentials,
   type GitAuthChallenge,
 } from "@/features/git";
-import type { LfsMissing, LfsState } from "@/features/space";
+import type { LfsMissing, LfsState, LfsUnsent } from "@/features/space";
 import {
   diagnoseLfsRemote as diagnoseLfsRemoteApi,
   getLfsStatus,
@@ -34,6 +34,7 @@ export function useSpaceStorageLfs({
   const [lfsVersion, setLfsVersion] = useState<string | null>(null);
   const [lfsState, setLfsState] = useState<LfsState>("n/a");
   const [lfsMissing, setLfsMissing] = useState<LfsMissing | null>(null);
+  const [lfsUnsent, setLfsUnsent] = useState<LfsUnsent | null>(null);
   const [lfsRepairInFlight, setLfsRepairInFlight] = useState(false);
   const [lfsRemoteDiagnostic, setLfsRemoteDiagnostic] =
     useState<LfsRemoteDiagnostic | null>(null);
@@ -66,6 +67,7 @@ export function useSpaceStorageLfs({
       ) {
         setLfsState(status.state);
         setLfsMissing(status.missing);
+        setLfsUnsent(status.unsent ?? null);
       }
     } catch (err) {
       console.warn("get_lfs_status failed:", err);
@@ -75,6 +77,7 @@ export function useSpaceStorageLfs({
       ) {
         setLfsState("n/a");
         setLfsMissing(null);
+        setLfsUnsent(null);
       }
     }
   }, [projectPath, currentSpaceId, ownerKey]);
@@ -154,6 +157,7 @@ export function useSpaceStorageLfs({
       const nextState = event.payload.state;
       setLfsState(nextState);
       setLfsMissing(event.payload.missing);
+      setLfsUnsent(event.payload.unsent ?? null);
       setLfsRemoteDiagnostic((current) =>
         current && current.state !== nextState ? null : current,
       );
@@ -243,6 +247,7 @@ export function useSpaceStorageLfs({
     lfsVersion,
     lfsState,
     lfsMissing,
+    lfsUnsent,
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,

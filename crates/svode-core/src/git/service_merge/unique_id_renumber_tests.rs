@@ -358,6 +358,7 @@ fn the_sync_result_names_the_renumbered_items_for_the_desktop() {
         published_head: "abc".into(),
         merged: Vec::new(),
         renumbered: vec![renumbered("tasks/from-local.md", "From local", 3, 4)],
+        unsent: None,
     };
 
     assert_eq!(

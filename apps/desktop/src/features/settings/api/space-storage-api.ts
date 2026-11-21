@@ -22,6 +22,7 @@ import type {
   AssetsStrategy,
   LfsMissing,
   LfsState,
+  LfsUnsent,
 } from "@/features/space";
 
 export interface SpacePoolInput extends Record<string, unknown> {
@@ -75,10 +76,14 @@ export interface EffectiveAssetsConfig {
   };
 }
 
-/** With `state` `ready`, `missing` set means not every file is downloaded. */
+/**
+ * With `state` `ready`, `missing` set means not every file is downloaded;
+ * `unsent` set means LFS content of published commits is still to send.
+ */
 export interface LfsStatus {
   state: LfsState;
   missing: LfsMissing | null;
+  unsent: LfsUnsent | null;
 }
 
 export interface LfsStateChangedEvent extends LfsStatus {

@@ -142,7 +142,7 @@ function syncMcpContext(
     .catch((err) => console.warn("mcp_set_active_context failed:", err));
 }
 
-const NO_LFS: LfsStatus = { state: "n/a", missing: null };
+const NO_LFS: LfsStatus = { state: "n/a", missing: null, unsent: null };
 
 export const useSpaceStore = create<SpaceState>((set, get) => ({
   rootSpaces: [],

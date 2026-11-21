@@ -9,8 +9,9 @@ use super::state::GitRuntime;
 use super::sync::{SyncMode, SyncResult};
 use super::transfer::TransferObserver;
 use super::{access, branch, ops};
+use crate::storage::lfs_unsent::{Resend, SendStop, resend, unsent};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -445,13 +446,7 @@ async fn execute(runtime: &GitRuntime, host: &Arc<dyn GitHost>, request: Request
     let mut read_sync = None;
     let result = async {
         let cli = runtime.require_cli()?.reporting_transfers_to(observer);
-        let cli = match sent {
-            Ok(unreachable) => cli.without_file_servers_of(unreachable),
-            Err(error) => {
-                host.invalidate_repository_access(&cli, repo).await;
-                return Err(error);
-            }
-        };
+        let cli = cli.with_lfs_send_failures(sent);
         before = Snapshot::read(&cli, repo).await?;
         if before.target != request.snapshot.target {
             return Err(super::operations::target_changed(repo));
@@ -644,19 +639,19 @@ async fn execute(runtime: &GitRuntime, host: &Arc<dyn GitHost>, request: Request
 
 /// DF-369 R2: before a publishing operation takes the repository lock, the
 /// LFS content of the commits it would push is sent, for its repository and
-/// for the project it then publishes. Only a stalled transfer of its own
-/// repository fails the operation; the project's push sends what is left.
-/// The repositories whose file server could not be reached are returned:
-/// the rest of the operation does not contact it again (DF-378 R4).
+/// for the project it then publishes, after the send queue each of them
+/// keeps (DF-377 R4). The repositories whose content could not be sent are
+/// returned with why: their push goes without the LFS content (DF-377 R3),
+/// and an unreachable file server is not contacted again (DF-378 R4).
 async fn send_ahead(
     runtime: &GitRuntime,
     host: &dyn GitHost,
     observer: &Arc<dyn TransferObserver>,
     request: &Request,
-) -> Result<BTreeSet<PathBuf>, GitError> {
-    let mut unreachable = BTreeSet::new();
+) -> BTreeMap<PathBuf, SendStop> {
+    let mut failures = BTreeMap::new();
     let Ok(cli) = runtime.require_cli() else {
-        return Ok(unreachable);
+        return failures;
     };
     let cli = cli.reporting_transfers_to(observer.clone());
     let repo = request.repo.as_path();
@@ -675,40 +670,39 @@ async fn send_ahead(
         | Intent::InspectPublication => (false, false),
     };
     // A background operation asks for access only before a transfer.
-    let ahead = async |repository: &Path| {
+    let send = async |repository: &Path| -> Option<SendStop> {
         if !request.intent.admitted(repository) {
             return None;
         }
-        let remote = super::publication::lfs_content_ahead(&cli, repository).await?;
-        (!background || host.authorize_repository(repository).await.is_ok()).then_some(remote)
+        let queued = unsent(&cli, repository).await.is_some();
+        let remote = super::publication::lfs_content_ahead(&cli, repository).await;
+        if (!queued && remote.is_none())
+            || (background && host.authorize_repository(repository).await.is_err())
+        {
+            return None;
+        }
+        if queued && let Resend::Failed(stop) = resend(&cli, repository).await {
+            return Some(stop);
+        }
+        match super::publication::send_lfs_content(&cli, repository, &remote?).await {
+            LfsSend::Done => None,
+            LfsSend::Failed(stop) => Some(stop),
+        }
     };
-    if own
-        && let Some(remote) = ahead(repo).await
-        && super::publication::send_lfs_content(&cli, repo, &remote).await?
-            == LfsSend::ServerUnreachable
-    {
-        unreachable.insert(repo.to_path_buf());
+    if own && let Some(stop) = send(repo).await {
+        failures.insert(repo.to_path_buf(), stop);
     }
     if let Some((root, _)) = request.parent.as_ref().filter(|_| parent) {
         // The project publishes with a Space only under its own auto-sync;
         // otherwise it holds every commit that is not a pointer.
         let retry = matches!(request.intent, Intent::RetryParent { .. });
         if (retry || super::policy::effective_user_policy(root).auto_sync)
-            && let Some(remote) = ahead(root).await
+            && let Some(stop) = send(root).await
         {
-            match super::publication::send_lfs_content(&cli, root, &remote).await {
-                Ok(LfsSend::ServerUnreachable) => {
-                    unreachable.insert(root.clone());
-                }
-                Ok(LfsSend::Done) => {}
-                Err(error) => tracing::warn!(
-                    repository = %root.display(),
-                    "LFS content of the project was not sent before the lock: {error}"
-                ),
-            }
+            failures.insert(root.clone(), stop);
         }
     }
-    Ok(unreachable)
+    failures
 }
 
 async fn direct_push_locked(
@@ -1087,6 +1081,7 @@ pub async fn parent_step_locked(
         }
         super::sync::validate_transport(cli, parent, &transport?).await?;
         let root_result = super::sync::sync_with(cli, parent, SyncMode::of(background)).await?;
+        let root_result = with_unsent(cli, parent, root_result).await;
         if let SyncResult::Success { published_head, .. } = &root_result {
             let pointer = cli
                 .exec(&parent, &["rev-parse", &format!("{published_head}:{path}")])
@@ -1292,6 +1287,15 @@ enum Step<'a> {
     ResolveFile(&'a str, &'a super::conflict_file::FileResolution),
 }
 
+/// A successful sync of `repo` that leaves LFS content to send names it:
+/// it succeeded with a warning (DF-377 R3).
+async fn with_unsent(cli: &GitCli, repo: &Path, mut result: SyncResult) -> SyncResult {
+    if let SyncResult::Success { unsent, .. } = &mut result {
+        *unsent = crate::storage::lfs_unsent::unsent(cli, repo).await;
+    }
+    result
+}
+
 async fn run_repository(
     host: &dyn GitHost,
     cli: &GitCli,
@@ -1306,6 +1310,10 @@ async fn run_repository(
             super::conflict_file::resolve(cli, repo, path, resolution).await
         }
         Step::Sync => super::sync::sync_with(cli, repo, mode).await,
+    };
+    let result = match result {
+        Ok(result) => Ok(with_unsent(cli, repo, result).await),
+        error => error,
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,

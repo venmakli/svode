@@ -247,6 +247,10 @@ impl GitHost for DesktopGitHost {
         let synced_at = report
             .filter(|report| !active && report.synced())
             .and_then(|_| super::sync_rhythm::record_synced(&self.app, repository));
+        if !active {
+            // A publication may have queued LFS content or sent the queue.
+            crate::storage::lfs::refresh_unsent_in_background(&self.app, repository);
+        }
         let _ = self.app.emit(
             EVENT_SYNC_STATE,
             SyncStateEvent {

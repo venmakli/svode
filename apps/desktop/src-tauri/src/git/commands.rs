@@ -696,8 +696,11 @@ pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, pat
     }
     emit_space_synced(&app, &key);
     // Every successful sync downloads the LFS files still missing,
-    // whatever it brought in (DF-368 R1).
-    crate::storage::lfs::download_in_background(app, key);
+    // whatever it brought in (DF-368 R1), unless it could not reach the
+    // file server of the repository (DF-378 R4).
+    if !cli.file_server_unreachable(path) {
+        crate::storage::lfs::download_in_background(app, key);
+    }
 }
 
 #[tauri::command]

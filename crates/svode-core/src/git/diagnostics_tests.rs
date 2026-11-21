@@ -159,8 +159,8 @@ fn an_unreachable_file_server_is_told_apart_from_the_remote() {
         ),
         GitError::AuthRequired(_)
     ));
-    // The push a sync did not run after the file server was out of reach.
-    let error = GitError::SyncFailed(GitFailure::file_server_unreachable(repo));
+    // A push whose LFS transfer could not reach the file server.
+    let error = GitError::SyncFailed(GitFailure::from_output(repo, GitStage::Push, ssh, true));
     assert_eq!(
         serde_json::to_value(&error).unwrap(),
         serde_json::json!({

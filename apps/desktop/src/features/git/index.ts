@@ -34,6 +34,11 @@ export { gitConflictKindLabel } from "./ui/git-sync-stop-copy";
 export { gitTransferLabel } from "./ui/git-transfer-copy";
 export { transferMegabytes } from "./lib/transfer-size";
 export {
+  lfsMegabytes,
+  lfsUnsentDescription,
+  lfsUnsentWarning,
+} from "./ui/lfs-content-copy";
+export {
   conflictEditedSide,
   conflictInPageEditor,
   conflictPartners,

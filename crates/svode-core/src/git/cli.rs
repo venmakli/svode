@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
@@ -14,6 +14,7 @@ use super::GitError;
 use super::transfer::TransferObserver;
 use super::version::{GitVersion, release_label};
 use crate::process::ProcessTree;
+use crate::storage::lfs_unsent::SendStop;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -130,9 +131,10 @@ pub struct GitCli {
     version: Arc<RwLock<Option<GitVersion>>>,
     /// Where the transfers this CLI runs report their progress.
     transfer_observer: Option<Arc<dyn TransferObserver>>,
-    /// Repositories whose LFS file server the operation of this CLI could
-    /// not reach (DF-378 R4): their publication does not contact it again.
-    file_servers_unreachable: Arc<BTreeSet<PathBuf>>,
+    /// Repositories whose LFS content the operation of this CLI could not
+    /// send, and why (DF-377 R3): their publication goes without the LFS
+    /// content; an unreachable file server is not contacted again (DF-378 R4).
+    lfs_send_failures: Arc<BTreeMap<PathBuf, SendStop>>,
 }
 
 impl std::fmt::Debug for GitCli {
@@ -141,7 +143,7 @@ impl std::fmt::Debug for GitCli {
             .field("git_path", &self.git_path)
             .field("version", &self.version)
             .field("transfer_observer", &self.transfer_observer.is_some())
-            .field("file_servers_unreachable", &self.file_servers_unreachable)
+            .field("lfs_send_failures", &self.lfs_send_failures)
             .finish()
     }
 }
@@ -153,7 +155,7 @@ impl GitCli {
             git_path,
             version: Arc::default(),
             transfer_observer: None,
-            file_servers_unreachable: Arc::default(),
+            lfs_send_failures: Arc::default(),
         }
     }
 
@@ -174,24 +176,32 @@ impl GitCli {
         self.transfer_observer.clone()
     }
 
-    /// This CLI for the rest of an operation that could not reach the LFS
-    /// file servers of `repositories` (DF-378 R4).
-    pub(crate) fn without_file_servers_of(&self, repositories: BTreeSet<PathBuf>) -> Self {
+    /// This CLI for the rest of an operation that could not send the LFS
+    /// content of `failures`, with why (DF-377 R3, DF-378 R4).
+    pub(crate) fn with_lfs_send_failures(&self, failures: BTreeMap<PathBuf, SendStop>) -> Self {
         Self {
-            file_servers_unreachable: Arc::new(
-                repositories
+            lfs_send_failures: Arc::new(
+                failures
                     .into_iter()
-                    .map(|repo| std::fs::canonicalize(&repo).unwrap_or(repo))
+                    .map(|(repo, stop)| (std::fs::canonicalize(&repo).unwrap_or(repo), stop))
                     .collect(),
             ),
             ..self.clone()
         }
     }
 
+    /// Why the operation of this CLI could not send the LFS content of the
+    /// repository at `repository`, a canonical path, if it could not.
+    pub(crate) fn lfs_send_failure(&self, repository: &Path) -> Option<&SendStop> {
+        self.lfs_send_failures.get(repository)
+    }
+
     /// Whether the operation of this CLI could not reach the LFS file
-    /// server of the repository at `repository`, a canonical path.
-    pub(crate) fn file_server_unreachable(&self, repository: &Path) -> bool {
-        self.file_servers_unreachable.contains(repository)
+    /// server of the repository at `repository`, a canonical path: nothing
+    /// of the operation contacts it again, the download after a sync
+    /// included (DF-378 R4).
+    pub fn file_server_unreachable(&self, repository: &Path) -> bool {
+        self.lfs_send_failure(repository) == Some(&SendStop::Unreachable)
     }
 
     /// Detect git binary and LFS availability.
@@ -225,7 +235,7 @@ impl GitCli {
             git_path,
             version: Arc::new(RwLock::new(version)),
             transfer_observer: None,
-            file_servers_unreachable: Arc::default(),
+            lfs_send_failures: Arc::default(),
         }
     }
 

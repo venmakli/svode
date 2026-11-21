@@ -783,7 +783,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
 
   test("the project root menu pins and creates, with its launch group when given", async () => {
     const created: string[] = [];
-    const noLfs = { state: "n/a" as const, missing: null };
+    const noLfs = { state: "n/a" as const, missing: null, unsent: null };
     const rootRow = (launch: boolean, lfs: LfsStatus = noLfs) => (
       <RootScopeRow
         active={false}
@@ -862,6 +862,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
           bytes: 104_857_600,
           stop: { kind: "stalled" },
         },
+        unsent: null,
       }),
     );
     expect(

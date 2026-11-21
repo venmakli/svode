@@ -9,6 +9,7 @@ import type {
   AssetsStrategy,
   LfsMissing,
   LfsState,
+  LfsUnsent,
 } from "@/features/space";
 import { useSpaceStorageConfig } from "./use-space-storage-config";
 import type { useStorageS3 } from "./use-storage-s3";
@@ -89,6 +90,8 @@ export interface UseSpaceStorageSettingsResult {
   lfsState: LfsState;
   // With `lfsState` `ready`: the files the last download left and why.
   lfsMissing: LfsMissing | null;
+  // The files whose content the next sync sends, and why it was not sent.
+  lfsUnsent: LfsUnsent | null;
   lfsRepairInFlight: boolean;
   lfsRemoteDiagnostic: LfsRemoteDiagnostic | null;
   lfsRemoteDiagnosticInFlight: boolean;
@@ -219,6 +222,7 @@ export function useSpaceStorageSettings({
     lfsVersion,
     lfsState,
     lfsMissing,
+    lfsUnsent,
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,
@@ -654,6 +658,7 @@ export function useSpaceStorageSettings({
     s3Prefix,
     lfsState,
     lfsMissing,
+    lfsUnsent,
     lfsRepairInFlight,
     lfsRemoteDiagnostic,
     lfsRemoteDiagnosticInFlight,

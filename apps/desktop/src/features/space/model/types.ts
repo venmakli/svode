@@ -1,6 +1,8 @@
 import type {
   LfsDownloadStopDto,
   LfsMissingDto,
+  LfsSendStopDto,
+  LfsUnsentDto,
   MoveContentResultDto,
   ProjectWindowRequestDto,
   SpaceConfigUnreadableDto,
@@ -18,10 +20,20 @@ export type LfsMissing = LfsMissingDto;
 /** Why the last LFS download stopped with files still missing. */
 export type LfsDownloadStop = LfsDownloadStopDto;
 
-/** The LFS state of one repository and, with `ready`, the files left. */
+/** The LFS files of published commits whose content is still to send, and why. */
+export type LfsUnsent = LfsUnsentDto;
+
+/** Why the LFS content of published commits was not sent. */
+export type LfsSendStop = LfsSendStopDto;
+
+/**
+ * The LFS state of one repository, with `ready` the files left without
+ * content, and the files whose content is still to send.
+ */
 export interface LfsStatus {
   state: LfsState;
   missing: LfsMissing | null;
+  unsent: LfsUnsent | null;
 }
 
 export type WindowOpenIntent =
@@ -54,6 +66,8 @@ export interface SpaceInfo {
   lfsState: LfsState;
   /** With `lfsState` `ready`, set when not every LFS file is downloaded. */
   lfsMissing?: LfsMissing | null;
+  /** Set while LFS content of published commits is still to send. */
+  lfsUnsent?: LfsUnsent | null;
   /** Its spaces and settings stay hidden until the config reads again. */
   configUnreadable?: SpaceConfigUnreadable;
 }

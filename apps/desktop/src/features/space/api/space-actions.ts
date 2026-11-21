@@ -4,6 +4,7 @@ import {
   cloneSpace,
   getSpaceConfig,
   listenLfsStateChanged,
+  refreshLfsUnsent,
   registerClonedSpace,
   removeMissingSpace as removeMissingSpaceNative,
   saveSpaceConfig,
@@ -12,6 +13,7 @@ import { listen } from "@/platform/native/events";
 import type {
   LfsMissing,
   LfsState,
+  LfsUnsent,
   SpaceConfig,
   SpaceGitType,
 } from "../model/types";
@@ -21,6 +23,7 @@ export interface SpaceLfsStateChanged {
   spaceId: string | null;
   state: LfsState;
   missing: LfsMissing | null;
+  unsent: LfsUnsent | null;
 }
 
 export interface SpaceCloneProgress {
@@ -91,6 +94,14 @@ export function listenSpaceLfsStateChanged(
   handler: (event: SpaceLfsStateChanged) => void,
 ): Promise<() => void> {
   return listenLfsStateChanged((event) => handler(event.payload));
+}
+
+/**
+ * Ask for the send queues of the repositories of an open project, which
+ * arrive as LFS state changes.
+ */
+export function requestSpaceLfsUnsent(projectPath: string): Promise<void> {
+  return refreshLfsUnsent(projectPath);
 }
 
 export function listenSpaceCloneProgress(

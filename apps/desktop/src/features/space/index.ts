@@ -6,7 +6,9 @@ export type {
   GitSpaceConfig,
   LfsDownloadStop,
   LfsMissing,
+  LfsSendStop,
   LfsState,
+  LfsUnsent,
   LocalConfig,
   SpaceConfig,
   SpaceConfigUnreadable,
@@ -41,4 +43,4 @@ export { RootSpacesFollower } from "./ui/root-spaces-follower";
 /** The registered Spaces of a project, read from its config without opening it. */
 export { listChildSpaces as readProjectSpaces } from "./api/space-store-actions";
 export { CreateSpaceDialog } from "./ui/create-space-dialog";
-export { lfsMegabytes, lfsMissingDescription } from "./ui/lfs-missing-copy";
+export { lfsMissingDescription } from "./ui/lfs-missing-copy";
