@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle, Plus } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -47,47 +48,60 @@ function readIntentState(
   }
 }
 
-function useCollectionCreateIntent(
+function effectiveIntentState(
   intent: CollectionCreateIntent,
+  runningIntentId: string | null,
+): EffectiveCreateState {
+  const ownerState = readIntentState(intent);
+  const pending =
+    runningIntentId === intent.id || ownerState.status === "pending";
+  return {
+    disabled:
+      runningIntentId !== null || pending || ownerState.status === "disabled",
+    message:
+      ownerState.status === "disabled"
+        ? ownerState.reason
+        : ownerState.status === "error"
+          ? ownerState.message
+          : undefined,
+    pending,
+    status: pending ? "pending" : ownerState.status,
+  };
+}
+
+/**
+ * Runs one intent of the create control at a time. The control, not the
+ * element that started the intent, owns its progress and refusal: a menu item
+ * closes on select, so its own state would never be seen. A refusal is always
+ * shown to the user; the host callback is an extra channel.
+ */
+function useCollectionCreateRunner(
   onRejected: (targetId: string, message: string) => void,
 ) {
-  const [localPending, setLocalPending] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const [runningIntentId, setRunningIntentId] = useState<string | null>(null);
   const runningRef = useRef(false);
-  const ownerState = readIntentState(intent);
-  const pending = localPending || ownerState.status === "pending";
-  const message =
-    localError ??
-    (ownerState.status === "disabled"
-      ? ownerState.reason
-      : ownerState.status === "error"
-        ? ownerState.message
-        : undefined);
-  const state: EffectiveCreateState = {
-    disabled: pending || ownerState.status === "disabled",
-    message,
-    pending,
-    status: localError ? "error" : pending ? "pending" : ownerState.status,
-  };
 
-  const run = useCallback(async () => {
-    if (state.disabled || runningRef.current) return;
-    runningRef.current = true;
-    setLocalPending(true);
-    setLocalError(null);
-    const result = await runCollectionCallback(
-      () => intent.run(),
-      m.collection_callback_error(),
-    );
-    runningRef.current = false;
-    setLocalPending(false);
-    if (!result.ok && result.message) {
-      setLocalError(result.message);
-      onRejected(intent.id, result.message);
-    }
-  }, [intent, onRejected, state.disabled]);
+  const run = useCallback(
+    async (intent: CollectionCreateIntent) => {
+      if (runningRef.current) return;
+      if (effectiveIntentState(intent, null).disabled) return;
+      runningRef.current = true;
+      setRunningIntentId(intent.id);
+      const result = await runCollectionCallback(
+        () => intent.run(),
+        m.collection_callback_error(),
+      );
+      runningRef.current = false;
+      setRunningIntentId(null);
+      if (!result.ok && result.message) {
+        toast.error(result.message);
+        onRejected(intent.id, result.message);
+      }
+    },
+    [onRejected],
+  );
 
-  return { run, state };
+  return { run, runningIntentId };
 }
 
 export function CollectionCreateControl({
@@ -97,28 +111,57 @@ export function CollectionCreateControl({
   capability: CollectionCreateCapability;
   onRejected(targetId: string, message: string): void;
 }) {
+  const { run, runningIntentId } = useCollectionCreateRunner(onRejected);
   if (capability.intents.length === 0) return null;
   const intent = capability.intents[0];
   if (capability.intents.length === 1 && intent) {
-    return <CollectionCreateButton intent={intent} onRejected={onRejected} />;
+    return (
+      <CollectionCreateButton
+        intent={intent}
+        state={effectiveIntentState(intent, runningIntentId)}
+        onRun={() => void run(intent)}
+      />
+    );
   }
+  const intents = capability.intents.map((candidate) => ({
+    intent: candidate,
+    state: effectiveIntentState(candidate, runningIntentId),
+  }));
+  const pending = intents.some(({ state }) => state.pending);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" size="sm" data-collection-create-menu>
-          <Plus data-icon="inline-start" />
+        <Button
+          type="button"
+          size="sm"
+          disabled={pending}
+          aria-busy={pending || undefined}
+          data-collection-create-menu
+          data-collection-create-state={pending ? "pending" : "idle"}
+        >
+          {pending ? (
+            <LoaderCircle data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <Plus data-icon="inline-start" />
+          )}
           {capability.label}
           <ChevronDown data-icon="inline-end" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuGroup>
-          {capability.intents.map((candidate) => (
-            <CollectionCreateMenuItem
+          {intents.map(({ intent: candidate, state }) => (
+            <DropdownMenuItem
               key={candidate.id}
-              intent={candidate}
-              onRejected={onRejected}
-            />
+              disabled={state.disabled}
+              data-collection-create={candidate.id}
+              data-collection-create-state={state.status}
+              title={state.message}
+              onSelect={() => void run(candidate)}
+            >
+              <Plus />
+              {candidate.label}
+            </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>
       </DropdownMenuContent>
@@ -128,21 +171,23 @@ export function CollectionCreateControl({
 
 function CollectionCreateButton({
   intent,
-  onRejected,
+  state,
+  onRun,
 }: {
   intent: CollectionCreateIntent;
-  onRejected(targetId: string, message: string): void;
+  state: EffectiveCreateState;
+  onRun(): void;
 }) {
-  const { run, state } = useCollectionCreateIntent(intent, onRejected);
   const button = (
     <Button
       type="button"
       size="sm"
       disabled={state.disabled}
+      aria-busy={state.pending || undefined}
       data-collection-create={intent.id}
       data-collection-create-state={state.status}
       title={state.message}
-      onClick={() => void run()}
+      onClick={onRun}
     >
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
@@ -162,27 +207,5 @@ function CollectionCreateButton({
         <TooltipContent>{state.message}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  );
-}
-
-function CollectionCreateMenuItem({
-  intent,
-  onRejected,
-}: {
-  intent: CollectionCreateIntent;
-  onRejected(targetId: string, message: string): void;
-}) {
-  const { run, state } = useCollectionCreateIntent(intent, onRejected);
-  return (
-    <DropdownMenuItem
-      disabled={state.disabled}
-      data-collection-create={intent.id}
-      data-collection-create-state={state.status}
-      title={state.message}
-      onSelect={() => void run()}
-    >
-      {state.pending ? <LoaderCircle className="animate-spin" /> : <Plus />}
-      {intent.label}
-    </DropdownMenuItem>
   );
 }

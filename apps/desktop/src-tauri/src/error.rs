@@ -403,11 +403,7 @@ impl From<svode_core::page::PageError> for AppError {
             PageError::Index(message) => Self::Index(message),
             PageError::Db(error) => Self::Db(error),
             PageError::Storage(message) => Self::Storage(message),
-            // Desktop keeps its refusal text; it shows the reason through the
-            // LFS state of the Space and its repair affordance.
-            PageError::LfsNotReady(_) => Self::Storage(
-                svode_core::storage::connection::LfsNotReady::RemoteUnreachable.import_message(),
-            ),
+            PageError::LfsNotReady(reason) => Self::LfsNotReady(reason),
             PageError::DocumentNameConflict(conflict) => Self::DocumentNameConflict(conflict),
             PageError::Recovery { cause, paths } => Self::PageWriteRecovery { cause, paths },
             PageError::InvalidEncoding(path) => Self::Io(std::io::Error::new(
@@ -640,6 +636,9 @@ pub enum AppError {
     #[error("Storage: {0}")]
     Storage(String),
 
+    #[error("{}", .0.import_message())]
+    LfsNotReady(svode_core::storage::connection::LfsNotReady),
+
     #[error("{0}")]
     VariablesProblem(crate::space::app_variables::VariablesProblem),
 
@@ -734,6 +733,7 @@ impl AppError {
             AppError::Index(_) => "index",
             AppError::Db(_) => "db",
             AppError::Storage(_) => "storage",
+            AppError::LfsNotReady(_) => "lfs_not_ready",
             AppError::VariablesProblem(_) => "variables_problem",
             AppError::StrategyInherited => "strategy_inherited",
             AppError::IdentityMissing => "identity_missing",
@@ -767,6 +767,9 @@ impl Serialize for AppError {
             }
             AppError::VariablesProblem(problem) => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "problem": problem }).serialize(serializer)
+            }
+            AppError::LfsNotReady(reason) => {
+                lfs_not_ready_transport(self.kind(), self.to_string(), reason).serialize(serializer)
             }
             AppError::AgentRuntime(error) => {
                 let code = serde_json::to_value(error)
@@ -876,6 +879,38 @@ impl Serialize for AppError {
             _ => serializer.serialize_str(&self.to_string()),
         }
     }
+}
+
+/// A managed import refused by the Git LFS route: the reason by kind and
+/// stable code, with the strategy or Secret name it names, so the frontend
+/// shows it in the interface language. No Secret value or path is sent.
+fn lfs_not_ready_transport(
+    kind: &'static str,
+    message: String,
+    reason: &svode_core::storage::connection::LfsNotReady,
+) -> serde_json::Value {
+    use svode_core::storage::connection::LfsNotReady;
+    let mut value = serde_json::json!({
+        "kind": kind,
+        "message": message,
+        "code": reason.code(),
+        "reason": match reason {
+            LfsNotReady::StrategyMismatch { .. } => "strategy_mismatch",
+            LfsNotReady::S3AddressMissing => "s3_address_missing",
+            LfsNotReady::S3NotConnected { .. } => "s3_not_connected",
+            LfsNotReady::Secret(_) => "secret",
+            LfsNotReady::S3CheckFailed { .. } => "s3_check_failed",
+            LfsNotReady::LfsToolingUnavailable { .. } => "lfs_tooling_unavailable",
+            LfsNotReady::RemoteUnreachable => "remote_unreachable",
+            LfsNotReady::RemoteOffline => "remote_offline",
+        },
+    });
+    match reason {
+        LfsNotReady::StrategyMismatch { strategy } => value["strategy"] = strategy.as_str().into(),
+        LfsNotReady::Secret(failure) => value["secret"] = failure.name.as_str().into(),
+        _ => {}
+    }
+    value
 }
 
 #[cfg(test)]
@@ -1351,5 +1386,69 @@ mod tests {
                 "files": [".gitattributes", ".gitignore"],
             })
         );
+    }
+
+    #[test]
+    fn lfs_refusal_of_an_import_serializes_its_reason_and_code() {
+        use svode_core::page::PageError;
+        use svode_core::storage::connection::LfsNotReady;
+        use svode_core::storage::s3::SecretFailure;
+
+        let not_connected = serde_json::to_value(AppError::from(PageError::LfsNotReady(
+            LfsNotReady::S3NotConnected { detail: None },
+        )))
+        .unwrap();
+        assert_eq!(
+            not_connected,
+            serde_json::json!({
+                "kind": "lfs_not_ready",
+                "message": "Git LFS route is not ready: this device is not connected to the S3 storage of the project",
+                "code": "S3_NOT_CONNECTED",
+                "reason": "s3_not_connected",
+            })
+        );
+
+        let tooling = serde_json::to_value(AppError::from(PageError::LfsNotReady(
+            LfsNotReady::LfsToolingUnavailable {
+                detail: "git-lfs is not installed".into(),
+            },
+        )))
+        .unwrap();
+        assert_eq!(tooling["reason"], "lfs_tooling_unavailable");
+        assert_eq!(tooling["code"], "LFS_TOOLING_UNAVAILABLE");
+        assert_eq!(
+            tooling["message"],
+            "Git LFS route is not ready: git-lfs is not installed"
+        );
+
+        let strategy = serde_json::to_value(AppError::from(PageError::LfsNotReady(
+            LfsNotReady::StrategyMismatch {
+                strategy: "lfs-future".into(),
+            },
+        )))
+        .unwrap();
+        assert_eq!(strategy["reason"], "strategy_mismatch");
+        assert_eq!(strategy["code"], "STORAGE_STRATEGY_MISMATCH");
+        assert_eq!(strategy["strategy"], "lfs-future");
+
+        let secret = serde_json::to_value(AppError::from(PageError::LfsNotReady(
+            LfsNotReady::Secret(SecretFailure {
+                error: svode_core::variables::Error::Missing,
+                name: "S3_KEY".into(),
+                file: "/config/secrets.json".into(),
+            }),
+        )))
+        .unwrap();
+        assert_eq!(secret["reason"], "secret");
+        assert_eq!(secret["code"], "SECRET_NOT_FOUND");
+        assert_eq!(secret["secret"], "S3_KEY");
+        assert!(!secret.to_string().contains("/config/secrets.json"));
+
+        let offline = serde_json::to_value(AppError::from(PageError::LfsNotReady(
+            LfsNotReady::RemoteOffline,
+        )))
+        .unwrap();
+        assert_eq!(offline["reason"], "remote_offline");
+        assert_eq!(offline["code"], serde_json::Value::Null);
     }
 }

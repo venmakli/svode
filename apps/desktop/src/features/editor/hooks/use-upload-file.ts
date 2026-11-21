@@ -2,6 +2,8 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
+import { attachmentImportRefusalMessage } from "@/features/attachments/import-refusal";
+
 import {
   importEditorMediaAsset,
   sourcePathForEditorMediaFile,
@@ -95,8 +97,7 @@ export function useUploadFile({
       onUploadComplete?.(uploaded);
       return uploaded;
     } catch (error) {
-      const message = getErrorMessage(error);
-      toast.error(message);
+      toast.error(attachmentImportRefusalMessage(error));
       onUploadError?.(error);
       return undefined;
     } finally {

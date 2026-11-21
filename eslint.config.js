@@ -26,6 +26,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/actors/agent-reference",
   "@/features/agent-sessions/agent-settings-popover",
   "@/features/artifact/app-shell",
+  "@/features/attachments/import-refusal",
   "@/features/collection/app-shell",
   "@/features/collection/scope-surface",
   "@/features/changes/text-diff",

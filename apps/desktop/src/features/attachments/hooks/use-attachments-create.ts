@@ -13,6 +13,7 @@ import {
   pickAttachmentImportSource,
 } from "../api/attachments-api";
 import { createAttachmentsCreateCapability } from "../model/create";
+import { attachmentImportRefusalMessage } from "../model/import-refusal";
 import type { AttachmentOwnerRef } from "../model/types";
 
 export function useAttachmentsCreate({
@@ -50,15 +51,23 @@ export function useAttachmentsCreate({
   const importOwnerFile = useCallback(async () => {
     const sourcePath = await pickAttachmentImportSource();
     if (!sourcePath) return;
-    await pageSurface.runMutation(async () => {
-      await importAttachmentFile({
-        contentPath: owner.contentPath,
-        projectPath: owner.projectPath,
-        sourcePath,
-        spaceId: owner.projectPath === owner.spacePath ? null : owner.spaceId,
+    let imported = false;
+    try {
+      await pageSurface.runMutation(async () => {
+        await importAttachmentFile({
+          contentPath: owner.contentPath,
+          projectPath: owner.projectPath,
+          sourcePath,
+          spaceId: owner.projectPath === owner.spacePath ? null : owner.spaceId,
+        });
+        imported = true;
+        await refresh();
       });
-      await refresh();
-    });
+    } catch (error) {
+      if (imported) throw error;
+      // The create control shows the refusal with this text.
+      throw new Error(attachmentImportRefusalMessage(error), { cause: error });
+    }
   }, [owner, pageSurface, refresh]);
 
   return useMemo(
