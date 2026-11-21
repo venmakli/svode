@@ -733,3 +733,85 @@ async fn a_remote_lfs_import_stores_the_file_in_lfs_without_reaching_the_server(
     );
     assert!(!calls.exists());
 }
+
+/// DF-380 R1, R2: an attachment with spaces in its name that the size
+/// threshold sends to Git LFS is imported and committed as an LFS pointer.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_threshold_import_of_a_name_with_spaces_commits_an_lfs_pointer() {
+    use crate::git::state::GitRuntime;
+
+    let Some(real) = GitCli::detect().ok().filter(GitCli::lfs_available) else {
+        return;
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let wrapper = base.join("git");
+    svode_testkit::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec '{}' \"$@\"\n",
+            real.git_path().display()
+        ),
+    )
+    .unwrap();
+    let git = GitRuntime::with_cli(GitCli::for_test(wrapper));
+    let cli = git.detected().unwrap();
+    let project = base.join("project");
+    let run = async |args: &[&str]| {
+        let out = cli.exec(&project, args).await.unwrap();
+        assert_eq!(out.exit_code, 0, "git {args:?}: {}", out.stderr);
+        out.stdout
+    };
+
+    fs::create_dir_all(&project).unwrap();
+    write_space_config(
+        &project,
+        Some(
+            r#"{ "strategy": "lfs-remote", "binaryRouting": { "version": 1, "lfsExtensions": ["png"], "lfsThresholdBytes": 16 } }"#,
+        ),
+    );
+    fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+    run(&["init", "-q"]).await;
+    run(&["config", "user.email", "test@example.com"]).await;
+    run(&["config", "user.name", "Svode Test"]).await;
+    let source = base.join("Запись экрана 2026-10-07 в 12.06.16.mov");
+    fs::write(&source, b"screen recording bytes").unwrap();
+
+    let index = IndexRuntimeState::default();
+    let repository = GitRepositoryState::new();
+    let plan = plan_managed_import(&index, &project, None, "README.md", &source, None)
+        .await
+        .unwrap();
+    assert_eq!(plan.binary_route, ManagedBinaryRoute::LfsThreshold);
+    let import = ImportRuntime {
+        cli: Some(cli),
+        lfs: Some(&git),
+        ..runtime(&index, &repository)
+    };
+    let result = execute_managed_import(import, MutationOrigin::Mcp, plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.attachment_path,
+        "Запись экрана 2026-10-07 в 12.06.16.mov"
+    );
+
+    crate::git::ops::commit_paths(
+        cli,
+        &project,
+        &[result.attachment_path.clone(), ".gitattributes".to_string()],
+    )
+    .await
+    .unwrap();
+    let pointer = run(&[
+        "cat-file",
+        "-p",
+        &format!("HEAD:{}", result.attachment_path),
+    ])
+    .await;
+    assert!(
+        pointer.starts_with("version https://git-lfs.github.com/spec/v1"),
+        "{pointer}"
+    );
+}

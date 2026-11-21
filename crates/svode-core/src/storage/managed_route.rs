@@ -147,7 +147,8 @@ mod tests {
     use crate::git::GitError;
     use crate::git::cli::GitCli;
     use crate::git::state::GitRepositoryState;
-    use crate::storage::policy::{ManagedBinaryRoute, StoragePolicyError};
+    use crate::storage::policy::{ManagedBinaryRoute, StoragePolicyError, check_lfs_filters};
+    use crate::storage::routes::lfs_path_rule;
     use std::path::Path;
 
     async fn git_ok(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<(), StoragePolicyError> {
@@ -209,6 +210,62 @@ mod tests {
         assert!(error.to_string().contains("not effective"));
         let attributes = std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default();
         assert!(!attributes.contains("Topic/file.bin"));
+        Ok(())
+    }
+
+    /// DF-380 R1, R2, R3 (a): a threshold route for a name with spaces is
+    /// effective, and the block it writes also turns a rule left in the old
+    /// backslash form into the quoted one.
+    #[tokio::test]
+    async fn a_threshold_route_for_a_name_with_spaces_is_effective_and_repairs_old_rules()
+    -> Result<(), StoragePolicyError> {
+        let Some(cli) = GitCli::detect().ok().filter(GitCli::lfs_available) else {
+            return Ok(());
+        };
+        let repository = GitRepositoryState::new();
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path();
+        git_ok(&cli, repo, &["init"]).await?;
+        let old_block = "*.custom merge=ours\n\
+            # svode:assets-lfs-paths:start\n\
+            # svode:path \"My Notes/big.mov\"\n\
+            My\\ Notes/big.mov filter=lfs diff=lfs merge=lfs -text\n\
+            # svode:assets-lfs-paths:end\n";
+        std::fs::write(repo.join(".gitattributes"), old_block)?;
+        let old = "My Notes/big.mov".to_string();
+        assert_eq!(
+            check_lfs_filters(&cli, repo, std::slice::from_ref(&old)).await?[0].value,
+            "unspecified"
+        );
+
+        let imported = "Topic/Запись экрана 2026-10-07 в 12.06.16.mov";
+        let changed = apply_managed_import_route(
+            &repository,
+            Some(&cli),
+            repo,
+            ManagedBinaryRoute::LfsThreshold,
+            imported,
+            &[],
+        )
+        .await?;
+
+        assert_eq!(changed, vec![repo.join(".gitattributes")]);
+        let attributes = std::fs::read_to_string(repo.join(".gitattributes"))?;
+        assert!(
+            attributes.starts_with("*.custom merge=ours\n"),
+            "{attributes}"
+        );
+        assert!(
+            attributes.contains(&lfs_path_rule(imported))
+                && attributes.contains("\"My\\\\ Notes/big.mov\" filter=lfs")
+                && !attributes.contains("\nMy\\ Notes/big.mov"),
+            "{attributes}"
+        );
+        let checks = check_lfs_filters(&cli, repo, &[imported.to_string(), old]).await?;
+        assert!(
+            checks.iter().all(|check| check.value == "lfs"),
+            "{checks:?}"
+        );
         Ok(())
     }
 }

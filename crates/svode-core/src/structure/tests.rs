@@ -2812,3 +2812,176 @@ async fn a_delete_refused_for_a_malformed_local_rules_block_changes_nothing() {
 
     assert_eq!(source_snapshot(root), before);
 }
+
+/// DF-380 R2: a folder rename and a Page rename by title into names with
+/// spaces rewrite the exact LFS rule of a threshold attachment in the quoted
+/// form, so the commit of the operation keeps the file an LFS pointer.
+#[tokio::test]
+async fn df_380_renames_into_names_with_spaces_keep_a_threshold_attachment_in_lfs() {
+    use crate::git::cli::GitCli;
+    use crate::page::nonce::WriteNonceRegistry;
+    use crate::page::write::{PageWrite, write};
+    use crate::storage::policy::check_lfs_filters;
+    use crate::storage::routes::{
+        LFS_PATHS_END, LFS_PATHS_START, lfs_path_rule, rewrite_managed_path_block,
+    };
+
+    let Some(cli) = GitCli::detect().ok().filter(GitCli::lfs_available) else {
+        return;
+    };
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let git = async |args: &[&str]| {
+        let out = cli.exec(root, args).await.unwrap();
+        assert_eq!(out.exit_code, 0, "git {args:?}: {}", out.stderr);
+        out.stdout
+    };
+    crate::page::test_support::scaffold_space(root, "Root");
+    git(&["init", "-q"]).await;
+    git(&["config", "user.email", "test@example.com"]).await;
+    git(&["config", "user.name", "Svode Test"]).await;
+    git(&["lfs", "install", "--local"]).await;
+    let content = "x".repeat(2_000);
+    write_tree(
+        root,
+        &[
+            ("Notes/Topic.md", "---\ntitle: Topic\n---\n"),
+            ("Notes/big.mov", &content),
+            ("Plan/README.md", "---\ntitle: Plan\n---\n"),
+            ("Plan/clip.mov", &content),
+        ],
+    );
+    fs::write(
+        root.join(".gitattributes"),
+        rewrite_managed_path_block(
+            "",
+            LFS_PATHS_START,
+            LFS_PATHS_END,
+            &["Notes/big.mov".to_string(), "Plan/clip.mov".to_string()].into(),
+            true,
+        ),
+    )
+    .unwrap();
+    git(&["add", "-A"]).await;
+    git(&["commit", "-q", "-m", "init"]).await;
+    let pointer = async |path: &str| git(&["cat-file", "-p", &format!("HEAD:{path}")]).await;
+    assert!(
+        pointer("Notes/big.mov")
+            .await
+            .starts_with("version https://git-lfs")
+    );
+
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    // The commit takes the paths the operation names that are on disk and
+    // the files it moved.
+    let relative = |paths: Vec<std::path::PathBuf>, moved: &[&str]| {
+        paths
+            .into_iter()
+            .filter(|path| path.exists())
+            .map(|path| {
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .chain(moved.iter().map(|path| path.to_string()))
+            .collect::<Vec<_>>()
+    };
+
+    // A folder rename.
+    let sink = GroupSink::default();
+    super::rename(
+        space,
+        "Notes",
+        "My Notes",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .unwrap();
+    let committed = relative(
+        sink.take()
+            .into_iter()
+            .flat_map(|(_, _, paths)| paths)
+            .collect(),
+        &["Notes/Topic.md", "Notes/big.mov"],
+    );
+    assert!(
+        committed.contains(&".gitattributes".to_string()),
+        "{committed:?}"
+    );
+    crate::git::ops::commit_paths(&cli, root, &committed)
+        .await
+        .unwrap();
+
+    // A Page rename by title.
+    let nonces = WriteNonceRegistry::new();
+    let authorized = std::sync::Mutex::new(Vec::new());
+    let outcome = write(
+        PageWrite {
+            space,
+            path: "Plan/README.md",
+            content: "",
+            title: Some("My Plan"),
+            icon: None,
+            extra: None,
+            metadata: None,
+            field_batch: None,
+            skip_rename: false,
+            project: Some(space),
+            source_version: None,
+        },
+        crate::page::test_support::runtime(&state, &nonces),
+        |paths| {
+            authorized.lock().unwrap().extend(paths.clone());
+            async move { Ok::<_, crate::page::PageError>(paths) }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        outcome.result.new_path.as_deref(),
+        Some("My Plan/README.md")
+    );
+    let committed = relative(
+        authorized.into_inner().unwrap(),
+        &["Plan/README.md", "Plan/clip.mov", "My Plan"],
+    );
+    assert!(
+        committed.contains(&".gitattributes".to_string()),
+        "{committed:?}"
+    );
+    crate::git::ops::commit_paths(&cli, root, &committed)
+        .await
+        .unwrap();
+
+    let attributes = fs::read_to_string(root.join(".gitattributes")).unwrap();
+    for path in ["My Notes/big.mov", "My Plan/clip.mov"] {
+        assert!(attributes.contains(&lfs_path_rule(path)), "{attributes}");
+    }
+    let checks = check_lfs_filters(
+        &cli,
+        root,
+        &[
+            "My Notes/big.mov".to_string(),
+            "My Plan/clip.mov".to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    assert!(
+        checks.iter().all(|check| check.value == "lfs"),
+        "{checks:?}"
+    );
+    for path in ["My Notes/big.mov", "My Plan/clip.mov"] {
+        let stored = pointer(path).await;
+        assert!(
+            stored.starts_with("version https://git-lfs"),
+            "{path}: {stored}"
+        );
+    }
+}

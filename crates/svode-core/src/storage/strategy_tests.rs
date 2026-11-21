@@ -8,12 +8,12 @@ use super::config::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRou
 use super::local_release::files_held_by_local_rules;
 use super::local_rules::LOCAL_EXTENSIONS_START;
 use super::policy::{
-    LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
-    supported_binary_routing,
+    LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, check_lfs_filters,
+    managed_lfs_attributes_body, supported_binary_routing,
 };
 use super::routes::{
-    LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, parse_managed_paths,
-    rebase_managed_import_routes, rewrite_managed_path_block,
+    LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, lfs_path_rule,
+    parse_managed_paths, rebase_managed_import_routes, rewrite_managed_path_block,
 };
 use super::strategy::{
     StrategyRequest, StrategyScope, StrategyWarning, StrategyWarningCode, apply_strategy,
@@ -519,6 +519,51 @@ async fn leaving_local_for_lfs_gives_large_files_of_other_formats_exact_lfs_rule
             "?? docs/huge.jpg",
             "?? docs/photo.jpg"
         ]
+    );
+    Ok(())
+}
+
+/// DF-380 R1, R2: a large `local` file with spaces in its name released to
+/// Git LFS by a strategy change gets an exact rule Git applies.
+#[tokio::test]
+async fn leaving_local_for_lfs_routes_a_released_name_with_spaces_to_lfs() -> TestResult {
+    let Some((git, _temp, repo)) = setup_remote_tracking_repo().await? else {
+        return Ok(());
+    };
+    let cli = git.detected().expect("checked above");
+    if !cli.lfs_available() {
+        return Ok(());
+    }
+    let mut routing = BinaryRoutingConfig::new_project_default();
+    routing.lfs_extensions = vec!["png".into()];
+    routing.lfs_threshold_bytes = Some(10);
+    apply_strategy(&git, &repo, AssetsStrategy::Local, &routing, None, None).await?;
+    let released = "My Notes/screen recording.mov";
+    let gitignore = std::fs::read_to_string(repo.join(".gitignore"))?;
+    std::fs::write(
+        repo.join(".gitignore"),
+        rewrite_managed_path_block(
+            &gitignore,
+            LOCAL_PATHS_START,
+            LOCAL_PATHS_END,
+            &BTreeSet::from([released.to_string()]),
+            false,
+        ),
+    )?;
+    std::fs::create_dir_all(repo.join("My Notes"))?;
+    std::fs::write(repo.join(released), vec![b'x'; 20])?;
+    assert_eq!(files_held_by_local_rules(cli, &repo).await?, [released]);
+
+    apply_strategy(&git, &repo, AssetsStrategy::LfsRemote, &routing, None, None).await?;
+
+    let attributes = std::fs::read_to_string(repo.join(".gitattributes"))?;
+    assert!(
+        attributes.contains(&lfs_path_rule(released)),
+        "{attributes}"
+    );
+    assert_eq!(
+        check_lfs_filters(cli, &repo, &[released.to_string()]).await?[0].value,
+        "lfs"
     );
     Ok(())
 }

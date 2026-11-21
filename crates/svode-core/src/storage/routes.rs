@@ -147,11 +147,10 @@ fn render_managed_path_body(paths: &BTreeSet<String>, lfs: bool) -> String {
                 "{MANAGED_PATH_PREFIX}{}",
                 serde_json::to_string(path).expect("serializing a String cannot fail")
             );
-            let pattern = escape_git_pattern(path, !lfs);
             let rule = if lfs {
-                format!("{pattern} filter=lfs diff=lfs merge=lfs -text")
+                lfs_path_rule(path)
             } else {
-                pattern
+                escape_git_pattern(path, true)
             };
             [metadata, rule]
         })
@@ -176,6 +175,44 @@ pub fn rewrite_managed_path_block(
         &render_managed_path_body(paths, lfs),
         end_marker,
     ))
+}
+
+/// The `.gitattributes` rule of the exact-path LFS block that routes exactly
+/// `path` (repository-relative, not anchored) to Git LFS. A pattern with a
+/// space, a tab, `"` or another control character goes in C-style double
+/// quotes, since `.gitattributes` ends an unquoted pattern at whitespace even
+/// after a backslash; every other pattern keeps its unquoted form.
+pub fn lfs_path_rule(path: &str) -> String {
+    format!(
+        "{} filter=lfs diff=lfs merge=lfs -text",
+        lfs_path_pattern(path)
+    )
+}
+
+fn lfs_path_pattern(path: &str) -> String {
+    let pattern = escape_git_pattern(path, false);
+    if !path
+        .chars()
+        .any(|character| character == ' ' || character == '"' || character.is_ascii_control())
+    {
+        return pattern;
+    }
+    let mut quoted = String::with_capacity(pattern.len() + 2);
+    quoted.push('"');
+    for character in pattern.chars() {
+        match character {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\t' => quoted.push_str("\\t"),
+            '\n' => quoted.push_str("\\n"),
+            control if control.is_ascii_control() => {
+                quoted.push_str(&format!("\\{:03o}", u32::from(control)));
+            }
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn escape_git_pattern(path: &str, root_anchored: bool) -> String {
