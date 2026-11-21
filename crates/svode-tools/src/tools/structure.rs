@@ -86,7 +86,7 @@ pub(crate) struct CreateCollectionArgs {
 }
 
 /// Core structure runtime over the host mutation runtime, without history.
-fn structure_runtime<'a>(handles: &'a PageHandles<'a>) -> StructureRuntime<'a, GitCli> {
+pub(super) fn structure_runtime<'a>(handles: &'a PageHandles<'a>) -> StructureRuntime<'a, GitCli> {
     StructureRuntime {
         index: handles.runtime.index,
         updates: handles.runtime.updates,

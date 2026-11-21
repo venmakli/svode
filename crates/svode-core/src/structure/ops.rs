@@ -3,9 +3,10 @@
 //!
 //! Each operation authorizes its touched-set, changes the source, rewrites the
 //! links and relations it invalidates, republishes the derived projection and
-//! hands the resulting history to the commit sink. The compound Collection
-//! create, the conversion of a leaf into a Collection, rename and move roll
-//! back; the other intents keep their existing partial outcomes.
+//! hands the resulting history to the commit sink. The compound Page create
+//! under a leaf Page, Collection create, the conversion of a leaf into a
+//! Collection, rename and move roll back; the other intents keep their
+//! existing partial outcomes.
 
 use std::collections::HashMap;
 use std::fs;
@@ -21,7 +22,9 @@ use crate::git::pending::{OperationId, StructuralChange, StructuralOp};
 use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource, dedupe_modified_sources};
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
-use crate::page::create::{PageParent, not_a_markdown_parent, resolve_page_parent};
+use crate::page::create::{
+    PageCreate, PageCreateOutcome, PageParent, not_a_markdown_parent, resolve_page_parent,
+};
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, Page};
 use crate::page::write::{SourceSnapshot, mapped_path};
@@ -571,6 +574,289 @@ impl StructuralCommitSink for HeldCommits<'_> {
     }
 }
 
+/// Create a Page under the requested parent, resolved by the parent rule of
+/// Page create. A leaf Page parent first becomes a folder Page by the
+/// conversion step of a move under a leaf, with all its effects; the
+/// conversion and the create are one operation: one authorized touched set,
+/// one snapshot, one rollback, and history registered once everything
+/// succeeded.
+pub async fn create_page<E, F, Fut, Err>(
+    request: PageCreate,
+    runtime: StructureRuntime<'_, E>,
+    authorize: F,
+) -> Result<PageCreateOutcome, Err>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
+{
+    ensure_path_in_space(
+        &request.space,
+        request.parent_path.as_deref().unwrap_or_default(),
+    )
+    .map_err(Err::from)?;
+    let space = request.space.clone();
+    let project = request.project.clone();
+    let operation = OperationId::next();
+    let outcome = create_page_step(
+        request,
+        store::SourceNames::File,
+        runtime,
+        operation,
+        authorize,
+    )
+    .await?;
+    schedule_created_page(
+        runtime.commits,
+        project.as_deref(),
+        &space,
+        &outcome,
+        operation,
+    )
+    .await
+    .map_err(Err::from)?;
+    Ok(outcome)
+}
+
+/// The Page create of [`create_page`] and of a Collection create, without
+/// the history of the created Page: the conversion of a leaf parent shares
+/// the identity `operation` and registers through `runtime` only once the
+/// create succeeded.
+async fn create_page_step<E, F, Fut, Err>(
+    request: PageCreate,
+    names: store::SourceNames,
+    runtime: StructureRuntime<'_, E>,
+    operation: OperationId,
+    authorize: F,
+) -> Result<PageCreateOutcome, Err>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
+{
+    crate::page::create::ensure_title(&request).map_err(Err::from)?;
+    let requested = request
+        .parent_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    let leaf = match requested {
+        Some(requested) => {
+            match resolve_page_parent(&request.space, requested).map_err(Err::from)? {
+                PageParent::Leaf { leaf, folder } => Some((leaf, folder)),
+                PageParent::Directory(_) | PageParent::NotPage(_) => None,
+            }
+        }
+        None => None,
+    };
+    let Some((leaf, folder)) = leaf else {
+        return crate::page::create::create_with_source_names(
+            request,
+            names,
+            runtime.index,
+            runtime.updates,
+            runtime.git_dates,
+            authorize,
+        )
+        .await;
+    };
+    // Authorization runs before any source change; its failure is returned
+    // to the caller exactly as the caller produced it.
+    let mut denied = None;
+    let denied_slot = &mut denied;
+    let result = create_page_under_leaf(
+        request,
+        &leaf,
+        &folder,
+        names,
+        runtime,
+        operation,
+        move |paths| async move {
+            authorize(paths).await.map_err(|error| {
+                *denied_slot = Some(error);
+                PageError::General("Page create authorization failed".into())
+            })
+        },
+    )
+    .await;
+    match (result, denied) {
+        (_, Some(error)) => Err(error),
+        (result, None) => result.map_err(Err::from),
+    }
+}
+
+/// Convert the leaf Page `leaf` into the folder Page `folder`, then create
+/// in it. The touched set of both steps, with the link sources of every
+/// Space the conversion rewrites, is authorized and captured before the
+/// first write; a failure of any step restores it byte for byte and removes
+/// the folder of the conversion.
+async fn create_page_under_leaf<E, F, Fut>(
+    request: PageCreate,
+    leaf: &str,
+    folder: &str,
+    names: store::SourceNames,
+    runtime: StructureRuntime<'_, E>,
+    operation: OperationId,
+    authorize: F,
+) -> Result<PageCreateOutcome, PageError>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, PageError>>,
+{
+    let state = runtime.index;
+    let space = request.space.clone();
+    let project_path = request.project.clone();
+    let project_path = project_path.as_deref();
+    let root = Path::new(&space);
+    let readme = format!("{folder}/README.md");
+    let backlinks = state.backlinks_for_space_dir(root).await;
+    ensure_backlinks_before_structural(state, project_path).await;
+    let mut planned =
+        super::plan::move_mutation_paths(state, &space, project_path, leaf, &readme).await?;
+    planned
+        .extend(move_snapshot_paths(state, &backlinks, &space, project_path, leaf, &readme).await?);
+    planned.extend(crate::page::create::mutation_paths(&request, Some(folder))?);
+    planned.sort();
+    planned.dedup();
+    let authorized = authorize(planned.clone()).await?;
+    let sources = planned
+        .into_iter()
+        .filter(|path| !path.is_dir())
+        .collect::<Vec<_>>();
+    let mut snapshot = SourceSnapshot::capture(&sources, None)?;
+    let held = runtime.commits.map(HeldCommits::new);
+    let steps = StructureRuntime {
+        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
+        ..runtime
+    };
+    let folder_abs = root.join(folder);
+    let mut wrote = false;
+    let applied = crate::git::access::scope_authorized_mutation_paths(
+        authorized.clone(),
+        async {
+            wrote = true;
+            if let Err(error) = convert_to_folder_with_publication(
+                &space,
+                leaf,
+                project_path,
+                steps,
+                true,
+                operation,
+            )
+            .await
+            {
+                // A directory that already has the name is not this create's.
+                if !matches!(&error, PageError::FileAlreadyExists(path) if path == folder) {
+                    snapshot.track_created(folder_abs.join("README.md"));
+                    snapshot.track_created_dir(folder_abs.clone());
+                }
+                return Err(conversion_step_cause(error));
+            }
+            snapshot.track_created(folder_abs.join("README.md"));
+            snapshot.track_created_dir(folder_abs.clone());
+            #[cfg(test)]
+            crate::page::write::checkpoint("create_parent_folder")?;
+            let created = crate::page::create::create_with_source_names(
+                PageCreate {
+                    parent_path: Some(folder.to_string()),
+                    ..request
+                },
+                names,
+                state,
+                runtime.updates,
+                runtime.git_dates,
+                |paths| async move {
+                    ensure_mutation_paths_were_authorized(&paths)?;
+                    Ok::<_, PageError>(authorized)
+                },
+            )
+            .await
+            .map_err(conversion_step_cause)?;
+            snapshot.track_created(root.join(&created.page.path));
+            let mut changed_paths = snapshot.changes()?;
+            changed_paths.extend(created.changed_paths);
+            changed_paths.sort();
+            changed_paths.dedup();
+            Ok(PageCreateOutcome {
+                page: created.page,
+                changed_paths,
+            })
+        },
+        PageError::from,
+    )
+    .await;
+    match applied {
+        Ok(outcome) => {
+            if let Some(held) = held {
+                held.release();
+            }
+            Ok(outcome)
+        }
+        Err(error) => {
+            let error = snapshot.rollback(error);
+            if wrote {
+                republish_after_rollback(runtime, project_path, &space, &sources).await;
+            }
+            Err(error)
+        }
+    }
+}
+
+/// History of a created Page once its whole operation succeeded: its own
+/// Space registers the creation with every file the operation changed there,
+/// other Spaces companions of the same operation. A create that allocated a
+/// `unique_id` registers its own Space as content changes instead.
+async fn schedule_created_page(
+    commits: Option<&dyn StructuralCommitSink>,
+    project_path: Option<&str>,
+    space: &str,
+    outcome: &PageCreateOutcome,
+    operation: OperationId,
+) -> Result<(), PageError> {
+    let Some(commits) = commits else {
+        return Ok(());
+    };
+    let path = outcome.page.path.as_str();
+    let change = StructuralChange::of(
+        operation,
+        StructuralOp::Create(page_commit_name(space, path)),
+    )
+    .creating(page_entity(space, path));
+    let mut own = page_paths_with_order(space, [abs_page_path(space, path)]);
+    for (owner, paths) in grouped_abs_paths_by_space(project_path, space, &outcome.changed_paths) {
+        if owner == Path::new(space) {
+            own.extend(paths);
+        } else {
+            schedule_structural_paths(
+                Some(commits),
+                project_path,
+                &owner.to_string_lossy(),
+                change.companion(),
+                paths,
+            );
+        }
+    }
+    if engine::unique_id_schema_path_for_item(space, path)?.is_some() {
+        own.extend(engine::unique_id_mutation_paths_for_item(space, path)?);
+        own.sort();
+        own.dedup();
+        let message = if page_in_sensitive_collection(space, path) {
+            "Create collection entry with unique_id".to_string()
+        } else {
+            format!("Create {} with unique_id", basename(path))
+        };
+        record_unique_id_changes(commits, project_path, space, own, message).await;
+    } else {
+        own.sort();
+        own.dedup();
+        schedule_structural_paths(Some(commits), project_path, space, change, own);
+    }
+    Ok(())
+}
+
 /// Mark the Collection directory and the files its conversion writes as
 /// created by this operation.
 fn track_collection_dir(snapshot: &mut SourceSnapshot, space: &str, collection_path: &str) {
@@ -641,10 +927,16 @@ where
     let mut captured = None;
     let captured_slot = &mut captured;
     let authorization_space = request.space.clone();
+    let operation = OperationId::next();
+    let held = runtime.commits.map(HeldCommits::new);
+    let steps = StructureRuntime {
+        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
+        ..runtime
+    };
     // The snapshot is taken from the authorized plan of the Page create,
     // right before its first write.
-    let page = crate::page::create::create_with_source_names(
-        crate::page::create::PageCreate {
+    let page = create_page_step(
+        PageCreate {
             space: request.space.clone(),
             parent_path: parent.clone(),
             title: planned.title,
@@ -660,9 +952,8 @@ where
             publish_projection: false,
         },
         store::SourceNames::FileAndDirectory,
-        runtime.index,
-        runtime.updates,
-        runtime.git_dates,
+        steps,
+        operation,
         |mut paths| {
             paths.extend(schema_paths);
             paths.push(PathBuf::from(&authorization_space));
@@ -713,11 +1004,6 @@ where
         snapshot.track_created(root.join(parent).join("README.md"));
         snapshot.track_created_dir(root.join(parent));
     }
-    let held = runtime.commits.map(HeldCommits::new);
-    let steps = StructureRuntime {
-        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
-        ..runtime
-    };
     let applied = async {
         if page.page.path != planned.path {
             return Err(PageError::General(
@@ -787,17 +1073,30 @@ where
     changed_paths.push(collection_schema_path(&request.space, &collection_path));
     changed_paths.sort();
     changed_paths.dedup();
-    schedule_structural_paths(
-        runtime.commits,
-        request.project.as_deref(),
-        &request.space,
-        StructuralChange::new(StructuralOp::Create(page_history_commit_name(
+    let change = StructuralChange::of(
+        operation,
+        StructuralOp::Create(page_history_commit_name(
             &request.space,
             &conversion.readme_path,
-        )))
-        .creating(page_entity(&request.space, &conversion.readme_path)),
-        changed_paths.clone(),
-    );
+        )),
+    )
+    .creating(page_entity(&request.space, &conversion.readme_path));
+    for (owner, paths) in
+        grouped_abs_paths_by_space(request.project.as_deref(), &request.space, &changed_paths)
+    {
+        let change = if owner == Path::new(&request.space) {
+            change.clone()
+        } else {
+            change.companion()
+        };
+        schedule_structural_paths(
+            runtime.commits,
+            request.project.as_deref(),
+            &owner.to_string_lossy(),
+            change,
+            paths,
+        );
+    }
     // Name allocation warnings of the written Page describe the Collection
     // that the conversion made of it.
     let mut collection = conversion.page;

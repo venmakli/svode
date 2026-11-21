@@ -32,8 +32,9 @@ pub struct PageCreateOutcome {
 }
 
 /// Create a Page with its initial metadata, schema defaults/counters and
-/// body as one action. A leaf parent is materialized as a directory-backed
-/// Page first; any handled failure restores the full touched-set.
+/// body as one action under an existing parent directory; any handled
+/// failure restores the full touched-set. A leaf Page parent is refused:
+/// `structure::create_page` turns it into a folder Page first.
 pub async fn create<E, F, Fut, Err>(
     request: PageCreate,
     state: &IndexRuntimeState,
@@ -102,33 +103,37 @@ where
     }
 }
 
-async fn create_page<E, F, Fut>(
-    request: PageCreate,
-    names: store::SourceNames,
-    state: &IndexRuntimeState,
-    updates: &IndexUpdateState,
-    git_dates: Option<&E>,
-    authorize: F,
-) -> Result<PageCreateOutcome, PageError>
-where
-    E: GitDateExecutor,
-    F: FnOnce(Vec<PathBuf>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<PathBuf>, PageError>>,
-{
+/// What a create under a resolved parent directory plans before its first
+/// write.
+struct CreatePlan {
+    paths: Vec<PathBuf>,
+    properties: IndexMap<String, serde_json::Value>,
+    contextual_values: Option<crate::page::frontmatter::FrontmatterFields>,
+}
+
+/// Every path a create of `request` under the directory `parent` may write,
+/// planned without writing; `parent` may be a folder an earlier step of the
+/// same operation creates.
+pub(crate) fn mutation_paths(
+    request: &PageCreate,
+    parent: Option<&str>,
+) -> Result<Vec<PathBuf>, PageError> {
+    Ok(plan(request, parent)?.paths)
+}
+
+/// The refusal of a create without a title, before anything else.
+pub(crate) fn ensure_title(request: &PageCreate) -> Result<(), PageError> {
     if request.title.trim().is_empty() {
         return Err(PageError::General("title must not be empty".into()));
     }
-    let requested_parent = request
-        .parent_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|path| !path.is_empty());
-    let (parent, parent_conversion) = resolve_parent(&request.space, requested_parent)?;
+    Ok(())
+}
+
+fn plan(request: &PageCreate, parent: Option<&str>) -> Result<CreatePlan, PageError> {
     let probe = parent
-        .as_deref()
         .map(|parent| format!("{parent}/.svode-create-probe.md"))
         .unwrap_or_else(|| ".svode-create-probe.md".to_string());
-    let properties = request.properties.unwrap_or_default();
+    let properties = request.properties.clone().unwrap_or_default();
     for key in properties.keys() {
         if request.contextual_defaults {
             continue;
@@ -156,30 +161,14 @@ where
 
     let schema_root = collections::resolve_collection_schema_result(&request.space, &probe)?
         .map(|(_, root)| root.to_string_lossy().replace('\\', "/"));
-    let mut planned_paths = vec![
+    let mut paths = vec![
         Path::new(&request.space).join(".svode/order.json"),
         PathBuf::from(&request.space),
     ];
-    planned_paths.extend(collections::unique_id_mutation_paths_for_item(
+    paths.extend(collections::unique_id_mutation_paths_for_item(
         &request.space,
         &probe,
     )?);
-    if let Some((old, new_parent)) = parent_conversion.as_ref() {
-        let root = Path::new(&request.space);
-        planned_paths.extend(crate::content_tree::collect_markdown_paths(
-            root,
-            root,
-            &crate::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
-        )?);
-        planned_paths.push(root.join(old));
-        planned_paths.push(root.join(new_parent).join("README.md"));
-        planned_paths.extend(collections::relation_move_mutation_paths_with_project(
-            &request.space,
-            request.project.as_deref(),
-            old,
-            &format!("{new_parent}/README.md"),
-        )?);
-    }
     let contextual_values = request
         .contextual_defaults
         .then(|| {
@@ -208,7 +197,7 @@ where
             collections::normalize_item_field_value(&request.space, &probe, field, yaml)?;
         collections::validate_item_field_value(&request.space, &probe, field, &normalized)?;
         if let Some(collection) = schema_root.as_deref() {
-            planned_paths.extend(
+            paths.extend(
                 collections::relation_field_target_mutation_paths_for_value_with_project(
                     &request.space,
                     request.project.as_deref(),
@@ -219,59 +208,50 @@ where
             );
         }
     }
-    planned_paths.sort();
-    planned_paths.dedup();
+    paths.sort();
+    paths.dedup();
+    Ok(CreatePlan {
+        paths,
+        properties,
+        contextual_values,
+    })
+}
+
+async fn create_page<E, F, Fut>(
+    request: PageCreate,
+    names: store::SourceNames,
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    authorize: F,
+) -> Result<PageCreateOutcome, PageError>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, PageError>>,
+{
+    ensure_title(&request)?;
+    let requested_parent = request
+        .parent_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    let parent = resolve_parent(&request.space, requested_parent)?;
+    let CreatePlan {
+        paths: planned_paths,
+        properties,
+        contextual_values,
+    } = plan(&request, parent.as_deref())?;
     let authorized = authorize(planned_paths.clone()).await?;
     let sources = planned_paths
         .into_iter()
         .filter(|path| !path.is_dir())
         .collect::<Vec<_>>();
     let mut snapshot = SourceSnapshot::capture(&sources, None)?;
-    let backlinks = if parent_conversion.is_some() {
-        let backlinks = state
-            .backlinks_for_space_dir(Path::new(&request.space))
-            .await;
-        if !backlinks.is_built() {
-            backlinks.build(Path::new(&request.space))?;
-        }
-        Some(backlinks)
-    } else {
-        None
-    };
 
     let operation = crate::git::access::scope_authorized_mutation_paths(
         authorized,
         async {
-            if let Some((old, new_parent)) = parent_conversion.as_ref() {
-                let root = Path::new(&request.space);
-                let converted = match store::convert_page_to_folder(root, old, backlinks.as_deref())
-                {
-                    Ok(converted) => converted,
-                    Err(error) => {
-                        // A directory that already has the name is not this create's.
-                        if !matches!(error, PageError::FileAlreadyExists(_)) {
-                            snapshot.track_created_dir(root.join(new_parent));
-                        }
-                        // The snapshot holds the leaf, its README path and the folder,
-                        // so its rollback restores what the conversion left changed
-                        // and reports only what stays changed.
-                        return Err(match error {
-                            PageError::Recovery { cause, .. } => PageError::General(cause),
-                            error => error,
-                        });
-                    }
-                };
-                // The rollback removes the folder of the conversion from here
-                // on, whatever fails next.
-                snapshot.track_created(root.join(new_parent).join("README.md"));
-                snapshot.track_created_dir(root.join(new_parent));
-                checkpoint("parent_conversion")?;
-                if converted.path != format!("{new_parent}/README.md") {
-                    return Err(PageError::General(
-                        "parent Page conversion returned an unexpected path".into(),
-                    ));
-                }
-            }
             let created = store::create_source_with_options(
                 &request.space,
                 parent.as_deref(),
@@ -425,16 +405,18 @@ where
     })
 }
 
-fn resolve_parent(
-    space: &str,
-    requested: Option<&str>,
-) -> Result<(Option<String>, Option<(String, String)>), PageError> {
+/// The existing parent directory of a create. A leaf Page parent becomes a
+/// folder Page through the structural create, which converts it before it
+/// creates in the folder.
+fn resolve_parent(space: &str, requested: Option<&str>) -> Result<Option<String>, PageError> {
     let Some(requested) = requested else {
-        return Ok((None, None));
+        return Ok(None);
     };
     match resolve_page_parent(space, requested)? {
-        PageParent::Directory(directory) => Ok((Some(directory), None)),
-        PageParent::Leaf { leaf, folder } => Ok((Some(folder.clone()), Some((leaf, folder)))),
+        PageParent::Directory(directory) => Ok(Some(directory)),
+        PageParent::Leaf { leaf, .. } => Err(PageError::General(format!(
+            "parent Page {leaf} must be a folder Page; create through structure::create_page"
+        ))),
         PageParent::NotPage(_) => Err(not_a_markdown_parent()),
     }
 }
@@ -515,6 +497,12 @@ fn checkpoint(_: &str) -> Result<(), PageError> {
 
 #[cfg(test)]
 thread_local! { static FAILURE: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) }; }
+
+/// Make `checkpoint(stage)` of a Page create fail on this thread.
+#[cfg(test)]
+pub(crate) fn inject_failure(stage: Option<&'static str>) {
+    FAILURE.with(|failure| *failure.borrow_mut() = stage);
+}
 
 #[cfg(test)]
 fn checkpoint(stage: &str) -> Result<(), PageError> {
@@ -609,34 +597,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creating_under_leaf_materializes_parent_in_the_same_action() {
-        let temp = tempfile::tempdir().unwrap();
-        scaffold_space(temp.path(), "Test");
-        fs::write(
-            temp.path().join("Parent.md"),
-            "---\ntitle: Parent\n---\nParent body",
-        )
-        .unwrap();
-        let mut input = request(temp.path());
-        input.parent_path = Some("Parent.md".into());
-        let outcome = create(
-            input,
-            &IndexRuntimeState::default(),
-            update_state(),
-            None::<&SystemGitDateExecutor>,
-            |paths| async move { Ok::<_, PageError>(paths) },
-        )
-        .await
-        .unwrap();
-        assert_eq!(outcome.page.path, "Parent/Budget.md");
-        assert!(!temp.path().join("Parent.md").exists());
-        assert_eq!(
-            fs::read_to_string(temp.path().join("Parent/README.md")).unwrap(),
-            "---\ntitle: Parent\n---\nParent body"
-        );
-    }
-
-    #[tokio::test]
     async fn late_failure_restores_created_page_counter_and_order() {
         let temp = tempfile::tempdir().unwrap();
         scaffold_space(temp.path(), "Test");
@@ -650,7 +610,7 @@ mod tests {
         let order = temp.path().join(".svode/order.json");
         fs::write(&order, "{}").unwrap();
         let before_order = fs::read(&order).unwrap();
-        FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
+        inject_failure(Some("body"));
         let result = create(
             request(temp.path()),
             &IndexRuntimeState::default(),
@@ -659,7 +619,7 @@ mod tests {
             |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await;
-        FAILURE.with(|failure| *failure.borrow_mut() = None);
+        inject_failure(None);
         assert!(result.is_err());
         assert!(!temp.path().join("Budget.md").exists());
         assert_eq!(fs::read(schema).unwrap(), before_schema);
@@ -695,112 +655,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failure_after_parent_conversion_restores_leaf_layout() {
-        let temp = tempfile::tempdir().unwrap();
-        scaffold_space(temp.path(), "Test");
-        let original = "---\ntitle: Parent\n---\nParent body";
-        fs::write(temp.path().join("Parent.md"), original).unwrap();
-        let mut input = request(temp.path());
-        input.parent_path = Some("Parent.md".into());
-        FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
-        let result = create(
-            input,
-            &IndexRuntimeState::default(),
-            update_state(),
-            None::<&SystemGitDateExecutor>,
-            |paths| async move { Ok::<_, PageError>(paths) },
-        )
-        .await;
-        FAILURE.with(|failure| *failure.borrow_mut() = None);
-        assert!(result.is_err());
-        assert_eq!(
-            fs::read_to_string(temp.path().join("Parent.md")).unwrap(),
-            original
-        );
-        assert!(!temp.path().join("Parent").exists());
-    }
-
-    #[tokio::test]
-    async fn failure_right_after_parent_conversion_removes_its_folder_and_allows_a_retry() {
-        let temp = tempfile::tempdir().unwrap();
-        scaffold_space(temp.path(), "Test");
-        let original = "---\ntitle: Parent\n---\nParent body";
-        fs::write(temp.path().join("Parent.md"), original).unwrap();
-        let mut input = request(temp.path());
-        input.parent_path = Some("Parent.md".into());
-        FAILURE.with(|failure| *failure.borrow_mut() = Some("parent_conversion"));
-        let result = create(
-            input,
-            &IndexRuntimeState::default(),
-            update_state(),
-            None::<&SystemGitDateExecutor>,
-            |paths| async move { Ok::<_, PageError>(paths) },
-        )
-        .await;
-        FAILURE.with(|failure| *failure.borrow_mut() = None);
-        assert!(
-            matches!(&result, Err(PageError::General(cause)) if cause.contains("injected parent_conversion failure")),
-            "{:?}",
-            result.err()
-        );
-        assert_eq!(
-            fs::read_to_string(temp.path().join("Parent.md")).unwrap(),
-            original
-        );
-        assert!(!temp.path().join("Parent").exists());
-
-        let mut retry = request(temp.path());
-        retry.parent_path = Some("Parent.md".into());
-        let outcome = create(
-            retry,
-            &IndexRuntimeState::default(),
-            update_state(),
-            None::<&SystemGitDateExecutor>,
-            |paths| async move { Ok::<_, PageError>(paths) },
-        )
-        .await
-        .unwrap();
-        assert_eq!(outcome.page.path, "Parent/Budget.md");
-    }
-
-    #[tokio::test]
-    async fn unrestorable_leaf_fails_the_create_with_only_its_path() {
-        let temp = tempfile::tempdir().unwrap();
-        scaffold_space(temp.path(), "Test");
-        let leaf = temp.path().join("Parent.md");
-        fs::write(&leaf, "---\ntitle: Parent\n---\nParent body").unwrap();
-        let mut input = request(temp.path());
-        input.parent_path = Some("Parent.md".into());
-        let occupied = leaf.clone();
-        crate::page::write::inject_effect(
-            "body",
-            Box::new(move || fs::create_dir(&occupied).unwrap()),
-        );
-        FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
-        let result = create(
-            input,
-            &IndexRuntimeState::default(),
-            update_state(),
-            None::<&SystemGitDateExecutor>,
-            |paths| async move { Ok::<_, PageError>(paths) },
-        )
-        .await;
-        FAILURE.with(|failure| *failure.borrow_mut() = None);
-        match result.err() {
-            Some(PageError::Recovery { cause, paths }) => {
-                assert!(cause.contains("injected body failure"), "{cause}");
-                assert_eq!(paths, vec![leaf.display().to_string()]);
-            }
-            other => panic!("expected recovery, got {other:?}"),
-        }
-        assert!(!temp.path().join("Parent").exists());
-    }
-
-    #[tokio::test]
     async fn projection_failure_is_an_applied_warning() {
         let temp = tempfile::tempdir().unwrap();
         scaffold_space(temp.path(), "Test");
-        FAILURE.with(|failure| *failure.borrow_mut() = Some("projection"));
+        inject_failure(Some("projection"));
         let outcome = create(
             request(temp.path()),
             &IndexRuntimeState::default(),
@@ -810,7 +668,7 @@ mod tests {
         )
         .await
         .unwrap();
-        FAILURE.with(|failure| *failure.borrow_mut() = None);
+        inject_failure(None);
         assert!(temp.path().join("Budget.md").exists());
         assert!(
             outcome

@@ -4,7 +4,6 @@
 use std::future::Future;
 use std::path::PathBuf;
 
-use svode_core::page::create::{PageCreate, PageCreateOutcome};
 use svode_core::page::fields::{PageFieldOutcome, PageFieldUpdate};
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::page::write::{
@@ -113,25 +112,4 @@ where
         );
     }
     Ok(outcome)
-}
-
-pub(crate) async fn create<F, Fut>(
-    request: PageCreate,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    authorize: F,
-) -> Result<PageCreateOutcome, AppError>
-where
-    F: FnOnce(Vec<PathBuf>) -> Fut,
-    Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
-{
-    let cli = crate::git::dates::detected_cli();
-    svode_core::page::create::create(
-        request,
-        &state.core,
-        updates.core(),
-        cli.as_ref(),
-        authorize,
-    )
-    .await
 }

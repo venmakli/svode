@@ -1063,6 +1063,47 @@ async fn create_page_uses_the_shared_create_and_rejects_legacy_arguments() {
 }
 
 #[tokio::test]
+async fn create_page_under_a_leaf_rewrites_and_reports_the_links_of_another_space() {
+    let fixture = write_fixture();
+    write(
+        &fixture.project.join("child/Cross.md"),
+        "---\ntitle: Cross\n---\n[Leaf](../leaf.md)\n",
+    );
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+
+    let page = call_tool(
+        &host,
+        Some(&target),
+        "create_page",
+        json!({ "parentPath": "leaf.md", "title": "Inner" }),
+    )
+    .await;
+    let page = structured(&page);
+
+    assert_eq!(page["path"], "leaf/Inner.md");
+    assert!(!fixture.project.join("leaf.md").exists());
+    assert_eq!(
+        read(&fixture, "child/Cross.md"),
+        "---\ntitle: Cross\n---\n[Leaf](../leaf/README.md)\n"
+    );
+    assert_eq!(
+        read(&fixture, "links.md"),
+        "---\ntitle: Links\n---\n[Leaf](leaf/README.md)\n"
+    );
+    let changed = changed(page);
+    for path in [
+        "child/Cross.md",
+        "links.md",
+        "leaf.md",
+        "leaf/README.md",
+        "leaf/Inner.md",
+    ] {
+        assert!(changed.contains(&path.to_string()), "{path}: {changed:?}");
+    }
+}
+
+#[tokio::test]
 async fn item_field_batch_is_one_action_with_the_shared_rename() {
     let fixture = write_fixture();
     let host = FixtureHost::new(None);

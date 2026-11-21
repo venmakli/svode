@@ -124,9 +124,10 @@ pub async fn create_page(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Page, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let created = crate::page::create(
+    let authorization_space = space.clone();
+    let outcome = crate::structure::create_page(
         svode_core::page::create::PageCreate {
-            space: space.clone(),
+            space,
             parent_path,
             title,
             body: None,
@@ -137,46 +138,16 @@ pub async fn create_page(
             contextual_defaults: true,
             allocate_unique_title: allocate_unique_title.unwrap_or(false),
             as_readme: as_readme.unwrap_or(false),
-            project: project_path.clone(),
+            project: project_path,
             publish_projection: true,
         },
         &index_state,
         &index_updates,
-        |paths| require_planned_mutation_paths(&app, &space, paths),
+        Some(&autocommit),
+        |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
     )
-    .await?
-    .page;
-    if engine::unique_id_schema_path_for_item(&space, &created.path)?.is_some() {
-        let mut paths = engine::unique_id_mutation_paths_for_item(&space, &created.path)?;
-        paths.push(order_path(&space));
-        let message = if page_in_sensitive_collection(&space, &created.path) {
-            "Create collection entry with unique_id".to_string()
-        } else {
-            format!("Create {} with unique_id", basename(&created.path))
-        };
-        maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
-    } else {
-        schedule_created_page(&autocommit, project_path.as_deref(), &space, &created.path);
-    }
-    Ok(created)
-}
-
-/// Register a created page for its group of creation (Stage 11 1.G): the
-/// page is the created object, the order file its tail.
-pub(crate) fn schedule_created_page(
-    autocommit: &AutocommitService,
-    project_path: Option<&str>,
-    space: &str,
-    path: &str,
-) {
-    maybe_autocommit_structural_paths(
-        autocommit,
-        project_path,
-        space,
-        StructuralChange::new(StructuralOp::Create(page_commit_name(space, path)))
-            .creating(page_entity(space, path)),
-        page_paths_with_order(space, [abs_page_path(space, path)]),
-    );
+    .await?;
+    Ok(outcome.page)
 }
 
 #[tauri::command]

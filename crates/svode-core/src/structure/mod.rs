@@ -1,6 +1,8 @@
 //! Structural operations over the content tree and the history they produce.
 
 pub mod commit;
+#[cfg(test)]
+mod create_page_tests;
 mod move_parent;
 #[cfg(test)]
 mod move_parent_tests;
@@ -24,7 +26,7 @@ pub use ops::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, ConvertToFolderOutcome,
     ConvertToLeafOutcome, ConvertedParent, DeleteOutcome, MovePageOutcome, NestOutcome,
     RenameOutcome, StructureRuntime, convert_to_collection, convert_to_folder, convert_to_leaf,
-    create_collection, create_folder, delete, duplicate, move_page, nest, rename,
+    create_collection, create_folder, create_page, delete, duplicate, move_page, nest, rename,
 };
 pub use plan::{
     backlink_mutation_paths, collection_create_schema_paths, delete_mutation_paths,

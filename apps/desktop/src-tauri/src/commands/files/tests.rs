@@ -2016,3 +2016,138 @@ async fn structural_outcomes_name_the_source_in_the_disk_spelling() {
         "Gone.md"
     );
 }
+
+/// Project with the child Spaces `dela` and `atlas`: `atlas/Cross.md` links
+/// the leaf `dela/Ideas/X.md`.
+fn two_space_project(root: &Path) {
+    std::fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","spaces":[{"id":"dela","path":"dela"},{"id":"atlas","path":"atlas"}]}"#,
+    )
+    .unwrap();
+    for (path, source) in [
+        ("dela/.svode/config.json", r#"{"name":"dela"}"#),
+        ("atlas/.svode/config.json", r#"{"name":"atlas"}"#),
+        ("dela/Ideas/X.md", "---\ntitle: X\n---\n"),
+        (
+            "atlas/Cross.md",
+            "---\ntitle: Cross\n---\n[X](../dela/Ideas/X.md)\n",
+        ),
+    ] {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    for repository in [root.to_path_buf(), root.join("dela"), root.join("atlas")] {
+        std::fs::create_dir_all(repository.join(".git")).unwrap();
+    }
+}
+
+fn page_create_under_leaf(dela: &Path, project: &Path) -> svode_core::page::create::PageCreate {
+    svode_core::page::create::PageCreate {
+        space: dela.to_string_lossy().into_owned(),
+        parent_path: Some("Ideas/X.md".into()),
+        title: "Child".into(),
+        body: None,
+        icon: None,
+        description: None,
+        cover: None,
+        properties: None,
+        contextual_defaults: true,
+        allocate_unique_title: false,
+        as_readme: false,
+        project: Some(project.to_string_lossy().into_owned()),
+        publish_projection: true,
+    }
+}
+
+#[tokio::test]
+async fn page_create_under_a_leaf_versions_the_conversion_the_creation_and_the_other_space() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join(".svode")).unwrap();
+    two_space_project(&root);
+    let dela = root.join("dela");
+    let atlas = root.join("atlas");
+    let runtime = Arc::new(svode_core::git::state::GitRuntime::new());
+    let autocommit = AutocommitService::new(
+        runtime.clone(),
+        Arc::new(crate::git::auto_versions::QuietHost),
+    );
+    let index_state = IndexState::new();
+    for id in ["dela", "atlas"] {
+        index_state
+            .core
+            .upsert_space(
+                &root,
+                id,
+                id,
+                svode_core::index::resolver::SpaceStatus::Ready,
+                None,
+            )
+            .await;
+    }
+
+    // A refused repository of the other Space registers nothing.
+    let refused = atlas.clone();
+    let error = crate::structure::create_page(
+        page_create_under_leaf(&dela, &root),
+        &index_state,
+        updates(),
+        Some(&autocommit),
+        |paths| async move {
+            if paths.iter().any(|path| path.starts_with(&refused)) {
+                Err(AppError::General("atlas is read-only".into()))
+            } else {
+                Ok(paths)
+            }
+        },
+    )
+    .await;
+    assert!(error.is_err());
+    assert!(dela.join("Ideas/X.md").is_file());
+    assert!(runtime.pending().peek_under(&root).is_empty());
+
+    let outcome = crate::structure::create_page(
+        page_create_under_leaf(&dela, &root),
+        &index_state,
+        updates(),
+        Some(&autocommit),
+        |paths| async move { Ok(paths) },
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.page.path, "Ideas/X/Child.md");
+    assert!(outcome.changed_paths.contains(&atlas.join("Cross.md")));
+
+    let ops = |space: &Path| {
+        runtime
+            .pending()
+            .peek_under(space)
+            .into_iter()
+            .filter(|item| item.space == space)
+            .map(|item| (item.change.map(|change| change.op), item.paths))
+            .collect::<Vec<_>>()
+    };
+    let in_dela = ops(&dela);
+    assert!(
+        in_dela
+            .iter()
+            .any(|(op, _)| matches!(op, Some(StructuralOp::ConvertToFolder(name)) if name == "X")),
+        "{in_dela:?}"
+    );
+    assert!(
+        in_dela.iter().any(
+            |(op, paths)| matches!(op, Some(StructuralOp::Create(name)) if name == "Child.md")
+                && paths.contains(&dela.join("Ideas/X/Child.md"))
+        ),
+        "{in_dela:?}"
+    );
+    let in_atlas = ops(&atlas);
+    assert!(
+        in_atlas
+            .iter()
+            .any(|(_, paths)| paths.contains(&atlas.join("Cross.md"))),
+        "{in_atlas:?}"
+    );
+}

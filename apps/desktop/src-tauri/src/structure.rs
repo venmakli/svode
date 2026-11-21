@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use svode_core::git::pending::StructuralChange;
+use svode_core::page::create::{PageCreate, PageCreateOutcome};
 use svode_core::page::store::Page;
 use svode_core::structure::{
     ConvertToFolderOutcome, ConvertToLeafOutcome, NestOutcome, RenameOutcome, StructuralCommitSink,
@@ -21,8 +22,8 @@ use svode_core::git::cli::GitCli;
 pub use svode_core::structure::delete_mutation_paths;
 pub use svode_core::structure::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, DeleteOutcome,
-    MovePageOutcome, abs_page_path, basename, order_path, page_commit_name, page_entity,
-    page_history_name, page_in_sensitive_collection, page_paths_with_order, root_path_for_head,
+    MovePageOutcome, abs_page_path, order_path, page_entity, page_history_name,
+    page_in_sensitive_collection, page_paths_with_order, root_path_for_head,
 };
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,
@@ -166,6 +167,27 @@ pub fn create_folder(
         project_path,
         sink.as_ref().map(|sink| sink as &dyn StructuralCommitSink),
     )?)
+}
+
+pub async fn create_page<F, Fut>(
+    request: PageCreate,
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    autocommit: Option<&AutocommitService>,
+    authorize: F,
+) -> Result<PageCreateOutcome, AppError>
+where
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
+{
+    let cli = crate::git::dates::detected_cli();
+    let sink = sink(autocommit);
+    svode_core::structure::create_page(
+        request,
+        runtime(state, updates, cli.as_ref(), sink.as_ref()),
+        authorize,
+    )
+    .await
 }
 
 pub async fn create_collection<F, Fut>(

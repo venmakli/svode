@@ -22,7 +22,7 @@ use crate::index::page_projection::build_page_with_dates;
 use crate::index::reindex::full_reindex;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update;
-use crate::page::create::{PageCreate, create};
+use crate::page::create::PageCreate;
 use crate::page::dates::SystemGitDateExecutor;
 use crate::page::identity::{ContentOwnerKind, PageRole, resolve_markdown_identity_for_path};
 use crate::page::test_support::{scaffold_space, update_state};
@@ -468,11 +468,15 @@ fn create_request(root: &Path, parent: &str) -> PageCreate {
 }
 
 async fn create_child(root: &Path, parent: &str) -> store::Page {
-    create(
+    let index = IndexRuntimeState::default();
+    crate::structure::create_page(
         create_request(root, parent),
-        &IndexRuntimeState::default(),
-        update_state(),
-        None::<&SystemGitDateExecutor>,
+        crate::structure::StructureRuntime {
+            index: &index,
+            updates: update_state(),
+            git_dates: None::<&SystemGitDateExecutor>,
+            commits: None,
+        },
         |paths| async move { Ok::<_, PageError>(paths) },
     )
     .await

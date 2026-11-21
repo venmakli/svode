@@ -188,7 +188,7 @@ pub(crate) async fn create_page(
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
     let handles = PageHandles::of(host);
-    let outcome = match svode_core::page::create::create(
+    let outcome = match Box::pin(svode_core::structure::create_page(
         PageCreate {
             space: space.clone(),
             parent_path: (!parent_path.is_empty()).then_some(parent_path),
@@ -204,11 +204,9 @@ pub(crate) async fn create_page(
             project: Some(target.project_path.clone()),
             publish_projection: true,
         },
-        handles.runtime.index,
-        handles.runtime.updates,
-        handles.git_dates(),
+        super::structure::structure_runtime(&handles),
         |paths| authorize(host, &space, paths),
-    )
+    ))
     .await
     {
         Ok(outcome) => outcome,

@@ -1679,7 +1679,7 @@ async fn create_page_under_leaf(
     space: &str,
     state: &IndexRuntimeState,
 ) -> Result<crate::page::create::PageCreateOutcome, crate::page::PageError> {
-    crate::page::create::create(
+    super::create_page(
         crate::page::create::PageCreate {
             space: space.to_string(),
             parent_path: Some("Area/Tasks/Item.md".into()),
@@ -1695,9 +1695,7 @@ async fn create_page_under_leaf(
             project: Some(space.to_string()),
             publish_projection: true,
         },
-        state,
-        update_state(),
-        None::<&SystemGitDateExecutor>,
+        runtime(state),
         |paths| async move { Ok::<_, crate::page::PageError>(paths) },
     )
     .await

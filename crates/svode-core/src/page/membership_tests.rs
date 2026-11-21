@@ -316,6 +316,15 @@ async fn run_every_write_through_root(
         .await
     );
     refused!(
+        "structure::create_page",
+        structure::create_page(
+            page_create(space, &at(""), project_str),
+            structure_runtime(index, sink),
+            authorize,
+        )
+        .await
+    );
+    refused!(
         "structure::convert_to_folder",
         structure::convert_to_folder(
             space,
@@ -1922,6 +1931,7 @@ const INVENTORY: &[(&str, &str, Guard)] = {
         ("structure/ops.rs", "delete", Direct),
         ("structure/ops.rs", "create_folder", Direct),
         ("structure/ops.rs", "create_collection", Direct),
+        ("structure/ops.rs", "create_page", Direct),
         ("structure/ops.rs", "convert_to_folder", Direct),
         ("structure/ops.rs", "convert_to_leaf", Direct),
         ("structure/ops.rs", "convert_to_collection", Direct),

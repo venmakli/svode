@@ -170,7 +170,7 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
     let space = root.to_string_lossy().to_string();
     let index = IndexRuntimeState::default();
     match write {
-        Write::PageCreate => create::create(
+        Write::PageCreate => structure::create_page(
             create::PageCreate {
                 space,
                 parent_path: Some(path.to_string()),
@@ -186,9 +186,7 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
                 project: None,
                 publish_projection: true,
             },
-            &index,
-            update_state(),
-            None::<&SystemGitDateExecutor>,
+            structure_runtime(&index),
             authorize,
         )
         .await

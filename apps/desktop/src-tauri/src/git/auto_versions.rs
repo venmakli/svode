@@ -484,7 +484,16 @@ mod tests {
         std::fs::write(root.join(".svode/order.json"), r#"{".":["Untitled"]}"#).unwrap();
         let space = root.to_str().unwrap();
         let service = AutocommitService::new(runtime.clone(), host.clone());
-        crate::commands::files::schedule_created_page(&service, Some(space), space, "Untitled.md");
+        crate::structure::maybe_autocommit_structural_paths(
+            &service,
+            Some(space),
+            space,
+            svode_core::git::pending::StructuralChange::new(
+                svode_core::git::pending::StructuralOp::Create("Untitled.md".into()),
+            )
+            .creating(root.join("Untitled.md")),
+            vec![root.join(".svode/order.json"), root.join("Untitled.md")],
+        );
 
         // The operation plans the check a second later; it commits nothing
         // and plans the next one at the pause.
