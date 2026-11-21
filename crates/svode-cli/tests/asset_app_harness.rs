@@ -323,7 +323,8 @@ async fn asset_import_follows_the_routing_of_its_space() {
     assert!(changed(&value).contains(".gitignore"), "{value}");
     assert!(local.project.join(attachment).is_file());
 
-    // A Git LFS route that is not ready refuses before the first write.
+    // A Git LFS route that is not ready on this device refuses before the
+    // first write with the code and next step of its reason.
     let lfs = fixture(json!({
         "strategy": "lfs-remote",
         "binaryRouting": { "version": 1, "lfsExtensions": ["png"] }
@@ -343,12 +344,19 @@ async fn asset_import_follows_the_routing_of_its_space() {
         ],
     )
     .await;
-    error(exit, &refused);
+    assert_eq!(error(exit, &refused), "LFS_TOOLING_UNAVAILABLE");
     assert!(
         refused["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("Git LFS route is not ready"),
+            .contains("Git LFS route is not ready: git-lfs is not installed"),
+        "{refused}"
+    );
+    assert!(
+        refused["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("install git-lfs"),
         "{refused}"
     );
     assert_eq!(refused["error"]["target"]["path"], "leaf.md");

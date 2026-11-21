@@ -50,10 +50,12 @@ pub enum MutationOrigin {
     Mcp,
 }
 
-/// Live Git LFS readiness evidence of a route. Every host answers it with
-/// the core check of its Git runtime (`storage::connection`); the operation
-/// asks instead of probing itself, so fixtures can stand in for the device
-/// store and the remote. A route that is not ready answers its reason.
+/// Git LFS readiness evidence of a route on this device. Every host answers
+/// it with the core import check of its Git runtime
+/// (`storage::connection::check_import_readiness`), which never reaches the
+/// Git LFS server; the operation asks instead of checking itself, so fixtures
+/// can stand in for the device tools and store. A route that is not ready
+/// answers its reason.
 pub trait LfsReadiness: Sync {
     fn lfs_ready<'a>(
         &'a self,
@@ -358,7 +360,9 @@ pub async fn execute_managed_import(
                     .lfs_ready(&revalidated.repository_path, &revalidated.storage_config)
                     .await
             }
-            None => Err(LfsNotReady::RemoteUnreachable),
+            None => Err(LfsNotReady::LfsToolingUnavailable {
+                detail: "this host cannot check the Git LFS route".to_string(),
+            }),
         };
         ready.map_err(PageError::LfsNotReady)?;
     }

@@ -630,3 +630,106 @@ async fn import_into_a_leaf_in_another_letter_case_is_the_import_in_the_disk_spe
         assert_eq!(tree, before, "{result:?}");
     }
 }
+
+/// DF-377 R1: an `lfs-remote` import whose server does not answer stores the
+/// file through Git LFS without contacting the server. Git runs without
+/// global and system config, so the import itself registers the LFS filter.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_remote_lfs_import_stores_the_file_in_lfs_without_reaching_the_server() {
+    use crate::git::state::GitRuntime;
+
+    let Some(real) = GitCli::detect().ok().filter(GitCli::lfs_available) else {
+        return;
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let calls = base.join("ssh-calls");
+    let ssh = base.join("ssh");
+    svode_testkit::write_executable(
+        &ssh,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nexit 255\n",
+            calls.display()
+        ),
+    )
+    .unwrap();
+    let wrapper = base.join("git");
+    svode_testkit::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec '{}' \"$@\"\n",
+            real.git_path().display()
+        ),
+    )
+    .unwrap();
+    let git = GitRuntime::with_cli(GitCli::for_test(wrapper));
+    let cli = git.detected().unwrap();
+    let run = async |args: &[&str]| {
+        let out = cli.exec(&base.join("project"), args).await.unwrap();
+        assert_eq!(out.exit_code, 0, "git {args:?}: {}", out.stderr);
+        out.stdout
+    };
+
+    let project = base.join("project");
+    fs::create_dir_all(&project).unwrap();
+    write_space_config(
+        &project,
+        Some(
+            r#"{ "strategy": "lfs-remote", "binaryRouting": { "version": 1, "lfsExtensions": ["png"] } }"#,
+        ),
+    );
+    fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+    fs::write(
+        project.join(".gitattributes"),
+        "*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .unwrap();
+    run(&["init", "-q"]).await;
+    run(&["remote", "add", "origin", "ssh://git@lfs.invalid/repo.git"]).await;
+    run(&["config", "core.sshCommand", &ssh.to_string_lossy()]).await;
+    let source = base.join("photo.png");
+    fs::write(&source, b"image bytes").unwrap();
+
+    let index = IndexRuntimeState::default();
+    let repository = GitRepositoryState::new();
+    let plan = plan_managed_import(&index, &project, None, "README.md", &source, None)
+        .await
+        .unwrap();
+    assert_eq!(plan.binary_route, ManagedBinaryRoute::LfsExtension);
+    let import = ImportRuntime {
+        cli: Some(cli),
+        lfs: Some(&git),
+        ..runtime(&index, &repository)
+    };
+    let result = execute_managed_import(import, MutationOrigin::Mcp, plan)
+        .await
+        .unwrap();
+
+    assert!(!calls.exists(), "the import reached the server");
+    assert_eq!(
+        fs::read(project.join(&result.attachment_path)).unwrap(),
+        b"image bytes"
+    );
+    // Staged, the file is an LFS pointer and its content is in the local
+    // LFS store.
+    run(&["add", "--", &result.attachment_path]).await;
+    let pointer = run(&["cat-file", "-p", &format!(":{}", result.attachment_path)]).await;
+    assert!(
+        pointer.starts_with("version https://git-lfs.github.com/spec/v1"),
+        "{pointer}"
+    );
+    let oid = pointer
+        .lines()
+        .find_map(|line| line.strip_prefix("oid sha256:"))
+        .unwrap();
+    assert!(
+        project
+            .join(".git/lfs/objects")
+            .join(&oid[..2])
+            .join(&oid[2..4])
+            .join(oid)
+            .is_file()
+    );
+    assert!(!calls.exists());
+}

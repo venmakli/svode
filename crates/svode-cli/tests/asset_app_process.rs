@@ -3,8 +3,8 @@
 //! Validation needs no Project; list and description answer with the
 //! structured result of the shared capability.
 //! The import copies the file by the routing of its Space without a commit;
-//! a Git LFS route answers with the live readiness probe of the process and
-//! refuses before any write while it is not ready.
+//! a Git LFS route answers with the readiness check of the process and
+//! refuses before any write while it is not ready on this device.
 
 mod common;
 
@@ -374,8 +374,6 @@ fn asset_import_copies_by_the_local_routing_of_its_space_without_a_commit() {
 #[test]
 fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
     let routing = json!({ "version": 1, "lfsExtensions": ["png"] });
-    // A remote route whose repository has no reachable `origin`.
-    let remote = committed(json!({ "strategy": "lfs-remote", "binaryRouting": routing }));
     // An S3 route without the S3 setup of this device, and one whose saved
     // setup names Secrets this device cannot resolve.
     let s3 = json!({
@@ -385,11 +383,7 @@ fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
     });
     let unset = committed(s3.clone());
     let unresolved = committed(s3);
-    let Some(((_a, remote, elsewhere), (_b, unset, _), (_c, unresolved, _))) = remote
-        .zip(unset)
-        .zip(unresolved)
-        .map(|((a, b), c)| (a, b, c))
-    else {
+    let Some(((_b, unset, elsewhere), (_c, unresolved, _))) = unset.zip(unresolved) else {
         return;
     };
     let library = unresolved.parent().unwrap().join("library");
@@ -421,7 +415,6 @@ fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
         .is_ok_and(|output| output.status.success());
     // The reason, its code and next step of each route that is not ready.
     let reasons = [
-        (&remote, "SVODE_ERROR", None),
         (&unset, "S3_NOT_CONNECTED", Some("svode storage s3 connect")),
         (
             &unresolved,
@@ -474,7 +467,7 @@ fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
     write(&elsewhere.join("photo.jpg"), "image");
     let jpg = elsewhere.join("photo.jpg");
     let (exit, value) = json(
-        &remote,
+        &unset,
         &[
             "asset",
             "import",
@@ -486,54 +479,114 @@ fn an_lfs_route_refuses_the_import_before_any_write_until_it_is_ready() {
         None,
     );
     assert_eq!(exit, 0, "{value}");
-    let content = value["contentPath"].as_str().unwrap().to_string();
+}
 
-    // Once Git LFS reaches `origin`, the same route is ready and the file is
-    // stored through it, still without a commit.
-    let has_lfs = Command::new("git")
+/// DF-377 R1: a remote route imports while its Git LFS server does not
+/// answer, and stores the file through Git LFS without a commit; only a
+/// missing git-lfs refuses it.
+#[test]
+fn a_remote_lfs_route_imports_while_its_server_is_unreachable() {
+    let routing = json!({ "version": 1, "lfsExtensions": ["png"] });
+    let Some((_temp, remote, elsewhere)) =
+        committed(json!({ "strategy": "lfs-remote", "binaryRouting": routing }))
+    else {
+        return;
+    };
+    // The strategy applied in Storage settings keeps its managed LFS rules
+    // in `.gitattributes`; the history already holds an LFS file, so a probe
+    // of the server would have to reach it.
+    let routing = serde_json::from_value(routing).unwrap();
+    write(
+        &remote.join(".gitattributes"),
+        &format!(
+            "{}\n{}\n{}\n",
+            policy::LFS_START,
+            policy::managed_lfs_attributes_body(&routing).trim_end(),
+            policy::LFS_END
+        ),
+    );
+    write(
+        &remote.join("existing.png"),
+        "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n",
+    );
+    git(
+        &remote,
+        &[
+            "-c",
+            "filter.lfs.process=",
+            "-c",
+            "filter.lfs.clean=cat",
+            "-c",
+            "filter.lfs.required=false",
+            "add",
+            ".gitattributes",
+            "existing.png",
+        ],
+    );
+    git(&remote, &["commit", "-q", "-m", "lfs"]);
+    // `origin` answers and its access is verified, but its Git LFS server is
+    // a closed local port.
+    let bare = remote.parent().unwrap().join("remote.git");
+    git(
+        remote.parent().unwrap(),
+        &["init", "-q", "--bare", bare.to_str().unwrap()],
+    );
+    git(
+        &remote,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    );
+    git(
+        &remote,
+        &["push", "-q", "--no-verify", "origin", "HEAD:main"],
+    );
+    let (exit, access) = json(&remote, &["git", "access", "verify"], None);
+    assert_eq!(exit, 0, "{access}");
+    git(
+        &remote,
+        &["config", "lfs.url", "http://127.0.0.1:9/repo.git/info/lfs"],
+    );
+    let photo = elsewhere.join("photo.png");
+    let head = git(&remote, &["rev-parse", "HEAD"]);
+    let before = sources(&remote);
+
+    let (exit, value) = json(
+        &remote,
+        &[
+            "asset",
+            "import",
+            "--path",
+            "notes.md",
+            "--file",
+            photo.to_str().unwrap(),
+        ],
+        None,
+    );
+
+    let lfs = Command::new("git")
         .args(["lfs", "version"])
         .output()
         .is_ok_and(|output| output.status.success());
-    if has_lfs {
-        let bare = remote.parent().unwrap().join("remote.git");
-        git(
-            remote.parent().unwrap(),
-            &["init", "-q", "--bare", bare.to_str().unwrap()],
-        );
-        git(
-            &remote,
-            &["remote", "add", "origin", bare.to_str().unwrap()],
-        );
-        git(&remote, &["push", "-q", "origin", "HEAD:main"]);
-        // The strategy applied in Storage settings keeps its managed LFS
-        // rules in `.gitattributes`.
-        let routing = serde_json::from_value(routing.clone()).unwrap();
-        write(
-            &remote.join(".gitattributes"),
-            &format!(
-                "{}\n{}\n{}\n",
-                policy::LFS_START,
-                policy::managed_lfs_attributes_body(&routing).trim_end(),
-                policy::LFS_END
-            ),
-        );
-        let (exit, access) = json(&remote, &["git", "access", "verify"], None);
-        assert_eq!(exit, 0, "{access}");
-        let head = git(&remote, &["rev-parse", "HEAD"]);
-        let (exit, value) = json(
-            &remote,
-            &["asset", "import", "--path", &content, "--file", photo],
-            None,
-        );
-        assert_eq!(exit, 0, "{value}");
-        let attachment = value["attachmentPath"].as_str().unwrap();
-        assert!(
-            git(&remote, &["check-attr", "filter", "--", attachment]).ends_with("filter: lfs"),
-            "{value}"
-        );
-        assert!(remote.join(attachment).is_file());
-        assert_eq!(git(&remote, &["rev-parse", "HEAD"]), head);
+    if !lfs {
+        assert_eq!(exit, 1, "{value}");
+        assert_eq!(value["error"]["code"], "LFS_TOOLING_UNAVAILABLE", "{value}");
+        assert_eq!(sources(&remote), before);
+        return;
     }
+    assert_eq!(exit, 0, "{value}");
+    let attachment = value["attachmentPath"].as_str().unwrap();
+    assert_eq!(fs::read(remote.join(attachment)).unwrap(), b"image");
+    assert!(
+        git(&remote, &["check-attr", "filter", "--", attachment]).ends_with("filter: lfs"),
+        "{value}"
+    );
+    assert_eq!(git(&remote, &["rev-parse", "HEAD"]), head);
+    // Staged, the file is an LFS pointer.
+    git(&remote, &["add", "--", attachment]);
+    let pointer = git(&remote, &["cat-file", "-p", &format!(":{attachment}")]);
+    assert!(
+        pointer.starts_with("version https://git-lfs.github.com/spec/v1"),
+        "{pointer}"
+    );
 }
 
 #[test]

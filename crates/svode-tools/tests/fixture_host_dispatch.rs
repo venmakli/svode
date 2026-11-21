@@ -293,7 +293,13 @@ impl LfsReadiness for FixtureHost {
     ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>> {
         self.lfs_probes.lock().unwrap().push(repo_dir.to_path_buf());
         let ready = self.lfs_ready.unwrap_or(false);
-        Box::pin(async move { ready.then_some(()).ok_or(LfsNotReady::RemoteUnreachable) })
+        Box::pin(async move {
+            ready
+                .then_some(())
+                .ok_or_else(|| LfsNotReady::LfsToolingUnavailable {
+                    detail: "git-lfs is not installed".to_string(),
+                })
+        })
     }
 }
 
@@ -3103,11 +3109,17 @@ async fn managed_import_uses_the_shared_plan_and_host_delivery() {
         json!({ "contentPath": "README.md", "sourcePath": photo.to_string_lossy() }),
     )
     .await;
-    assert!(refused.is_error);
+    assert_eq!(error_code(&refused), "LFS_TOOLING_UNAVAILABLE");
     assert!(
         refused.content[0]
             .text
-            .contains("Git LFS route is not ready")
+            .contains("Git LFS route is not ready: git-lfs is not installed")
+    );
+    assert!(
+        refused.structured_content.as_ref().unwrap()["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("install git-lfs")
     );
     assert_eq!(not_ready.lfs_probes.lock().unwrap().len(), 1);
     assert!(!fixture.project.join("photo.png").exists());

@@ -1,8 +1,8 @@
 //! Git LFS readiness of the assets strategy of a repository and Svode's
 //! managed custom-transfer registration of the `svode-lfs` agent.
 //!
-//! Readiness is the live evidence a managed import needs before it routes a
-//! file to Git LFS, and every host asks the same probe:
+//! Readiness is the live state of the storage scope every host asks the same
+//! probe for:
 //! - Local / InGit → `NotApplicable` (no LFS in play).
 //! - LfsS3 → `Ready` iff Git LFS is installed, the saved agent config matches
 //!   the S3 target, its credentials resolve from the device store and the
@@ -11,6 +11,10 @@
 //! - LfsRemote → `git lfs fetch --dry-run origin` succeeds, else
 //!   `MissingCreds` (conservative: the repair affordance wins over pretending
 //!   everything is fine).
+//!
+//! A managed import asks only what routing a file to Git LFS needs (see
+//! [`check_import_readiness`]): the S3 checks above, and for LfsRemote the
+//! tools and the LFS filter of this device, without the server.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -20,7 +24,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 
 use super::config::AssetsSpaceConfig;
-use super::connection::{LfsNotReady, check_readiness};
+use super::connection::{LfsNotReady, check_import_readiness, check_readiness};
 use crate::attachments::import::LfsReadiness;
 use crate::git::GitError;
 use crate::git::cli::{GitCli, hide_window};
@@ -88,7 +92,7 @@ pub fn is_offline_probe_failure(detail: &str) -> bool {
         && super::lfs_download::is_network_failure(&detail.to_ascii_lowercase())
 }
 
-/// A managed import of every host answers its Git LFS route with the live
+/// A managed import of every host answers its Git LFS route with the import
 /// readiness check, and refuses with its reason.
 impl LfsReadiness for GitRuntime {
     fn lfs_ready<'a>(
@@ -96,14 +100,7 @@ impl LfsReadiness for GitRuntime {
         repo_dir: &'a Path,
         config: &'a AssetsSpaceConfig,
     ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>> {
-        Box::pin(async move {
-            match check_readiness(self, repo_dir, config, true).await? {
-                LfsState::Ready => Ok(()),
-                _ => Err(LfsNotReady::StrategyMismatch {
-                    strategy: config.strategy.as_str().to_string(),
-                }),
-            }
-        })
+        Box::pin(check_import_readiness(self, repo_dir, config))
     }
 }
 
@@ -945,7 +942,8 @@ mod tests {
     }
 
     /// DF-368 R6: a Git LFS server out of reach is no refusal of access, so
-    /// the scope is not `MissingCreds`; an import is still refused.
+    /// the scope is not `MissingCreds`; an import does not need the server
+    /// (DF-377 R1).
     #[tokio::test]
     async fn a_remote_route_out_of_network_reach_is_not_a_refusal_of_access() -> TestResult {
         let git = GitRuntime::new();
@@ -1000,7 +998,7 @@ mod tests {
             check_readiness(&git, &repo, &remote, false).await,
             Err(LfsNotReady::RemoteOffline)
         ));
-        assert!(git.lfs_ready(&repo, &remote).await.is_err());
+        git.lfs_ready(&repo, &remote).await?;
         Ok(())
     }
 

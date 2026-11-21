@@ -175,7 +175,13 @@ impl LfsReadiness for WriteHost {
     ) -> Pin<Box<dyn Future<Output = Result<(), LfsNotReady>> + Send + 'a>> {
         self.lfs_probes.lock().unwrap().push(repo_dir.to_path_buf());
         let ready = self.lfs_ready.unwrap_or(false);
-        Box::pin(async move { ready.then_some(()).ok_or(LfsNotReady::RemoteUnreachable) })
+        Box::pin(async move {
+            ready
+                .then_some(())
+                .ok_or_else(|| LfsNotReady::LfsToolingUnavailable {
+                    detail: "git-lfs is not installed".to_string(),
+                })
+        })
     }
 }
 

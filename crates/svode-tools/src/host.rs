@@ -293,8 +293,8 @@ pub trait ToolHost: Sync {
     /// Shared runtime handles of index-backed reads.
     fn read_runtime(&self) -> ReadRuntime<'_>;
 
-    /// Live Git LFS readiness of the host storage backend. `None` means the
-    /// host cannot prove readiness, so a managed import refuses LFS routes.
+    /// Git LFS import readiness of the host device. `None` means the host
+    /// cannot check it, so a managed import refuses LFS routes.
     fn lfs_readiness(&self) -> Option<&dyn LfsReadiness>;
 
     /// Delivers the invalidation of a successful managed import to the host

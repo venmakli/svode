@@ -1,5 +1,5 @@
 //! Desktop host adapter for the core managed import: supplies the shared
-//! runtime handles, the core Git LFS readiness probe of the Git runtime and
+//! runtime handles, the core Git LFS import readiness of the Git runtime and
 //! the autocommit sink, and maps the result to the Desktop error type.
 
 use std::path::Path;

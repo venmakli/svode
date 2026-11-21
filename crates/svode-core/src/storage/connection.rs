@@ -100,13 +100,7 @@ impl LfsNotReady {
     /// Refusal text of a managed import, which keeps `Git LFS route is not
     /// ready` and adds the reason.
     pub fn import_message(&self) -> String {
-        match self {
-            Self::RemoteUnreachable | Self::RemoteOffline => {
-                "Git LFS route is not ready; repair the configured backend before importing"
-                    .to_string()
-            }
-            reason => format!("Git LFS route is not ready: {reason}"),
-        }
+        format!("Git LFS route is not ready: {self}")
     }
 }
 
@@ -241,6 +235,80 @@ pub async fn check_readiness(
             }
         }
     }
+}
+
+/// Git LFS readiness of a managed import into `repo_dir` with the assets
+/// strategy `config`. The import needs no server: the LFS filter stores the
+/// file in the local LFS store, and publication sends it. So `lfs-remote`
+/// checks only this device — Git, git-lfs and the LFS filter of the
+/// repository, restored by `git lfs install --local` when it is missing —
+/// and never reaches the Git LFS server. Other strategies answer
+/// [`check_readiness`] with repair; a strategy without Git LFS is refused.
+pub async fn check_import_readiness(
+    git: &GitRuntime,
+    repo_dir: &Path,
+    config: &AssetsSpaceConfig,
+) -> Result<(), LfsNotReady> {
+    let state = match config.strategy {
+        AssetsStrategy::LfsRemote => {
+            let cli = lfs_cli(git)?;
+            ensure_lfs_filter(git, cli, repo_dir).await?;
+            LfsState::Ready
+        }
+        _ => check_readiness(git, repo_dir, config, true).await?,
+    };
+    match state {
+        LfsState::Ready => Ok(()),
+        _ => Err(LfsNotReady::StrategyMismatch {
+            strategy: config.strategy.as_str().to_string(),
+        }),
+    }
+}
+
+/// Whether Git applies the Git LFS filter driver in `repo_dir`, from any
+/// config scope: without it `git add` would store an LFS-routed file in Git
+/// itself.
+async fn lfs_filter_effective(cli: &GitCli, repo_dir: &Path) -> Result<bool, LfsNotReady> {
+    for key in ["filter.lfs.process", "filter.lfs.clean"] {
+        let out = cli
+            .exec(repo_dir, &["config", "--get", key])
+            .await
+            .map_err(tooling)?;
+        if out.exit_code == 0 && !out.stdout.trim().is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The Git LFS filter applies in `repo_dir`, after registering it locally
+/// when it does not; otherwise the refusal names why. `git lfs install`
+/// writes the filter even when it refuses to replace a foreign hook, so the
+/// filter itself decides.
+async fn ensure_lfs_filter(
+    git: &GitRuntime,
+    cli: &GitCli,
+    repo_dir: &Path,
+) -> Result<(), LfsNotReady> {
+    if lfs_filter_effective(cli, repo_dir).await? {
+        return Ok(());
+    }
+    let installed = {
+        let lock = git.get_lock(repo_dir).await;
+        let _guard = lock.lock().await;
+        cli.exec(repo_dir, &["lfs", "install", "--local"])
+            .await
+            .map_err(tooling)?
+    };
+    if lfs_filter_effective(cli, repo_dir).await? {
+        return Ok(());
+    }
+    let detail = installed.stderr.trim();
+    Err(tooling(if detail.is_empty() {
+        "the Git LFS filter is not set up for this repository".to_string()
+    } else {
+        format!("the Git LFS filter is not set up for this repository: {detail}")
+    }))
 }
 
 /// Storage state of a scope on this device, read without writing anything.
