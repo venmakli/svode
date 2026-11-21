@@ -45,7 +45,7 @@ pub(crate) mod save_chain_tests;
 #[cfg(test)]
 mod save_tests;
 #[cfg(test)]
-mod sensitive_tree_tests;
+pub(crate) mod sensitive_tree_tests;
 pub mod service_merge;
 pub mod space_creation;
 pub mod stage_merge;

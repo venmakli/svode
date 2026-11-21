@@ -10,7 +10,8 @@
 //!   `MissingCreds`.
 //! - LfsRemote → `git lfs fetch --dry-run origin` succeeds, else
 //!   `MissingCreds` (conservative: the repair affordance wins over pretending
-//!   everything is fine).
+//!   everything is fine), except a server out of reach of the network or
+//!   silent past the deadline of the probe: that stays `Ready`.
 //!
 //! A managed import asks only what routing a file to Git LFS needs (see
 //! [`check_import_readiness`]): the S3 checks above, and for LfsRemote the
@@ -20,6 +21,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Command;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,11 +29,15 @@ use super::config::AssetsSpaceConfig;
 use super::connection::{LfsNotReady, check_import_readiness, check_readiness};
 use crate::attachments::import::LfsReadiness;
 use crate::git::GitError;
-use crate::git::cli::{GitCli, hide_window};
+use crate::git::cli::{GitCli, GitOutput, hide_window};
 use crate::git::state::GitRuntime;
 
 /// Remote readiness probe of the LfsRemote strategy; it transfers nothing.
-pub const REMOTE_PROBE_ARGS: &[&str] = &["lfs", "fetch", "--dry-run", "origin"];
+const REMOTE_PROBE_ARGS: &[&str] = &["lfs", "fetch", "--dry-run", "origin"];
+
+/// Svode deadline of the remote readiness probe (DF-378 R3): a server that
+/// does not answer within it is out of reach.
+pub const REMOTE_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Git LFS custom-transfer agent identifier Svode registers for the LfsS3
 /// strategy. Git spawns the sidecar registered under this name on push/pull.
@@ -78,10 +84,50 @@ pub async fn probe_readiness(
     repo_dir: &Path,
     config: &AssetsSpaceConfig,
 ) -> LfsState {
-    match check_readiness(git, repo_dir, config, true).await {
+    lfs_state_of(check_readiness(git, repo_dir, config, true).await)
+}
+
+/// The LFS state of a readiness check result.
+fn lfs_state_of(readiness: Result<LfsState, LfsNotReady>) -> LfsState {
+    match readiness {
         Ok(state) => state,
         Err(LfsNotReady::RemoteOffline) => LfsState::Ready,
         Err(_) => LfsState::MissingCreds,
+    }
+}
+
+/// The remote readiness probe of `repo_dir` as the root of its own process
+/// tree with the deadline [`REMOTE_PROBE_TIMEOUT`] (DF-378 R3): past it the
+/// whole tree — `git`, git-lfs, SSH — is ended before the call returns, and
+/// the output [`GitOutput::is_timed_out`].
+pub async fn run_remote_probe(cli: &GitCli, repo_dir: &Path) -> Result<GitOutput, GitError> {
+    run_remote_probe_within(cli, repo_dir, REMOTE_PROBE_TIMEOUT).await
+}
+
+async fn run_remote_probe_within(
+    cli: &GitCli,
+    repo_dir: &Path,
+    timeout: Duration,
+) -> Result<GitOutput, GitError> {
+    cli.exec_sensitive_with_stdin(repo_dir, REMOTE_PROBE_ARGS, &[], None, timeout)
+        .await
+}
+
+/// Readiness of the Git LFS server of `origin` (`lfs-remote`) by the probe
+/// with the deadline `timeout`: a probe past it or failed on the network is
+/// [`LfsNotReady::RemoteOffline`], any other failure
+/// [`LfsNotReady::RemoteUnreachable`].
+pub(super) async fn remote_readiness(
+    cli: &GitCli,
+    repo_dir: &Path,
+    timeout: Duration,
+) -> Result<LfsState, LfsNotReady> {
+    match run_remote_probe_within(cli, repo_dir, timeout).await {
+        Ok(out) if out.exit_code == 0 => Ok(LfsState::Ready),
+        Ok(out) if out.is_timed_out() || is_offline_probe_failure(&out.stderr) => {
+            Err(LfsNotReady::RemoteOffline)
+        }
+        _ => Err(LfsNotReady::RemoteUnreachable),
     }
 }
 
@@ -1000,6 +1046,39 @@ mod tests {
         ));
         git.lfs_ready(&repo, &remote).await?;
         Ok(())
+    }
+
+    /// DF-378 R3: a probe whose Git LFS never answers stops at the Svode
+    /// deadline as a server out of reach, so the scope is not `MissingCreds`,
+    /// and nothing of its process tree runs once it returned.
+    #[tokio::test]
+    async fn a_remote_probe_past_its_deadline_is_out_of_reach_and_leaves_no_process() {
+        use crate::git::sensitive_tree_tests::{tree_git, tree_stopped};
+
+        // The fake `git` leaves a descendant running, as `git` does with
+        // git-lfs and SSH, and neither ends by itself.
+        let (_dir, cli, work) = tree_git();
+        let deadline = if cfg!(windows) {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(3)
+        };
+        let started = std::time::Instant::now();
+        let readiness = remote_readiness(&cli, &work, deadline).await;
+
+        assert!(started.elapsed() >= deadline);
+        assert!(matches!(readiness, Err(LfsNotReady::RemoteOffline)));
+        assert_eq!(lfs_state_of(readiness), LfsState::Ready);
+        #[cfg(unix)]
+        {
+            use crate::git::sensitive_tree_tests::tree_pids;
+            use crate::process::probes::{ends, exists};
+
+            let (root, descendant) = tree_pids(&work);
+            assert!(!exists(root), "git still runs");
+            assert!(ends(descendant).await, "the descendant of git still runs");
+        }
+        assert!(tree_stopped(&work).await, "the tree still writes");
     }
 
     #[tokio::test]

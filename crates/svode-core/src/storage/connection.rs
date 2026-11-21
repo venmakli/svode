@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use super::config::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy};
 use super::lfs::{
-    LfsState, REMOTE_PROBE_ARGS, RepairAction, inspect_registration, repair_managed_registration,
-    resolve_agent_binary, write_managed_registration,
+    LfsState, REMOTE_PROBE_TIMEOUT, RepairAction, inspect_registration, remote_readiness,
+    repair_managed_registration, resolve_agent_binary, write_managed_registration,
 };
 use super::s3::{AgentConfig, CONFIG_REL, SecretBindings, SecretFailure, check_connection};
 use super::strategy::{
@@ -56,7 +56,8 @@ pub enum LfsNotReady {
     /// The Git LFS server of `origin` is not reachable (`lfs-remote`).
     RemoteUnreachable,
     /// The Git LFS server of `origin` is out of reach of the network: the
-    /// probe failed without a refusal of access (`lfs-remote`).
+    /// probe failed without a refusal of access, or did not finish within
+    /// its deadline (`lfs-remote`).
     RemoteOffline,
 }
 
@@ -225,14 +226,7 @@ pub async fn check_readiness(
             }
         }
         AssetsStrategy::LfsRemote => {
-            let cli = lfs_cli(git)?;
-            match cli.exec(repo_dir, REMOTE_PROBE_ARGS).await {
-                Ok(out) if out.exit_code == 0 => Ok(LfsState::Ready),
-                Ok(out) if super::lfs::is_offline_probe_failure(&out.stderr) => {
-                    Err(LfsNotReady::RemoteOffline)
-                }
-                _ => Err(LfsNotReady::RemoteUnreachable),
-            }
+            remote_readiness(lfs_cli(git)?, repo_dir, REMOTE_PROBE_TIMEOUT).await
         }
     }
 }

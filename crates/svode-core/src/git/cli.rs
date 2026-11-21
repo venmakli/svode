@@ -108,7 +108,7 @@ pub(crate) const TIMED_OUT_MESSAGE: &str = "git command timed out";
 impl GitOutput {
     /// The outcome of a command Svode stopped when `limit` passed; its stderr
     /// names the limit for the log.
-    pub(crate) fn timed_out(limit: Duration) -> Self {
+    pub fn timed_out(limit: Duration) -> Self {
         Self {
             stdout: String::new(),
             stderr: format!("{TIMED_OUT_MESSAGE} after {limit:?}"),

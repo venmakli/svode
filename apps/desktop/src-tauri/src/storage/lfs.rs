@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
+use svode_core::git::cli::GitOutput;
 use svode_core::storage::lfs::{
-    LfsState, REMOTE_PROBE_ARGS, is_offline_probe_failure, probe_readiness,
+    LfsState, is_offline_probe_failure, probe_readiness, run_remote_probe,
 };
 use svode_core::storage::lfs_download::{
     DownloadPlan, LfsStatus, MissingFiles, download, plan_download,
@@ -143,7 +144,7 @@ async fn diagnose_lfs_remote_with_cli(
 
     let auth_method = lfs_remote_auth_method(&remote_url);
     let safe_remote_url = redact_url_credentials(&remote_url);
-    let out = cli.exec(repo_dir, REMOTE_PROBE_ARGS).await?;
+    let out = run_remote_probe(cli, repo_dir).await?;
     if out.exit_code == 0 {
         return Ok(LfsRemoteDiagnostic {
             state: LfsState::Ready,
@@ -156,7 +157,7 @@ async fn diagnose_lfs_remote_with_cli(
     }
 
     let raw_detail = command_detail(&out.stdout, &out.stderr);
-    let reason = classify_lfs_remote_failure(&raw_detail);
+    let reason = probe_failure_reason(&out, &raw_detail);
     // A server out of reach is not a refusal of access (DF-368 R6).
     let state = if reason == LfsRemoteDiagnosticReason::Unreachable {
         LfsState::Ready
@@ -171,6 +172,15 @@ async fn diagnose_lfs_remote_with_cli(
         terminal_command: terminal_command_for(auth_method, &remote_url, reason),
         detail: trim_diagnostic_detail(&redact_url_credentials(&raw_detail)),
     })
+}
+
+/// Why the failed probe `out` with output `detail` failed: a probe past its
+/// deadline did not reach the server (DF-378 R3).
+fn probe_failure_reason(out: &GitOutput, detail: &str) -> LfsRemoteDiagnosticReason {
+    if out.is_timed_out() {
+        return LfsRemoteDiagnosticReason::Unreachable;
+    }
+    classify_lfs_remote_failure(detail)
 }
 
 fn classify_lfs_remote_failure(detail: &str) -> LfsRemoteDiagnosticReason {
@@ -598,6 +608,28 @@ mod tests {
                 reason
             ),
             None
+        );
+    }
+
+    /// DF-378 R3: a probe stopped at its deadline did not reach the server,
+    /// which is no refusal of access.
+    #[test]
+    fn a_probe_past_its_deadline_is_a_server_out_of_reach() {
+        let out = GitOutput::timed_out(std::time::Duration::from_secs(60));
+        let detail = command_detail(&out.stdout, &out.stderr);
+
+        assert_eq!(
+            probe_failure_reason(&out, &detail),
+            LfsRemoteDiagnosticReason::Unreachable
+        );
+        let refused = GitOutput {
+            stdout: String::new(),
+            stderr: "git@lfs.example: Permission denied (publickey).".to_string(),
+            exit_code: 2,
+        };
+        assert_eq!(
+            probe_failure_reason(&refused, &refused.stderr),
+            LfsRemoteDiagnosticReason::AuthRequired
         );
     }
 

@@ -47,7 +47,7 @@ fn fake_git(dir: &Path, script: &str) -> GitCli {
 
 /// A temporary directory with a [`TREE`] `git` and the working directory
 /// `work` for its files.
-fn tree_git() -> (tempfile::TempDir, GitCli, std::path::PathBuf) {
+pub(crate) fn tree_git() -> (tempfile::TempDir, GitCli, std::path::PathBuf) {
     let dir = tempfile::TempDir::new().unwrap();
     let cli = fake_git(dir.path(), TREE);
     let work = dir.path().join("work");
@@ -69,7 +69,7 @@ async fn tree_runs(work: &Path) {
 }
 
 /// Whether no process of a [`TREE`] writes any more.
-async fn tree_stopped(work: &Path) -> bool {
+pub(crate) async fn tree_stopped(work: &Path) -> bool {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let before = (size(work, "root"), size(work, "descendant"));
     tokio::time::sleep(TICK * 3).await;
@@ -78,7 +78,7 @@ async fn tree_stopped(work: &Path) -> bool {
 
 /// The `git` and descendant pids a [`TREE`] wrote.
 #[cfg(unix)]
-fn tree_pids(work: &Path) -> (u32, u32) {
+pub(crate) fn tree_pids(work: &Path) -> (u32, u32) {
     let text = std::fs::read_to_string(work.join("pids")).unwrap();
     let (root, descendant) = text.trim().split_once(' ').unwrap();
     (root.parse().unwrap(), descendant.parse().unwrap())
