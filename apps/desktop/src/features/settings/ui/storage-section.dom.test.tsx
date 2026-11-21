@@ -754,7 +754,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     // Files left: count, size and cause, the files on request, one action.
     await render(storageFixture({ ...lfsS3, lfsMissing: missing }));
     expect(objectsRow().textContent).toContain(
-      "60 files not downloaded · 120 MB. The file is not on the server.",
+      "60 files not downloaded · 120 MB. The file is not on the server yet — it will download once the device where it was added sends it.",
     );
     expect(document.body.textContent).not.toContain("All files downloaded.");
     expect(document.body.textContent).not.toContain("File transfer is set up.");

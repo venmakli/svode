@@ -1315,7 +1315,7 @@
   "storage_lfs_stop_no_access": "No access to the storage",
   "storage_lfs_stop_unreachable": "The server is unreachable",
   "storage_lfs_stop_stalled": "No data was transferred for 2 minutes",
-  "storage_lfs_stop_not_on_server": "The file is not on the server",
+  "storage_lfs_stop_not_on_server": "The file is not on the server yet — it will download once the device where it was added sends it.",
   "storage_lfs_files_show": "Show files",
   "storage_lfs_files_hide": "Hide files",
   "storage_lfs_files_list": "Files not downloaded",

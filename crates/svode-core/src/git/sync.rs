@@ -707,8 +707,10 @@ async fn conflict_kinds(cli: &GitCli, repo: &Path) -> Vec<PathConflict> {
 /// store for the working file (with the filters and eol of the path) equals
 /// the incoming one, local commits left the path as in the merge base, and
 /// the index holds HEAD or the incoming version. Only when every interfering path is such,
-/// they are brought back to HEAD and the merge writes the same content;
-/// otherwise nothing changes.
+/// they are brought back to HEAD and the merge writes the same content, an
+/// LFS file as its pointer, with its object already in the local store from
+/// the comparison, so neither step downloads (DF-377 R6); otherwise nothing
+/// changes.
 async fn set_aside_matching_edits(
     cli: &GitCli,
     repo: &Path,
@@ -800,7 +802,12 @@ async fn set_aside_matching_edits(
         args.extend_from_slice(options);
         args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
         let out = cli
-            .exec_with_input(repo, &args, &[], &nul_paths_input(paths))
+            .exec_with_input(
+                repo,
+                &args,
+                &[("GIT_LFS_SKIP_SMUDGE", "1")],
+                &nul_paths_input(paths),
+            )
             .await?;
         if out.exit_code != 0 {
             return Err(GitError::GitCommandFailed(format!(
@@ -1300,6 +1307,9 @@ mod pull_block_tests;
 #[cfg(test)]
 #[path = "sync_autostash_tests.rs"]
 mod autostash_tests;
+#[cfg(test)]
+#[path = "lfs_incoming_tests.rs"]
+mod lfs_incoming_tests;
 #[cfg(test)]
 #[path = "light_sync_tests.rs"]
 mod light_sync_tests;

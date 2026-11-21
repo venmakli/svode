@@ -156,7 +156,7 @@ async fn lfs(filters: &[(&str, &str)]) -> Merge {
 }
 
 #[tokio::test]
-async fn an_unavailable_lfs_object_leaves_the_path_unresolved_with_the_reason() {
+async fn a_failing_lfs_filter_leaves_the_path_unresolved_with_the_reason() {
     let merge = lfs(&[
         ("filter.lfs.smudge", "false"),
         ("filter.lfs.required", "true"),
@@ -193,45 +193,19 @@ async fn an_unavailable_lfs_object_leaves_the_path_unresolved_with_the_reason() 
 }
 
 #[tokio::test]
-async fn an_incoming_lfs_pointer_left_as_is_is_not_taken() {
-    // No LFS filter here: Git leaves the pointer instead of the object.
+async fn the_incoming_lfs_version_is_taken_as_its_pointer() {
+    // Resolving downloads no LFS content (DF-377 R6): the pointer is the
+    // version; the download after the sync brings its object.
     let merge = lfs(&[]).await;
-    let before = bytes_of(&merge.local, "lfs.bin");
     let result = resolve_as(
         &merge,
         "lfs.bin",
         FileResolution::Side { side: Side::Theirs },
     )
     .await;
-    assert!(
-        matches!(
-            &result,
-            SyncResult::Unresolved {
-                finding: ResolutionFinding::LfsObject { .. },
-                ..
-            }
-        ),
-        "{result:?}"
-    );
-    assert_eq!(bytes_of(&merge.local, "lfs.bin"), before);
-    assert!(merge.merging());
-}
-
-#[tokio::test]
-async fn the_incoming_lfs_version_gets_its_object() {
-    // The smudge filter stands for Git LFS giving the object of a pointer.
-    let merge = lfs(&[
-        ("filter.lfs.smudge", "tr a-z A-Z"),
-        ("filter.lfs.clean", "tr A-Z a-z"),
-        ("filter.lfs.required", "true"),
-    ])
-    .await;
-    let result = resolve_as(&merge, "lfs.bin", keep_both(MessageLanguage::En)).await;
     assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
-    assert_eq!(
-        bytes_of(&merge.local, "lfs (incoming).bin"),
-        POINTER_THEIRS.to_ascii_uppercase()
-    );
+    assert_eq!(bytes_of(&merge.local, "lfs.bin"), POINTER_THEIRS);
+    assert!(!merge.merging());
 }
 
 #[tokio::test]

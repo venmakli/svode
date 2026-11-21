@@ -199,8 +199,8 @@ pub enum ResolutionFinding {
     Unreadable { message: String },
     /// The file changed after its places were read.
     Changed,
-    /// The incoming version of an LFS file has no object here and Git LFS
-    /// did not fetch it; `message` says why.
+    /// The LFS filter of the path failed to write a version of an LFS file;
+    /// `message` says why.
     LfsObject { message: String },
 }
 
@@ -987,9 +987,10 @@ struct Version {
 }
 
 /// The version of stage `stage` (2 mine, 3 incoming) of the
-/// repository-relative `path`, written by Git with the filters of the path:
-/// an LFS file gets its object, which Git LFS fetches when it is missing. An
-/// object Git LFS cannot give, or an incoming pointer it left as is, is a
+/// repository-relative `path`, written by Git with the filters of the path.
+/// An LFS file is written as its pointer: resolving neither downloads its
+/// content nor fails on an object the server lacks, and the download after
+/// the sync brings the content (DF-377 R6). A failing LFS filter is a
 /// [`ResolutionFinding::LfsObject`].
 async fn checkout_stage(
     cli: &GitCli,
@@ -1010,7 +1011,7 @@ async fn checkout_stage(
         .exec_with_input(
             repo,
             &["checkout-index", &stage_arg, "--temp", "-z", "--stdin"],
-            &[],
+            &[("GIT_LFS_SKIP_SMUDGE", "1")],
             &nul_paths_input([&path.to_owned()]),
         )
         .await?;
@@ -1031,16 +1032,6 @@ async fn checkout_stage(
         .ok_or_else(|| GitError::GitCommandFailed("git checkout-index wrote no version".into()))?;
     let file = repo.join(name);
     temporary.0.push(file.clone());
-    if facts.lfs && number == 3 {
-        let mut head = vec![0; conflict_kind::LFS_POINTER.len()];
-        let read = std::fs::File::open(&file)
-            .and_then(|mut opened| std::io::Read::read(&mut opened, &mut head))?;
-        if head[..read] == *conflict_kind::LFS_POINTER {
-            return Ok(Err(ResolutionFinding::LfsObject {
-                message: "Git LFS did not fetch the object of the incoming version".into(),
-            }));
-        }
-    }
     Ok(Ok(Version { file, facts }))
 }
 

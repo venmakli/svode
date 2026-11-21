@@ -62,7 +62,9 @@ test("every stop names its cause; other shows the git-lfs text once punctuated",
       lfsMissingDescription(missing(1, { stop }));
     expect(of({ kind: "no-access" })).toEndWith(" Нет доступа к хранилищу.");
     expect(of({ kind: "unreachable" })).toEndWith(" Сервер недоступен.");
-    expect(of({ kind: "not-on-server" })).toEndWith(" Файла нет на сервере.");
+    expect(of({ kind: "not-on-server" })).toBe(
+      "Не скачан 1 файл · 1 МБ. Файла пока нет на сервере — он скачается, когда его отправит устройство, где его добавили.",
+    );
     expect(of({ kind: "other", detail: "batch response: 500\n" })).toBe(
       "Не скачан 1 файл · 1 МБ. batch response: 500.",
     );

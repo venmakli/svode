@@ -305,7 +305,10 @@ pub async fn fetch(cli: &GitCli, repo: &Path, upstream: Upstream) -> Result<Obse
 
 /// Merges `revision`, observed for `upstream`, into the current branch: a
 /// fast-forward when possible, otherwise a merge commit, never a rebase,
-/// autostash or recorded resolution. The output is the raw `git merge` result.
+/// autostash or recorded resolution. LFS files come in as pointers: the merge
+/// neither downloads their content under the repository lock nor fails on an
+/// object the server lacks; the download after the sync brings the content
+/// (DF-377 R6). The output is the raw `git merge` result.
 pub async fn merge(
     cli: &GitCli,
     repo: &Path,
@@ -346,7 +349,8 @@ pub async fn merge(
         args.extend(["-s", "ort"]);
     }
     args.push(revision);
-    cli.exec_with_env(repo, &args, &trace.env(&[])).await
+    cli.exec_with_env(repo, &args, &trace.env(&[("GIT_LFS_SKIP_SMUDGE", "1")]))
+        .await
 }
 
 fn merge_message(upstream: &Upstream) -> String {

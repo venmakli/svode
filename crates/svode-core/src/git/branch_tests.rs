@@ -177,6 +177,44 @@ async fn dot_branch_requires_attached_root() {
 }
 
 #[tokio::test]
+async fn an_lfs_file_of_the_space_branch_missing_on_the_server_comes_as_a_pointer() {
+    let lfs = Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .is_ok_and(|out| out.status.success());
+    if !lfs {
+        eprintln!("git-lfs is not installed; skipped");
+        return;
+    }
+    let f = Fixture::new();
+    git(&f.seed, &["lfs", "install", "--local"]);
+    git(&f.seed, &["lfs", "track", "*.bin"]);
+    std::fs::write(f.seed.join("pic.bin"), vec![7u8; 4_000]).unwrap();
+    git(&f.seed, &["add", "."]);
+    git(&f.seed, &["commit", "-m", "picture"]);
+    // Published without its LFS object: the server lacks it.
+    let pushed = Command::new("git")
+        .args(["push", "origin", "develop"])
+        .current_dir(&f.seed)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_LFS_SKIP_PUSH", "1")
+        .output()
+        .unwrap();
+    assert!(pushed.status.success(), "{pushed:?}");
+    git(&f.child, &["lfs", "install", "--local"]);
+    f.branch("develop");
+    f.prepare().await.unwrap();
+    assert_eq!(git(&f.child, &["branch", "--show-current"]), "develop");
+    assert!(
+        std::fs::read(f.child.join("pic.bin"))
+            .unwrap()
+            .starts_with(b"version https://git-lfs.github.com/spec/v1\n")
+    );
+    assert_eq!(git(&f.child, &["status", "--porcelain"]), "");
+}
+
+#[tokio::test]
 async fn missing_branch_and_offline_preserve_checkout_and_refs() {
     for offline in [true, false] {
         let f = Fixture::new();

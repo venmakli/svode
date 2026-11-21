@@ -1317,7 +1317,7 @@
   "storage_lfs_stop_no_access": "Нет доступа к хранилищу",
   "storage_lfs_stop_unreachable": "Сервер недоступен",
   "storage_lfs_stop_stalled": "2 минуты не было передачи данных",
-  "storage_lfs_stop_not_on_server": "Файла нет на сервере",
+  "storage_lfs_stop_not_on_server": "Файла пока нет на сервере — он скачается, когда его отправит устройство, где его добавили.",
   "storage_lfs_files_show": "Показать файлы",
   "storage_lfs_files_hide": "Скрыть файлы",
   "storage_lfs_files_list": "Нескачанные файлы",
