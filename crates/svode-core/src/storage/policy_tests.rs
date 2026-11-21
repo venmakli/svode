@@ -11,6 +11,7 @@ use super::policy::{
     is_repository_lfs_candidate, managed_lfs_attributes_body, managed_policy_current,
     normalize_binary_routing, supported_binary_routing,
 };
+use super::routes::{LFS_PATHS_END, LFS_PATHS_START, repaired_lfs_path_block};
 use crate::git::GitError;
 use crate::git::cli::GitCli;
 
@@ -107,6 +108,78 @@ fn generated_lfs_body_is_deterministic_and_marks_old_block_as_stale() {
     assert!(!managed_policy_current(
         &current,
         AssetsStrategy::InGit,
+        &routing
+    ));
+}
+
+/// DF-380 R3 (c): exact-path rules that differ from the ones built from their
+/// metadata make the policy stale; a block whose paths need no quoting, a
+/// rebuilt block and an absent block are current.
+#[test]
+fn exact_path_rules_unlike_their_metadata_make_the_lfs_policy_stale() {
+    let routing = legacy_routing();
+    let extension_block = format!(
+        "{LFS_START}\n{}\n{LFS_END}\n",
+        managed_lfs_attributes_body(&routing)
+    );
+    let old_rule = format!(
+        "*.custom merge=ours\n{extension_block}{LFS_PATHS_START}\n\
+         # svode:path \"My Notes/big.mov\"\n\
+         My\\ Notes/big.mov filter=lfs diff=lfs merge=lfs -text\n\
+         # svode:path \"Topic/plain[1].bin\"\n\
+         Topic/plain\\[1\\].bin filter=lfs diff=lfs merge=lfs -text\n\
+         {LFS_PATHS_END}\n"
+    );
+    for strategy in [AssetsStrategy::LfsRemote, AssetsStrategy::LfsS3] {
+        assert!(!managed_policy_current(&old_rule, strategy, &routing));
+    }
+
+    let repaired = repaired_lfs_path_block(&old_rule).expect("old rule is rebuilt");
+    assert!(
+        repaired.starts_with(&format!("*.custom merge=ours\n{extension_block}")),
+        "{repaired}"
+    );
+    assert!(
+        repaired.contains("\n\"My\\\\ Notes/big.mov\" filter=lfs diff=lfs merge=lfs -text\n")
+            && repaired.contains("\nTopic/plain\\[1\\].bin filter=lfs diff=lfs merge=lfs -text\n"),
+        "{repaired}"
+    );
+    assert!(managed_policy_current(
+        &repaired,
+        AssetsStrategy::LfsRemote,
+        &routing
+    ));
+    assert_eq!(repaired_lfs_path_block(&repaired), None);
+
+    let plain = format!(
+        "{extension_block}{LFS_PATHS_START}\n\
+         # svode:path \"Topic/plain[1].bin\"\n\
+         Topic/plain\\[1\\].bin filter=lfs diff=lfs merge=lfs -text\n\
+         {LFS_PATHS_END}\n"
+    );
+    assert!(managed_policy_current(
+        &plain,
+        AssetsStrategy::LfsRemote,
+        &routing
+    ));
+    assert!(managed_policy_current(
+        &plain.replace('\n', "\r\n"),
+        AssetsStrategy::LfsRemote,
+        &routing
+    ));
+    assert!(managed_policy_current(
+        &extension_block,
+        AssetsStrategy::LfsRemote,
+        &routing
+    ));
+
+    let missing_rule = plain.replace(
+        "Topic/plain\\[1\\].bin filter=lfs diff=lfs merge=lfs -text\n",
+        "",
+    );
+    assert!(!managed_policy_current(
+        &missing_rule,
+        AssetsStrategy::LfsRemote,
         &routing
     ));
 }

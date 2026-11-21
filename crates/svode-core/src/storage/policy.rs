@@ -18,7 +18,7 @@ use super::config::{
     AssetsSpaceConfig, AssetsStrategy, BINARY_ROUTING_VERSION, BinaryRoutingConfig,
 };
 use super::lfs_declaration::{LfsDeclarationState, lfs_declaration_state};
-use super::routes::read_or_empty;
+use super::routes::{read_or_empty, repaired_lfs_path_block};
 
 pub const LFS_START: &str = "# svode:assets-lfs:start";
 pub const LFS_END: &str = "# svode:assets-lfs:end";
@@ -348,7 +348,7 @@ pub fn managed_policy_current(
             .any(|line| matches!(line.trim(), LFS_START | LFS_END));
     }
 
-    managed_lfs_policy_is_current(contents, routing)
+    managed_lfs_policy_is_current(contents, routing) && repaired_lfs_path_block(contents).is_none()
 }
 
 fn managed_lfs_policy_is_current(contents: &str, routing: &BinaryRoutingConfig) -> bool {
@@ -496,9 +496,9 @@ fn parse_check_attr_z(stdout: &str) -> Result<Vec<LfsFilterCheck>, StoragePolicy
         .collect()
 }
 
-/// Managed routing diagnostic for one repository: whether the generated block
-/// matches the configured routing, and which dirty candidates are not covered
-/// by an effective LFS filter.
+/// Managed routing diagnostic for one repository: whether the generated
+/// blocks match the configured routing and their path metadata, and which
+/// dirty candidates are not covered by an effective LFS filter.
 pub async fn diagnose_repo_lfs_policy(
     cli: &GitCli,
     repo_dir: &Path,

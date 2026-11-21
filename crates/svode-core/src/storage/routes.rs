@@ -177,6 +177,32 @@ pub fn rewrite_managed_path_block(
     ))
 }
 
+/// `contents` with the exact-path LFS block rebuilt from its `# svode:path`
+/// metadata when the block's rule lines differ from the rules built from that
+/// metadata, such as a rule written before names with whitespace were quoted.
+/// `None` when the block is absent, current or malformed: a malformed block
+/// cannot be rebuilt here and the writes that need its paths report it.
+pub fn repaired_lfs_path_block(contents: &str) -> Option<String> {
+    let paths = parse_managed_paths(contents, LFS_PATHS_START, LFS_PATHS_END).ok()?;
+    let expected = render_managed_path_body(&paths, true);
+    let written = contents
+        .lines()
+        .skip_while(|line| line.trim() != LFS_PATHS_START)
+        .skip(1)
+        .take_while(|line| line.trim() != LFS_PATHS_END)
+        .map(str::trim);
+    if written.eq(expected.lines()) {
+        return None;
+    }
+    Some(rewrite_managed_path_block(
+        contents,
+        LFS_PATHS_START,
+        LFS_PATHS_END,
+        &paths,
+        true,
+    ))
+}
+
 /// The `.gitattributes` rule of the exact-path LFS block that routes exactly
 /// `path` (repository-relative, not anchored) to Git LFS. A pattern with a
 /// space, a tab, `"` or another control character goes in C-style double

@@ -8,8 +8,8 @@ use super::config::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRou
 use super::local_release::files_held_by_local_rules;
 use super::local_rules::LOCAL_EXTENSIONS_START;
 use super::policy::{
-    LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, check_lfs_filters,
-    managed_lfs_attributes_body, supported_binary_routing,
+    LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, check_lfs_filters, diagnose_repo_lfs_policy,
+    managed_lfs_attributes_body, managed_policy_current, supported_binary_routing,
 };
 use super::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, lfs_path_rule,
@@ -28,6 +28,14 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn legacy_routing() -> BinaryRoutingConfig {
     supported_binary_routing(&AssetsSpaceConfig::default()).expect("legacy routing")
+}
+
+/// Routing whose extension rules leave `.mov` to the threshold.
+fn threshold_routing() -> BinaryRoutingConfig {
+    let mut routing = BinaryRoutingConfig::new_project_default();
+    routing.lfs_extensions = vec!["png".into()];
+    routing.lfs_threshold_bytes = Some(10);
+    routing
 }
 
 #[test]
@@ -49,6 +57,52 @@ fn managed_lfs_rewrite_is_idempotent_and_preserves_user_attributes() {
 
     let removed = rewrite_managed_lfs_attributes(&first, false, &routing);
     assert_eq!(removed, "*.bin binary\n*.custom merge=ours\n");
+}
+
+/// `.gitattributes` with a user line, the extension block and an exact-path
+/// block whose rule for a name with a space is in the old backslash form.
+fn attributes_with_an_old_exact_rule(routing: &BinaryRoutingConfig) -> String {
+    format!(
+        "*.custom merge=ours\n{LFS_START}\n{}\n{LFS_END}\n{LFS_PATHS_START}\n\
+         # svode:path \"My Notes/big.mov\"\n\
+         My\\ Notes/big.mov filter=lfs diff=lfs merge=lfs -text\n\
+         {LFS_PATHS_END}\n*.bin binary\n",
+        managed_lfs_attributes_body(routing)
+    )
+}
+
+/// DF-380 R3 (b): re-applying an LFS policy rebuilds the exact-path block
+/// from its metadata without new paths; leaving LFS still drops the block.
+#[test]
+fn managed_lfs_rewrite_rebuilds_exact_path_rules_from_their_metadata() {
+    let routing = threshold_routing();
+    let existing = attributes_with_an_old_exact_rule(&routing);
+
+    let first = rewrite_managed_lfs_attributes(&existing, true, &routing);
+    let second = rewrite_managed_lfs_attributes(&first, true, &routing);
+
+    assert_eq!(second, first);
+    assert!(
+        first.contains(&format!(
+            "# svode:path \"My Notes/big.mov\"\n{}\n",
+            lfs_path_rule("My Notes/big.mov")
+        )) && !first.contains("\nMy\\ Notes/big.mov"),
+        "{first}"
+    );
+    assert_eq!(
+        parse_managed_paths(&first, LFS_PATHS_START, LFS_PATHS_END).expect("exact paths"),
+        BTreeSet::from(["My Notes/big.mov".to_string()])
+    );
+    assert!(first.starts_with("*.custom merge=ours\n"), "{first}");
+    assert!(first.contains("\n*.bin binary\n"), "{first}");
+    assert!(managed_policy_current(
+        &first,
+        AssetsStrategy::LfsRemote,
+        &routing
+    ));
+
+    let removed = rewrite_managed_lfs_attributes(&existing, false, &routing);
+    assert_eq!(removed, "*.custom merge=ours\n*.bin binary\n");
 }
 
 #[test]
@@ -564,6 +618,72 @@ async fn leaving_local_for_lfs_routes_a_released_name_with_spaces_to_lfs() -> Te
     assert_eq!(
         check_lfs_filters(cli, &repo, &[released.to_string()]).await?[0].value,
         "lfs"
+    );
+    Ok(())
+}
+
+/// DF-380 R3 (b, c): an exact rule left in the old form makes the policy
+/// stale and Git ignores it; re-applying the same LFS strategy without new
+/// paths rebuilds it, Git routes the file to LFS, the policy is current and
+/// user lines stay as they were. A second re-apply changes nothing.
+#[tokio::test]
+async fn reapplying_the_lfs_policy_repairs_an_old_exact_rule_without_new_paths() -> TestResult {
+    let Some((git, _temp, repo)) = setup_remote_tracking_repo().await? else {
+        return Ok(());
+    };
+    let cli = git.detected().expect("checked above");
+    if !cli.lfs_available() {
+        return Ok(());
+    }
+    let routing = threshold_routing();
+    let old = attributes_with_an_old_exact_rule(&routing);
+    std::fs::write(repo.join(".gitattributes"), &old)?;
+    let path = "My Notes/big.mov".to_string();
+    let neighbour = "My Notes/big2.mov".to_string();
+    let config = AssetsSpaceConfig {
+        strategy: AssetsStrategy::LfsRemote,
+        binary_routing: Some(routing.clone()),
+        s3: None,
+        extensions: Default::default(),
+    };
+    assert!(
+        !diagnose_repo_lfs_policy(cli, &repo, &config)
+            .await?
+            .managed_policy_current
+    );
+    assert_eq!(
+        check_lfs_filters(cli, &repo, std::slice::from_ref(&path)).await?[0].value,
+        "unspecified"
+    );
+
+    apply_strategy(&git, &repo, AssetsStrategy::LfsRemote, &routing, None, None).await?;
+
+    let repaired = std::fs::read_to_string(repo.join(".gitattributes"))?;
+    assert!(
+        repaired.contains(&lfs_path_rule(&path)) && !repaired.contains("\nMy\\ Notes/big.mov"),
+        "{repaired}"
+    );
+    assert!(
+        diagnose_repo_lfs_policy(cli, &repo, &config)
+            .await?
+            .managed_policy_current
+    );
+    let user_lines = |contents: &str| {
+        contents
+            .lines()
+            .filter(|line| matches!(*line, "*.custom merge=ours" | "*.bin binary"))
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(user_lines(&repaired), user_lines(&old));
+    let checks = check_lfs_filters(cli, &repo, &[path, neighbour]).await?;
+    assert_eq!(checks[0].value, "lfs", "{checks:?}");
+    assert_eq!(checks[1].value, "unspecified", "{checks:?}");
+
+    apply_strategy(&git, &repo, AssetsStrategy::LfsRemote, &routing, None, None).await?;
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".gitattributes"))?,
+        repaired
     );
     Ok(())
 }

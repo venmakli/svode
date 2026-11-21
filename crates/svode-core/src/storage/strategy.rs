@@ -21,7 +21,8 @@ use super::local_rules::{
 use super::policy::{self, StoragePolicyError};
 use super::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, append_block,
-    normalize_trailing_newline, read_or_empty, strip_block, write_or_remove,
+    normalize_trailing_newline, read_or_empty, repaired_lfs_path_block, strip_block,
+    write_or_remove,
 };
 use super::s3::CONFIG_REL as AGENT_CONFIG_REL;
 use crate::git::cli::{GitCli, GitOutput};
@@ -279,6 +280,10 @@ pub(super) fn rewrite_managed_lfs_attributes(
     enabled: bool,
     routing: &BinaryRoutingConfig,
 ) -> String {
+    // Re-applying an LFS policy also rebuilds exact-path rules that no longer
+    // match their metadata, even when no path is added.
+    let repaired = enabled.then(|| repaired_lfs_path_block(contents)).flatten();
+    let contents = repaired.as_deref().unwrap_or(contents);
     let stripped = strip_block(contents, policy::LFS_START, policy::LFS_END);
     // Builds before managed markers were introduced could leave this exact
     // Svode rule at top level. Keep the existing one-time legacy cleanup while
