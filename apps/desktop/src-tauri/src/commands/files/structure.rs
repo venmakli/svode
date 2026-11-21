@@ -1,43 +1,6 @@
-//! Tauri adapters for nesting and page-shape conversions.
+//! Tauri adapters for page-shape conversions.
 
 use super::*;
-#[tauri::command]
-pub async fn nest_page(
-    app: AppHandle,
-    space: String,
-    path: String,
-    project_path: Option<String>,
-    index_state: State<'_, IndexState>,
-    index_updates: State<'_, IndexUpdateState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<String, AppError> {
-    let _new_path = nested_page_path(&path)?;
-    let authorized_paths = require_page_backlink_mutation_plan(
-        &app,
-        &index_state,
-        &space,
-        project_path.as_deref(),
-        &path,
-        false,
-    )
-    .await?;
-    let _changing = crate::navigation::path_change(&space);
-    let result = scope_authorized_mutation_paths(authorized_paths, async {
-        crate::structure::nest(
-            &space,
-            &path,
-            project_path.as_deref(),
-            &index_state,
-            &index_updates,
-            Some(&autocommit),
-        )
-        .await
-    })
-    .await?;
-    crate::navigation::artifact_moved(&app, &space, &result.old_path, &result.new_path);
-    Ok(result.new_path)
-}
-
 #[tauri::command]
 pub async fn convert_page_to_folder(
     app: AppHandle,

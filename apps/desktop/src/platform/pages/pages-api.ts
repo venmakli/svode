@@ -157,14 +157,6 @@ export function getPageBacklinks(input: {
   return invokeCommand<PageBacklinkDto[]>("get_backlinks", { ...input });
 }
 
-export function nestPage(input: {
-  space: string;
-  path: string;
-  projectPath: string | null;
-}): Promise<string> {
-  return invokeCommand<string>("nest_page", { ...input });
-}
-
 export function convertPageToFolder(input: {
   space: string;
   filePath: string;

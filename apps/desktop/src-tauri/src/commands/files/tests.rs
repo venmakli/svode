@@ -1385,7 +1385,52 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
 }
 
 #[tokio::test]
-async fn shared_move_nest_and_leaf_conversion_use_the_structural_owner() {
+async fn a_leaf_turned_into_a_folder_page_keeps_its_place_among_its_siblings() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    for name in ["A", "X", "B", "Y"] {
+        std::fs::write(
+            space.join(format!("{name}.md")),
+            format!("---\ntitle: {name}\n---\n"),
+        )
+        .unwrap();
+    }
+    let mut order = std::collections::BTreeMap::new();
+    order.insert(
+        ".".to_string(),
+        ["A.md", "X.md", "B.md", "Y.md"].map(String::from).to_vec(),
+    );
+    svode_core::content_tree::replace_order_sections(space, order).unwrap();
+    let space = space.to_str().unwrap();
+
+    let converted = crate::structure::convert_to_folder(
+        space,
+        "X.md",
+        None,
+        &IndexState::new(),
+        updates(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(converted.page.path, "X/README.md");
+    assert_eq!(
+        svode_core::content_tree::read_order(tmp.path())
+            .get(".")
+            .unwrap(),
+        &["A.md", "X", "B.md", "Y.md"].map(String::from).to_vec()
+    );
+    let rows = crate::files::tree::list_tree_children_checked(space, None)
+        .unwrap()
+        .into_iter()
+        .map(|node| node.path)
+        .collect::<Vec<_>>();
+    assert_eq!(rows, ["A.md", "X/README.md", "B.md", "Y.md"]);
+}
+
+#[tokio::test]
+async fn shared_move_folder_and_leaf_conversion_use_the_structural_owner() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path().to_str().unwrap();
     std::fs::create_dir(tmp.path().join("target")).unwrap();
@@ -1399,10 +1444,11 @@ async fn shared_move_nest_and_leaf_conversion_use_the_structural_owner() {
             .new_path;
     assert_eq!(moved, "target/Page.md");
 
-    let nested = crate::structure::nest(space, &moved, None, &state, updates(), None)
+    let nested = crate::structure::convert_to_folder(space, &moved, None, &state, updates(), None)
         .await
         .unwrap()
-        .new_path;
+        .page
+        .path;
     assert_eq!(nested, "target/Page/README.md");
 
     let leaf = crate::structure::convert_to_leaf(space, &nested, None, &state, updates(), None)
@@ -1995,15 +2041,9 @@ async fn structural_outcomes_name_the_source_in_the_disk_spelling() {
     assert_eq!(leaf.old_path, "Solo/README.md");
     assert_eq!(leaf.page.path, "Solo.md");
 
-    for name in ["Nested.md", "Folder.md", "Gone.md"] {
+    for name in ["Folder.md", "Gone.md"] {
         std::fs::write(tmp.path().join(name), "---\ntitle: T\n---\n").unwrap();
     }
-    let nested = crate::structure::nest(space, "nested.md", None, &state, updates(), None)
-        .await
-        .unwrap();
-    assert_eq!(nested.old_path, "Nested.md");
-    assert_eq!(nested.new_path, "Nested/README.md");
-
     let folder =
         crate::structure::convert_to_folder(space, "FOLDER.md", None, &state, updates(), None)
             .await

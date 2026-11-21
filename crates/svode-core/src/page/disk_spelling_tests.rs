@@ -130,7 +130,6 @@ enum Write {
     ConvertToFolder,
     ConvertToLeaf,
     ConvertToCollection,
-    Nest,
     Duplicate,
     /// A rename by path of the folder to the given name in its parent.
     Rename(&'static str),
@@ -307,9 +306,6 @@ async fn run(write: Write, root: &Path, path: &str) -> Result<String, PageError>
                     )
                 })
         }
-        Write::Nest => structure::nest(&space, path, None, structure_runtime(&index))
-            .await
-            .map(|outcome| format!("{} {}", outcome.old_path, outcome.new_path)),
         Write::Duplicate => structure::duplicate(&space, path, None, structure_runtime(&index))
             .await
             .map(|page| page.path),
@@ -653,7 +649,6 @@ async fn conversions_in_another_letter_case() {
         WhenNotFound::Refuses,
     )
     .await;
-    assert_same_as_exact(Write::Nest, "Note.md", "NOTE.md", WhenNotFound::Refuses).await;
     assert_same_as_exact(
         Write::Duplicate,
         "Note.md",
@@ -753,7 +748,6 @@ async fn a_missing_source_refuses_as_before() {
         Write::ConvertToFolder,
         Write::ConvertToLeaf,
         Write::ConvertToCollection,
-        Write::Nest,
         Write::Duplicate,
         Write::Rename("New"),
     ] {

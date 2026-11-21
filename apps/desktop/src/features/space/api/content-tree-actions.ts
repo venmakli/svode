@@ -1,7 +1,7 @@
 import {
+  convertPageToFolder,
   createPage,
   getPageBacklinks,
-  nestPage,
   updatePageField,
   type PageBacklinkDto,
   type PageDto,
@@ -18,6 +18,7 @@ import {
 } from "@/features/page/page-api";
 import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
+import { isReadmePath } from "../lib/tree-patches";
 
 type ProjectPath = string | null;
 
@@ -105,18 +106,6 @@ export function updateTreePageTitle(input: {
   );
 }
 
-export function nestTreePage(input: {
-  spacePath: string;
-  path: string;
-  projectPath: ProjectPath;
-}): Promise<string> {
-  return nestPage({
-    space: input.spacePath,
-    path: input.path,
-    projectPath: input.projectPath,
-  });
-}
-
 export async function resolveTreeChildTarget(input: {
   spacePath: string;
   node: TreeNode;
@@ -129,18 +118,27 @@ export async function resolveTreeChildTarget(input: {
     return { parentPath: input.node.path, parentNodePath: input.node.path };
   }
 
+  // A folder Page already has its folder, whether its children are known.
+  if (isReadmePath(input.node.path)) {
+    return {
+      parentPath: readmeFolderPath(input.node.path),
+      parentNodePath: input.node.path,
+    };
+  }
+
   if (childParentKey && (knownChildren || input.node.has_schema)) {
     return { parentPath: childParentKey, parentNodePath: input.node.path };
   }
 
-  const newPath = await nestTreePage({
-    spacePath: input.spacePath,
-    path: input.node.path,
+  // A leaf becomes a folder Page with the same conversion as the Page menu.
+  const folderPage = await convertPageToFolder({
+    space: input.spacePath,
+    filePath: input.node.path,
     projectPath: input.projectPath,
   });
   return {
-    parentPath: readmeFolderPath(newPath),
-    parentNodePath: newPath,
+    parentPath: readmeFolderPath(folderPage.path),
+    parentNodePath: folderPage.path,
   };
 }
 

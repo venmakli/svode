@@ -393,16 +393,6 @@ async fn run_every_write_through_root(
     }
     ran.push("structure::move_page");
     refused!(
-        "structure::nest",
-        structure::nest(
-            space,
-            &at("Spec.md"),
-            Some(project_str),
-            structure_runtime(index, sink)
-        )
-        .await
-    );
-    refused!(
         "structure::duplicate",
         structure::duplicate(
             space,
@@ -603,10 +593,6 @@ async fn run_every_write_through_root(
     refused!(
         "store::move_page_with_project",
         store::move_page_with_project(space_path, &at("Spec.md"), "", None, Some(project_str))
-    );
-    refused!(
-        "store::nest_page",
-        store::nest_page(space_path, &at("Spec.md"), None)
     );
     refused!(
         "store::convert_page_to_folder",
@@ -1876,7 +1862,6 @@ const INVENTORY: &[(&str, &str, Guard)] = {
         ("page/store.rs", "replace_created_body", Direct),
         ("page/store.rs", "move_page", Via("move_page_with_project")),
         ("page/store.rs", "move_page_with_project", Direct),
-        ("page/store.rs", "nest_page", Direct),
         ("page/store.rs", "convert_page_to_folder", Direct),
         ("page/store.rs", "page_detail_state", READ),
         ("page/store.rs", "convert_page_to_leaf", Direct),
@@ -1937,7 +1922,6 @@ const INVENTORY: &[(&str, &str, Guard)] = {
         ("structure/ops.rs", "convert_to_collection", Direct),
         ("structure/ops.rs", "rename", Via("ensure_renamable_folder")),
         ("structure/ops.rs", "move_page", Direct),
-        ("structure/ops.rs", "nest", Direct),
         ("structure/ops.rs", "duplicate", Direct),
         ("structure/plan.rs", "move_mutation_paths", Direct),
         ("structure/plan.rs", "move_page_mutation_paths", Direct),

@@ -10,7 +10,7 @@ use svode_core::git::pending::StructuralChange;
 use svode_core::page::create::{PageCreate, PageCreateOutcome};
 use svode_core::page::store::Page;
 use svode_core::structure::{
-    ConvertToFolderOutcome, ConvertToLeafOutcome, NestOutcome, RenameOutcome, StructuralCommitSink,
+    ConvertToFolderOutcome, ConvertToLeafOutcome, RenameOutcome, StructuralCommitSink,
     StructureRuntime,
 };
 
@@ -304,25 +304,6 @@ pub async fn move_page(
         space,
         from,
         to_parent,
-        project_path,
-        runtime(state, updates, cli.as_ref(), sink.as_ref()),
-    )
-    .await?)
-}
-
-pub async fn nest(
-    space: &str,
-    path: &str,
-    project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<NestOutcome, AppError> {
-    let cli = crate::git::dates::detected_cli();
-    let sink = sink(autocommit);
-    Ok(svode_core::structure::nest(
-        space,
-        path,
         project_path,
         runtime(state, updates, cli.as_ref(), sink.as_ref()),
     )

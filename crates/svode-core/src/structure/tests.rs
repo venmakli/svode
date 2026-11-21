@@ -612,7 +612,7 @@ async fn a_collection_without_readme_takes_the_checks_of_a_folder_without_a_titl
 }
 
 #[tokio::test]
-async fn nesting_a_page_refuses_a_taken_folder_name_with_its_space_relative_path() {
+async fn turning_a_leaf_into_a_folder_refuses_a_taken_folder_name_with_its_space_relative_path() {
     use crate::page::PageError;
 
     let tmp = TempDir::new().unwrap();
@@ -627,7 +627,7 @@ async fn nesting_a_page_refuses_a_taken_folder_name_with_its_space_relative_path
     let state = IndexRuntimeState::default();
     let before = tree_snapshot(tmp.path());
 
-    let error = super::nest(space, "Docs/Plan.md", None, runtime(&state))
+    let error = super::convert_to_folder(space, "Docs/Plan.md", None, runtime(&state))
         .await
         .expect_err("taken folder name");
 
@@ -1753,9 +1753,8 @@ async fn a_read_only_relation_source_fails_a_create_under_a_leaf_without_a_false
 async fn a_leaf_turned_into_a_folder_reports_the_paths_it_could_not_move_back() {
     use std::os::unix::fs::PermissionsExt;
 
-    for (nesting, file_return_fails) in [(false, false), (false, true), (true, false), (true, true)]
-    {
-        let label = format!("nesting {nesting}, file return fails {file_return_fails}");
+    for file_return_fails in [false, true] {
+        let label = format!("file return fails {file_return_fails}");
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         relation_target_space(root);
@@ -1768,15 +1767,9 @@ async fn a_leaf_turned_into_a_folder_reports_the_paths_it_could_not_move_back() 
         if file_return_fails {
             crate::page::write::inject_failure(Some("relations_return"), None);
         }
-        let result = if nesting {
-            super::nest(space, "Area/Tasks/Item.md", None, runtime(&state))
-                .await
-                .map(|_| ())
-        } else {
-            super::convert_to_folder(space, "Area/Tasks/Item.md", None, runtime(&state))
-                .await
-                .map(|_| ())
-        };
+        let result = super::convert_to_folder(space, "Area/Tasks/Item.md", None, runtime(&state))
+            .await
+            .map(|_| ());
         crate::page::write::inject_failure(None, None);
         fs::set_permissions(&decision, fs::Permissions::from_mode(0o644)).unwrap();
 

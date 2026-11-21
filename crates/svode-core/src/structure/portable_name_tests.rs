@@ -105,7 +105,6 @@ async fn turning_a_leaf_into_a_folder_refuses_a_portably_equal_sibling() {
         for operation in [
             "convert_to_folder",
             "convert_to_collection",
-            "nest",
             "create_page",
             "create_collection",
             "import_asset",
@@ -126,9 +125,6 @@ async fn turning_a_leaf_into_a_folder_refuses_a_portably_equal_sibling() {
                         .await
                         .map(drop)
                 }
-                "nest" => super::nest(space, &leaf, None, runtime(&state))
-                    .await
-                    .map(drop),
                 "create_page" => create_page(space, &leaf, false, &state).await,
                 "create_collection" => create_collection(space, &leaf, &state).await,
                 _ => plan_import(root, &leaf, &state).await,

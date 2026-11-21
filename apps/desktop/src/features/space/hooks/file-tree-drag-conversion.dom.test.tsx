@@ -96,7 +96,6 @@ async function environment(scenario: Scenario, open: string) {
       const input = (args ?? {}) as Record<string, unknown>;
       if (
         command === "move_content" ||
-        command === "nest_page" ||
         command === "unnest_page" ||
         command === "convert_page_to_leaf" ||
         command === "convert_page_to_folder"
