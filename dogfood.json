@@ -8,14 +8,19 @@
       "commit": "d633ea8c78da3b2242bf878e7ec2cc93652e0b3f",
       "sourceRef": "d633ea8c78da3b2242bf878e7ec2cc93652e0b3f",
       "runId": 44998445223,
-      "publishedAt": "2026-11-22T07:53:43.473Z",
-      "expiresAt": "2026-11-25T07:53:43.473Z",
+      "publishedAt": "2026-11-22T08:09:37.376Z",
+      "expiresAt": "2026-11-25T08:09:37.376Z",
       "reason": "Вложения добавляются без связи с сервером Git LFS и скачиваются после досылки при синхронизации. Исправлены публикация по SSH и вложения с пробелами в имени.",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/44998445223/artifacts/14745293209",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/44998445223",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/44998445223/artifacts/14746290981",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/44998445223",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     },
