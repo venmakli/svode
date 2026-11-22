@@ -1,340 +1,39 @@
-name: check
+name: Stage 12 Windows dogfood checks
 
 on:
-  pull_request:
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
 
-concurrency:
-  group: check-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  typecheck:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/desktop typecheck
-
-  frontend-tests:
-    # The frontend tests of apps/desktop in two processes, as
-    # `bun run test:frontend` runs them locally: the module mocks of `tests`
-    # leak into `src` when both share a process. `src` includes the fixtures
-    # of the Collection query semantics (Stage 11 `04`, 4.C) against the
-    # standard semantics of the frontend Properties; the rust job runs them
-    # against the Page Collection engine with svode-core.
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      # The Paraglide messages the tests import are generated, not committed.
-      - run: bun run --cwd apps/desktop paraglide
-      - name: Tests of src
-        id: src
-        working-directory: apps/desktop
-        run: bun test src
-      # Reported even when the tests of src fail.
-      - name: Tests of tests
-        if: success() || steps.src.outcome == 'failure'
-        working-directory: apps/desktop
-        run: bun test tests
-
-  rust:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.97.0
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libsecret-1-dev \
-            libasound2-dev
-      - uses: oven-sh/setup-bun@v2
-      - run: bun run --cwd apps/desktop check:sidecars
-      - name: Host-free packages do not depend on Tauri or the desktop crate
-        run: bun run check:crates
-      # svode-speech builds its engine with Vulkan on Linux, which needs the
-      # Vulkan SDK; the speech job below checks and tests it.
-      - run: cargo check --workspace --all-targets --exclude svode-speech
-      - name: Core package tests without the desktop crate
-        run: cargo test -p svode-core
-      # Git 3.0 defaults to the reftable ref store, where pseudo-refs are not
-      # files; repositories the core tests create use it here (Stage 11 `01`,
-      # criterion 2). Needs Git 2.45 or newer on the runner.
-      - name: Core package tests with the reftable ref store
-        env:
-          GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: init.defaultRefFormat
-          GIT_CONFIG_VALUE_0: reftable
-        run: |
-          git --version
-          cargo test -p svode-core
-      - name: Tool surface package tests without the desktop crate
-        run: cargo test -p svode-tools
-      - name: MCP package tests without the desktop crate
-        run: cargo test -p svode-mcp
-      # The desktop build script of `cargo check` above left the svode-lfs
-      # placeholder in the target directory; the lfs-s3 storage tests run
-      # svode-lfs through Git, so it is built first.
-      - name: CLI package tests without the desktop crate
-        run: |
-          cargo build -p svode-lfs
-          cargo test -p svode-cli
-      - name: Connection manager tests without the desktop crate
-        run: cargo test -p svode-connect
-      - name: Agent runtime tests without the desktop crate
-        run: cargo test -p svode-agents
-      # Building the desktop crate copies the sidecar placeholders over the
-      # svode, svode-mcp and svode-launcher binaries their packages' tests
-      # run, so those packages are tested by their own steps above and in
-      # standalone-linux, without the desktop crate.
-      - name: Workspace tests
-        run: cargo test --workspace --exclude svode-speech --exclude svode-cli --exclude svode-mcp --exclude svode-install
-      - name: Clippy
-        run: |
-          cargo clippy --workspace --exclude svode-speech -- \
-            -D warnings \
-            -A clippy::collapsible_if \
-            -A clippy::type_complexity \
-            -A clippy::too_many_arguments \
-            -A clippy::needless_return \
-            -A clippy::collapsible_str_replace \
-            -A clippy::question_mark \
-            -A clippy::cloned_ref_to_slice_refs \
-            -A clippy::ptr_arg \
-            -A clippy::redundant_pattern_matching \
-            -A clippy::manual_contains \
-            -A clippy::needless_lifetimes \
-            -A clippy::derivable_impls \
-            -A clippy::obfuscated_if_else \
-            -A clippy::needless_borrow \
-            -A clippy::needless_borrows_for_generic_args
-
-  speech:
-    # The speech recognition process on the OSes checked without a live
-    # device (Stage 10 `06`): built as it ships, with Vulkan and loadable
-    # backend modules, and tested through real processes on runners without
-    # a GPU, where the engine must pick the CPU and recognize a fixture with
-    # a small catalog model.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, windows-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      SVODE_SPEECH_REQUIRE_MODEL: "1"
-      SVODE_SPEECH_EXPECT_BACKEND: cpu
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.97.0
-        with:
-          components: clippy
-      # Not the target directory: the cache drops the engine DLLs the native
-      # build stages next to the test binaries on Windows, and a fresh build
-      # script does not stage them again.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          key: speech
-          cache-targets: false
-      - uses: ./.github/actions/vulkan-sdk
-      - name: Restore the speech test model
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/speech-test
-          key: speech-test-model-${{ hashFiles('scripts/fetch-speech-test-model.mjs') }}
-      - name: Speech test model
-        shell: bash
-        env:
-          SVODE_SPEECH_TEST_MODEL: ${{ runner.temp }}/speech-test/whisper-tiny-Q8_0.gguf
-        run: echo "SVODE_SPEECH_TEST_MODEL=$(node scripts/fetch-speech-test-model.mjs)" >> "$GITHUB_ENV"
-      - name: Speech process tests
-        run: cargo test -p svode-speech
-      - name: Clippy
-        run: cargo clippy -p svode-speech --all-targets -- -D warnings
-
-  native-readers-windows:
-    # The native session readers of Stage 10 `07` on Windows, which no live
-    # device checks: their store fixtures, the store paths of this OS, the
-    # liveness signal of a live and an exited child process and the Cursor
-    # chat folders of Windows paths; the local paths of the chat of `08`;
-    # Git path sets beyond the command line limit of this OS (DF-270); and
-    # the publication proof of a root with a Space (DF-364).
-    # Linux runs them with the workspace tests of the rust job.
+  dogfood-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: d633ea8c78da3b2242bf878e7ec2cc93652e0b3f
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          key: native-readers
-      - uses: oven-sh/setup-bun@v2
-      - run: bun run --cwd apps/desktop check:sidecars
-      # The desktop crate gets the Common Controls v6 manifest from Tauri's
-      # resource for its binary alone, so its test binary would not start
-      # (STATUS_ENTRYPOINT_NOT_FOUND, tauri-apps/tauri#13419); the linker
-      # embeds the same manifest into the test binaries.
-      - name: Common Controls manifest for the test binaries
+          key: stage12-dogfood-windows
+      - name: Verify revision and Git tools
         shell: pwsh
         run: |
-          $manifest = Join-Path $env:RUNNER_TEMP 'common-controls.manifest'
-          Set-Content -Path $manifest -Encoding utf8 -Value @'
-          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-            <dependency>
-              <dependentAssembly>
-                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
-              </dependentAssembly>
-            </dependency>
-          </assembly>
-          '@
-          "RUSTFLAGS=-C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:$manifest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      # The other tests of the agent runtime still assume Unix paths.
-      - name: Native stores and identities of the agent descriptions
-        run: cargo test -p svode-agents -- identity::tests registry::tests::an_agent_without_a_description registry::tests::cursor_lists registry::tests::grok_build_declares registry::tests::hermes_lists registry::tests::opencode_declares registry::tests::qwen_code_runs_its_acp_flag
-      # The process tree in a Job Object (DF-218, DF-370): killing or dropping
-      # it ends an agent connection or a bounded Git call with the processes
-      # it started, also at the deadline of the Git call.
-      - name: Process tree
-        run: cargo test -p svode-core --lib -- process::tests git::sensitive_tree_tests
-      # The launcher through which the Codex adapter runs Codex (DF-213):
-      # `app-server` unloads threads at once, every other call passes as is.
-      - name: Codex launcher
-        run: cargo test -p svode-agents -- adapters::launcher::tests
-      - name: Native session reader tests
-        run: cargo test -p svode-desktop --lib -- agent_sessions::native_status agent_sessions::native_catalog agent_sessions::read_model agent_sessions::live_status
-      # The local paths of the chat of Stage 10 `08` on Windows: drive paths
-      # in either separator and their verbatim form, folder links, and no
-      # filesystem access for a network share.
-      - name: Chat paths of the system path helpers
-        run: cargo test -p svode-core --lib -- system_path::tests
-      # A folder save, «Save all» with deletions and a case-only relocation
-      # and a structural commit of a moved folder, each with paths longer
-      # than 32 767 characters together, are one commit with Git for Windows;
-      # sync with matching edits, merge continuation, Page dates and the LFS
-      # check take such sets; and the path batches of a Git call stay within
-      # the budget.
-      - name: Git path sets beyond the command line limit
-        run: cargo test -p svode-core --lib -- git::path_set_tests git::cli::tests
-      # The SSH defaults of every Git process (DF-378): a time limit for each
-      # SSH connection and one git-lfs retry, left out where the user set an
-      # SSH command or retries, as Git for Windows reads them. The process
-      # tests with a fake `ssh` run on Linux with the workspace tests.
-      - name: SSH defaults of Git processes
-        run: cargo test -p svode-core --lib -- git::cli::ssh_tests
-      # A root commit that moves an initialized Space to a published revision
-      # passes the publication proof with Git for Windows and is pushed
-      # (DF-364): the proof hands Git no verbatim `\\?\` local path.
-      - name: Publication of a root with a Space
-        run: cargo test -p svode-core --lib -- git::publication::paths_tests
-      - name: Chat paths of the agent runtime
-        run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
-      - name: Chat paths of Desktop
-        run: cargo test -p svode-desktop --lib -- commands::space::tests::path_kind media::source::tests::a_local_file shell_open_scope
-      # The paths WebView2 hands for files dropped from the Explorer, built
-      # with the WebView2 host code of this OS, and the network share refusal
-      # of a terminal drop.
-      - name: Dropped file paths of Desktop
-        run: cargo test -p svode-desktop --lib -- webview_file_drop terminal::tests::terminal_paths_reject_a_network_share app_windows::tests::the_first_window_of_linux
-
-  standalone-linux:
-    # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,
-    # tested through real processes and smoke-checked without the desktop
-    # app or its GUI libraries, then packed with svode-lfs and the plugin
-    # payload into the standalone archive, which the installer puts into the
-    # stable location of a user without Svode.
-    runs-on: ubuntu-22.04
-    env:
-      # The storage process tests fail instead of skipping without git-lfs
-      # or the svode-lfs next to svode (DF-367).
-      SVODE_STORAGE_REQUIRE_TOOLS: "1"
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.97.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          key: standalone
-      - name: Install the build dependency of the OS keychain client and Git LFS
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config git-lfs
+          if ((git rev-parse HEAD) -ne 'd633ea8c78da3b2242bf878e7ec2cc93652e0b3f') {
+            throw 'Unexpected application revision'
+          }
           git --version
           git lfs version
-      - name: Build the standalone binaries
-        run: cargo build -p svode-cli -p svode-mcp -p svode-lfs -p svode-install
-      - name: The binaries link no desktop GUI library
-        run: |
-          ldd target/debug/svode target/debug/svode-mcp
-          if ldd target/debug/svode target/debug/svode-mcp | grep -Ei 'gtk|webkit|appindicator|rsvg'; then
-            exit 1
-          fi
-      # Stage 12 E3 (DF-367): what the system password store answers on a
-      # host without a desktop session, in the environment of a new SSH
-      # login, with the error of the keychain client from the debug log.
-      # `status` reads an account that is never written; `set` writes one.
-      # The second group has a session bus but no Secret Service.
-      - name: System password store without a desktop session
-        run: |
-          echo "DBUS_SESSION_BUS_ADDRESS of the runner: ${DBUS_SESSION_BUS_ADDRESS-<unset>}"
-          echo "XDG_RUNTIME_DIR of the runner: ${XDG_RUNTIME_DIR-<unset>}"
-          svode="$PWD/target/debug/svode"
-          home="$(mktemp -d)"
-          session() {
-            env -i HOME="$home" USER="$USER" LOGNAME="$USER" PATH=/usr/bin:/bin \
-              SHELL=/bin/sh LANG=C.UTF-8 RUST_LOG=svode_core::variables=debug "$@"
-          }
-          echo "::group::No session bus"
-          session "$svode" secret store status --json
-          printf 'probe' | session "$svode" secret set E3_PROBE --json || echo "exit $?"
-          echo "::endgroup::"
-          if command -v dbus-run-session >/dev/null; then
-            echo "::group::A session bus without a Secret Service"
-            session dbus-run-session -- "$svode" secret store status --json || echo "exit $?"
-            printf 'probe' | session dbus-run-session -- "$svode" secret set E3_PROBE --json || echo "exit $?"
-            echo "::endgroup::"
-          fi
-          test ! -e "$home/.config/app.svode.desktop/secrets.json"
-      # The server path of DF-367 through real git, git-lfs, svode and
-      # svode-lfs against the loopback S3 stand, in login sessions without
-      # D-Bus; the output shows that no test was skipped.
-      - name: Server scenario of an lfs-s3 project without a desktop session
-        run: cargo test -p svode-cli --test storage_process --test secret_process -- --nocapture
-      - name: Every command and tool through real processes
-        run: cargo test -p svode-cli -p svode-mcp -p svode-install -p svode-connect
-      - name: Packaging smoke
-        run: node scripts/smoke-standalone.mjs target/debug
-      - name: Standalone archive with the plugin payload of the same version, installed for a user without Svode
-        run: |
-          archive="$(node scripts/standalone-archive.mjs target/debug target/standalone)"
-          rm -rf target/standalone/unpacked
-          mkdir -p target/standalone/unpacked
-          tar -xzf "$archive" -C target/standalone/unpacked
-          root="$(find target/standalone/unpacked -mindepth 1 -maxdepth 1 -type d)"
-          node scripts/plugin-payload.mjs check "$root/plugins/svode" "$root/bin/svode"
-          node scripts/smoke-install.mjs "$archive"
-
-  audit:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions-rust-lang/audit@v1
-        with:
-          workingDirectory: .
-          createIssues: false
+      - name: DF-379 publication destination and Windows drive paths
+        run: cargo test -p svode-core --lib -- the_user_part_leaves_url_and_scp_forms_of_every_scheme urls_without_a_user_part_stay_as_configured a_windows_drive_path_is_local_only_on_windows
+      - name: DF-380 exact LFS paths and policy recovery with Git for Windows
+        if: success() || failure()
+        run: >-
+          cargo test -p svode-core --lib --
+          an_lfs_path_rule_with_whitespace_quotes_the_escaped_pattern
+          git_applies_each_exact_lfs_rule_to_exactly_its_path
+          exact_path_rules_unlike_their_metadata_make_the_lfs_policy_stale
+          reapplying_the_lfs_policy_repairs_an_old_exact_rule_without_new_paths
+          leaving_local_for_lfs_routes_a_released_name_with_spaces_to_lfs
