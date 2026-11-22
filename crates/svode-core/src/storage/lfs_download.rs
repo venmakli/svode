@@ -9,6 +9,7 @@
 //! it runs one download per repository is the host's; what a download does
 //! and what its outcome means for the LFS state is this module's.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -400,6 +401,7 @@ pub(crate) async fn download_with(
 
     let mut stop = None;
     let mut detail = None;
+    let mut missing_on_server = HashSet::new();
     let local = missing.0.iter().filter(|pointer| pointer.local);
     if let Err(text) = lay_out(git, cli, repo_dir, local).await {
         detail = Some(text);
@@ -408,11 +410,23 @@ pub(crate) async fn download_with(
         let include = format!("--include={}", patterns(&group).join(","));
         let fetched = Transfer::new(repo_dir, TransferDirection::Download)
             .idle_limit(idle_limit)
-            .run(&fetch_cli, &["lfs", "fetch", &include], &[])
+            .run(
+                &fetch_cli,
+                &["lfs", "fetch", &include],
+                &[("GIT_TRACE", "1"), ("GIT_TRACE_PACKET", "1")],
+            )
             .await;
         match fetched {
-            Ok(TransferOutcome::Finished(out)) if out.exit_code == 0 => {}
-            Ok(TransferOutcome::Finished(out)) => stop = Some(stop_cause(&out.stderr)),
+            Ok(TransferOutcome::Finished(out)) if out.exit_code == 0 => {
+                let refused = ssh_download_noops(&out.stderr);
+                missing_on_server.extend(group.iter().filter_map(|pointer| {
+                    let object = (pointer.oid.as_str(), pointer.file.size);
+                    refused.contains(&object).then_some(object)
+                }));
+            }
+            Ok(TransferOutcome::Finished(out)) => {
+                stop = Some(stop_cause(&without_fetch_trace(&out.stderr)));
+            }
             Ok(TransferOutcome::Stalled(_)) => stop = Some(DownloadStop::Stalled),
             Err(error) => stop = Some(other(&error.to_string())),
         }
@@ -452,8 +466,17 @@ pub(crate) async fn download_with(
         }
     };
     let stop = (!remaining.is_empty()).then(|| {
-        stop.unwrap_or_else(|| DownloadStop::Other {
-            detail: detail.unwrap_or_default(),
+        stop.unwrap_or_else(|| {
+            if remaining.0.iter().any(|pointer| {
+                !pointer.local
+                    && missing_on_server.contains(&(pointer.oid.as_str(), pointer.file.size))
+            }) {
+                DownloadStop::NotOnServer
+            } else {
+                DownloadStop::Other {
+                    detail: detail.unwrap_or_default(),
+                }
+            }
         })
     });
     DownloadOutcome {
@@ -561,6 +584,42 @@ fn pattern(path: &str) -> String {
         pattern.push('?');
     }
     pattern
+}
+
+/// Pure SSH signals absent objects with `noop` in a successful download
+/// batch (git-lfs #6319). Only a server reply for the same object counts.
+fn ssh_download_noops(stderr: &str) -> HashSet<(&str, u64)> {
+    stderr
+        .lines()
+        .filter_map(|line| {
+            let (_, packet) = line.split_once(" trace git-lfs: packet ")?;
+            let (connection, reply) = packet.split_once(" < ")?;
+            if connection.is_empty() || !connection.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return None;
+            }
+            let mut fields = reply.split_ascii_whitespace();
+            let oid = fields.next()?;
+            let size = fields.next()?.parse().ok()?;
+            (fields.next() == Some("noop")
+                && oid.len() == 64
+                && oid.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then_some((oid, size))
+        })
+        .collect()
+}
+
+/// Packet traces may carry authentication tokens. Keep them out of
+/// both error classification and the displayed diagnostics.
+fn without_fetch_trace(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| {
+            !line.contains(" trace git-lfs: ")
+                && !line.contains(" trace: ")
+                && !line.contains(" packet: ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Why a fetch that git-lfs ended with an error stopped, from its stderr.

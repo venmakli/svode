@@ -118,6 +118,24 @@ fn stops_are_told_apart_and_other_text_has_no_credentials() {
 }
 
 #[test]
+fn fetch_traces_supply_only_incoming_noops_and_never_reach_the_stop_text() {
+    let oid = "a".repeat(64);
+    let trace = format!(
+        "10:00:00.123456 trace git-lfs: packet 00 < {oid} 42 noop\n\
+         10:00:00.123457 trace git-lfs: packet 00 > {oid} 23 noop\n\
+         10:00:00.123458 trace git-lfs: packet 01 < {oid} 99 download token=secret\n\
+         10:00:00.123459 git.c:811 trace: exec: git-lfs fetch\n\
+         10:00:00.123460 pkt-line.c:80 packet: git< private\n\
+         error: disk full"
+    );
+    assert_eq!(
+        ssh_download_noops(&trace),
+        HashSet::from([(oid.as_str(), 42)])
+    );
+    assert_eq!(without_fetch_trace(&trace), "error: disk full");
+}
+
+#[test]
 fn the_status_follows_the_plan_the_download_and_readiness_checks() {
     let missing = MissingFiles(vec![
         pointer("a.png", 10, "1", false),
@@ -634,5 +652,87 @@ exec git -c protocol.file.allow=always \"$@\"
         assert_eq!(f.content(PATHS[0]), bytes(1, TINY));
         assert_eq!(f.content(PATHS[2]), bytes(3, LARGE));
         let _ = &f.temp;
+    }
+
+    #[tokio::test]
+    async fn a_pure_ssh_noop_explains_the_pointer_left_by_a_successful_fetch() {
+        if !lfs_available() {
+            eprintln!("git-lfs is not installed; skipped");
+            return;
+        }
+        let f = fixture();
+        let ssh = f.marks.join("ssh-noop");
+        svode_testkit::write_executable(
+            &ssh,
+            r#"#!/bin/sh
+set -eu
+send() { printf '%04x%s\n' "$(($(printf '%s' "$1" | wc -c) + 5))" "$1"; }
+read_request() {
+    request=
+    while header=$(dd bs=1 count=4 2>/dev/null) && [ -n "$header" ]; do
+        case "$header" in
+            0000) return ;;
+            0001) ;;
+            *)
+                line=$(dd bs=1 count="$(($(printf '%d' "0x$header") - 4))" 2>/dev/null)
+                request="$request
+$line"
+                ;;
+        esac
+    done
+    exit 1
+}
+send version=1
+printf 0000
+read_request
+send 'status 200'
+printf 0000
+read_request
+if printf '%s\n' "$request" | grep -qx batch; then
+    send 'status 200'
+    send 'hash-algo=sha256'
+    printf 0001
+    printf '%s\n' "$request" | while read -r oid size rest; do
+        [ "${#oid}" -eq 64 ] && [ -n "$size" ] && send "$oid $size noop" || :
+    done
+    printf 0000
+    read_request
+fi
+send 'status 200'
+printf 0000
+"#,
+        )
+        .unwrap();
+        git(
+            &f.clone,
+            &["config", "core.sshCommand", ssh.to_str().unwrap()],
+        );
+        git(&f.clone, &["config", "ssh.variant", "simple"]);
+        git(&f.clone, &["config", "lfs.sshtransfer", "always"]);
+        git(&f.clone, &["config", "lfs.url", "ssh://fixture/repo.git"]);
+        // A configured exclusion makes a successful fetch skip an object
+        // without asking the server. It must not be called missing remotely.
+        git(&f.clone, &["config", "lfs.fetchexclude", "*.bin"]);
+        let skipped = f.download(IDLE_LIMIT).await;
+        assert_eq!(
+            skipped.stop,
+            Some(DownloadStop::Other {
+                detail: String::new()
+            })
+        );
+        git(&f.clone, &["config", "--unset", "lfs.fetchexclude"]);
+
+        let outcome = f.download(IDLE_LIMIT).await;
+        assert_eq!(outcome.stop, Some(DownloadStop::NotOnServer));
+        assert_eq!(outcome.missing.files().len(), PATHS.len());
+        assert_eq!(LfsStatus::downloaded(&outcome).state, LfsState::Ready);
+        assert_eq!(git(&f.clone, &["status", "--porcelain"]), "");
+
+        git(&f.clone, &["config", "--unset", "lfs.url"]);
+        let recovered = f.download(IDLE_LIMIT).await;
+        assert!(recovered.missing.is_empty());
+        assert_eq!(recovered.stop, None);
+        assert_eq!(f.content(PATHS[2]), bytes(3, LARGE));
+        assert_eq!(git(&f.clone, &["status", "--porcelain"]), "");
     }
 }
