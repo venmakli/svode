@@ -177,18 +177,27 @@ async fn git_applies_each_exact_lfs_rule_to_exactly_its_path() {
     assert_eq!(init.exit_code, 0, "{}", init.stderr);
     let ruled = [
         "Topic/Запись экрана 2026-10-07 в 12.06.16.mov",
-        "Topic/tab\tname.mov",
-        "Topic/quote\"name x.mov",
-        r"Topic/back\slash x.mov",
+        "Topic/back/slash x.mov",
         "Topic/br[1] x.mov",
-        "Topic/star* ?.mov",
         "Topic/!bang x.mov",
         "Topic/#hash x.mov",
         "#root x.mov",
-        "Topic/new\nline.mov",
-        "Topic/ctrl\u{1}x.mov",
         "Topic/кириллица.mov",
         "Topic/plain.mov",
+        // The string-format test covers these characters on every OS.
+        // Git for Windows treats a backslash as a path separator.
+        #[cfg(not(windows))]
+        "Topic/tab\tname.mov",
+        #[cfg(not(windows))]
+        "Topic/quote\"name x.mov",
+        #[cfg(not(windows))]
+        r"Topic/back\slash x.mov",
+        #[cfg(not(windows))]
+        "Topic/star* ?.mov",
+        #[cfg(not(windows))]
+        "Topic/new\nline.mov",
+        #[cfg(not(windows))]
+        "Topic/ctrl\u{1}x.mov",
     ];
     let neighbours = [
         "Topic/Запись",
