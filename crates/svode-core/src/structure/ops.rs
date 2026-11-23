@@ -27,6 +27,7 @@ use crate::page::create::{
 };
 use crate::page::dates::GitDateExecutor;
 use crate::page::store::{self, Page};
+use crate::page::templates::{PageTemplatePlan, TemplateSelection, prepare_page_template};
 use crate::page::write::{SourceSnapshot, mapped_path};
 use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
@@ -619,6 +620,73 @@ where
     Ok(outcome)
 }
 
+/// The agent create shares the ordinary Page operation when bypassing a
+/// template. An instantiation authorizes the entire planned tree before
+/// writing and uses the same history and projection owners as Page create.
+pub async fn create_page_with_template<E, F, Fut, Err>(
+    request: PageCreate,
+    selection: TemplateSelection,
+    runtime: StructureRuntime<'_, E>,
+    authorize: F,
+) -> Result<PageCreateOutcome, Err>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
+{
+    let plan = match prepare_page_template(&request, &selection).map_err(Err::from)? {
+        PageTemplatePlan::Ordinary(warning) => {
+            let mut outcome = create_page(request, runtime, authorize).await?;
+            outcome.page.warnings.extend(warning);
+            return Ok(outcome);
+        }
+        PageTemplatePlan::Instantiate(plan) => plan,
+    };
+    let authorized = authorize(plan.paths.clone()).await?;
+    let space = &request.space;
+    let mut outcome = crate::git::access::scope_authorized_mutation_paths(
+        authorized,
+        async {
+            crate::page::naming::with_document_name_lock(space, || {
+                let stale = || PageError::SourceStale {
+                    path: request.parent_path.clone().unwrap_or_default(),
+                };
+                let PageTemplatePlan::Instantiate(current) =
+                    prepare_page_template(&request, &selection)?
+                else {
+                    return Err(stale());
+                };
+                if current.paths != plan.paths || current.source.root_abs != plan.source.root_abs {
+                    return Err(stale());
+                }
+                current.apply(space)
+            })
+            .map_err(Err::from)
+        },
+        |error| Err::from(PageError::from(error)),
+    )
+    .await?;
+    crate::page::create::publish_created_page(
+        &request,
+        runtime.index,
+        runtime.updates,
+        runtime.git_dates,
+        &mut outcome,
+    )
+    .await;
+    schedule_created_page(
+        runtime.commits,
+        request.project.as_deref(),
+        space,
+        &outcome,
+        OperationId::next(),
+    )
+    .await
+    .map_err(Err::from)?;
+    Ok(outcome)
+}
+
 /// The Page create of [`create_page`] and of a Collection create, without
 /// the history of the created Page: the conversion of a leaf parent shares
 /// the identity `operation` and registers through `runtime` only once the
@@ -941,9 +1009,9 @@ where
             parent_path: parent.clone(),
             title: planned.title,
             body: request.body,
-            icon: request.icon,
-            description: request.description,
-            cover: request.cover,
+            icon: request.icon.map(Some),
+            description: request.description.map(Some),
+            cover: request.cover.map(Some),
             properties: None,
             contextual_defaults: false,
             allocate_unique_title: false,

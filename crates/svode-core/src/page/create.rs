@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -15,9 +16,10 @@ pub struct PageCreate {
     pub parent_path: Option<String>,
     pub title: String,
     pub body: Option<String>,
-    pub icon: Option<String>,
-    pub description: Option<String>,
-    pub cover: Option<store::Cover>,
+    /// An absent field inherits from a template; a supplied null clears it.
+    pub icon: Option<Option<String>>,
+    pub description: Option<Option<String>>,
+    pub cover: Option<Option<store::Cover>>,
     pub properties: Option<IndexMap<String, serde_json::Value>>,
     pub contextual_defaults: bool,
     pub allocate_unique_title: bool,
@@ -107,7 +109,7 @@ where
 /// write.
 struct CreatePlan {
     paths: Vec<PathBuf>,
-    properties: IndexMap<String, serde_json::Value>,
+    fields: BTreeMap<String, serde_json::Value>,
     contextual_values: Option<crate::page::frontmatter::FrontmatterFields>,
 }
 
@@ -129,34 +131,45 @@ pub(crate) fn ensure_title(request: &PageCreate) -> Result<(), PageError> {
     Ok(())
 }
 
+pub(crate) fn initial_literal_fields(
+    request: &PageCreate,
+) -> Result<BTreeMap<String, serde_json::Value>, PageError> {
+    let mut fields = BTreeMap::new();
+    if !request.contextual_defaults {
+        for (key, value) in request.properties.iter().flatten() {
+            if matches!(
+                key.as_str(),
+                "title" | "icon" | "description" | "cover" | "created" | "updated"
+            ) {
+                return Err(PageError::General(format!(
+                    "system metadata '{key}' must not be passed in properties"
+                )));
+            }
+            fields.insert(key.clone(), value.clone());
+        }
+    }
+    if let Some(icon) = request.icon.clone() {
+        fields.insert("icon".to_string(), icon.into());
+    }
+    if let Some(description) = request.description.clone() {
+        fields.insert("description".to_string(), description.into());
+    }
+    if let Some(cover) = request.cover.clone() {
+        fields.insert("cover".to_string(), serde_json::to_value(cover)?);
+    }
+    Ok(fields)
+}
+
 fn plan(request: &PageCreate, parent: Option<&str>) -> Result<CreatePlan, PageError> {
     let probe = parent
         .map(|parent| format!("{parent}/.svode-create-probe.md"))
         .unwrap_or_else(|| ".svode-create-probe.md".to_string());
-    let properties = request.properties.clone().unwrap_or_default();
-    for key in properties.keys() {
-        if request.contextual_defaults {
-            continue;
-        }
-        if matches!(
-            key.as_str(),
-            "title" | "icon" | "description" | "cover" | "created" | "updated"
-        ) {
-            return Err(PageError::General(format!(
-                "system metadata '{key}' must not be passed in properties"
-            )));
-        }
-    }
-
+    let fields = initial_literal_fields(request)?;
     let mut candidate = store::PageMeta::new_persisted(request.title.clone());
-    if let Some(icon) = request.icon.clone() {
-        store::apply_item_field_update(&mut candidate, "icon", icon.into())?;
-    }
-    if let Some(description) = request.description.clone() {
-        store::apply_item_field_update(&mut candidate, "description", description.into())?;
-    }
-    if let Some(cover) = request.cover.clone() {
-        store::apply_item_field_update(&mut candidate, "cover", serde_json::to_value(cover)?)?;
+    for key in ["icon", "description", "cover"] {
+        if let Some(value) = fields.get(key) {
+            store::apply_item_field_update(&mut candidate, key, value.clone())?;
+        }
     }
 
     let schema_root = collections::resolve_collection_schema_result(&request.space, &probe)?
@@ -172,8 +185,10 @@ fn plan(request: &PageCreate, parent: Option<&str>) -> Result<CreatePlan, PageEr
     let contextual_values = request
         .contextual_defaults
         .then(|| {
-            properties
+            request
+                .properties
                 .iter()
+                .flatten()
                 .map(|(field, value)| {
                     serde_norway::to_value(value)
                         .map(|value| (field.clone(), value))
@@ -186,7 +201,7 @@ fn plan(request: &PageCreate, parent: Option<&str>) -> Result<CreatePlan, PageEr
                 .collect::<Result<crate::page::frontmatter::FrontmatterFields, _>>()
         })
         .transpose()?;
-    for (field, value) in &properties {
+    for (field, value) in request.properties.iter().flatten() {
         if request.contextual_defaults {
             continue;
         }
@@ -212,7 +227,7 @@ fn plan(request: &PageCreate, parent: Option<&str>) -> Result<CreatePlan, PageEr
     paths.dedup();
     Ok(CreatePlan {
         paths,
-        properties,
+        fields,
         contextual_values,
     })
 }
@@ -239,7 +254,7 @@ where
     let parent = resolve_parent(&request.space, requested_parent)?;
     let CreatePlan {
         paths: planned_paths,
-        properties,
+        fields,
         contextual_values,
     } = plan(&request, parent.as_deref())?;
     let authorized = authorize(planned_paths.clone()).await?;
@@ -299,19 +314,6 @@ where
             )?;
             page = store::read(&request.space, &page.path)?;
 
-            let mut fields = std::collections::BTreeMap::new();
-            if !request.contextual_defaults {
-                fields.extend(properties);
-            }
-            if let Some(icon) = request.icon.clone() {
-                fields.insert("icon".to_string(), icon.into());
-            }
-            if let Some(description) = request.description.clone() {
-                fields.insert("description".to_string(), description.into());
-            }
-            if let Some(cover) = request.cover.clone() {
-                fields.insert("cover".to_string(), serde_json::to_value(cover)?);
-            }
             if !fields.is_empty() {
                 let batch = collections::prepare_item_field_batch(
                     &request.space,
@@ -352,12 +354,33 @@ where
         PageError::from,
     )
     .await;
-    let mut page = match operation {
+    let page = match operation {
         Ok(page) => page,
         Err(error) => return Err(snapshot.rollback(error)),
     };
-    let changed_paths = snapshot.changes()?;
-    let markdown = changed_paths
+    let mut outcome = PageCreateOutcome {
+        page,
+        changed_paths: snapshot.changes()?,
+    };
+    publish_created_page(&request, state, updates, git_dates, &mut outcome).await;
+    let warnings = outcome.page.warnings;
+    outcome.page = store::read(&request.space, &outcome.page.path)?;
+    outcome.page.warnings = warnings;
+    Ok(outcome)
+}
+
+pub(crate) async fn publish_created_page<E: GitDateExecutor>(
+    request: &PageCreate,
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    outcome: &mut PageCreateOutcome,
+) {
+    if !request.publish_projection {
+        return;
+    }
+    let markdown = outcome
+        .changed_paths
         .iter()
         .filter(|path| {
             path.extension()
@@ -366,43 +389,32 @@ where
         })
         .cloned()
         .collect();
-    let projection_errors = if request.publish_projection {
-        match checkpoint("projection") {
-            Ok(()) => {
-                crate::index::update::publish_paths_or_repair(
-                    state,
-                    updates,
-                    git_dates,
-                    request.project.as_deref(),
-                    &request.space,
-                    markdown,
-                    "create_page",
-                )
-                .await
-            }
-            Err(error) => vec![error.to_string()],
+    let projection_errors = match checkpoint("projection") {
+        Ok(()) => {
+            crate::index::update::publish_paths_or_repair(
+                state,
+                updates,
+                git_dates,
+                request.project.as_deref(),
+                &request.space,
+                markdown,
+                "create_page",
+            )
+            .await
         }
-    } else {
-        Vec::new()
+        Err(error) => vec![error.to_string()],
     };
     if !projection_errors.is_empty() {
-        page.warnings.push(PageWarning {
+        outcome.page.warnings.push(PageWarning {
             kind: "projection_update_failed".into(),
             message: format!(
                 "Page was created, but derived projection needs refresh: {}",
                 projection_errors.join("; ")
             ),
-            path: Some(page.path.clone()),
+            path: Some(outcome.page.path.clone()),
             ..PageWarning::default()
         });
     }
-    let warnings = page.warnings;
-    page = store::read(&request.space, &page.path)?;
-    page.warnings = warnings;
-    Ok(PageCreateOutcome {
-        page,
-        changed_paths,
-    })
 }
 
 /// The existing parent directory of a create. A leaf Page parent becomes a
@@ -529,8 +541,8 @@ mod tests {
             parent_path: None,
             title: "Budget".into(),
             body: Some("Initial body".into()),
-            icon: Some("wallet".into()),
-            description: Some("  keep whitespace  ".into()),
+            icon: Some(Some("wallet".into())),
+            description: Some(Some("  keep whitespace  ".into())),
             cover: None,
             properties: Some(IndexMap::from([("id".into(), json!("custom"))])),
             contextual_defaults: false,

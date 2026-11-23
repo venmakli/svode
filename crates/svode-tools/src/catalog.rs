@@ -194,7 +194,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/path"))] }),
         def(
             "create_page",
-            "Create one Svode Page with Desktop naming and allocation rules. parentPath is the containing directory (empty for the Space root); schema-backed parents apply Collection defaults and validate initial properties. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
+            "Create one Svode Page with Desktop naming and allocation rules. parentPath is the containing directory (empty for the Space root). Schema-backed parents apply Collection defaults and validate initial properties. Leave template out to apply the immediate parent Collection's default, use {\"slug\":\"...\"} to select one of its templates, or {\"mode\":\"none\"} to create without a template. A missing default returns a warning and creates an ordinary item. A damaged template fails before creation. Template content and root fields are inherited unless explicitly supplied. An empty content string clears the root body. Null clears icon, description or cover. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -208,6 +208,27 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     str_opt("description"),
                     cover_opt("cover"),
                     fields_opt("properties"),
+                    (
+                        "template",
+                        json!({
+                            "type": "object",
+                            "description": "Omit for the parent Collection's default. Select by slug or opt out with mode none.",
+                            "oneOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": { "slug": { "type": "string", "minLength": 1, "pattern": r"^[^./\\:\u0000][^/\\:\u0000]*$" } },
+                                    "required": ["slug"]
+                                },
+                                {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": { "mode": { "type": "string", "const": "none" } },
+                                    "required": ["mode"]
+                                }
+                            ]
+                        }),
+                    ),
                 ],
                 &["parentPath", "title"],
             ),
@@ -1150,6 +1171,7 @@ Routine workflow:
 Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these. For a Collection item, update_collection_item_fields accepts title, icon, description, and cover in the same atomic map as custom fields; created and updated remain read-only.
 - Use create_page with parentPath + title for both standalone Pages and Collection items. Put initial Collection values in properties; never pass system metadata keys inside properties. Always continue with the returned canonical path.
+- In create_page, omitting template applies the parent Collection's default. Use a slug from list_collection_templates as template: {"slug":"..."}, or use template: {"mode":"none"} to bypass templates. Omitted content inherits the selected template's body and an empty string clears it.
 - Collection identity lives in README.md owner metadata. Schema.yaml stores columns, views, system field labels, and template settings. Use the Collection README tools for that owner content.
 - Use domain tools, not direct filesystem writes, for everything that changes frontmatter, names, structure, schema or system folders: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, and update_collection_item_fields for atomic Collection item metadata/property changes. The body below the frontmatter is the exception described under Body saves.
 

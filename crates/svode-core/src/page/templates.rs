@@ -5,16 +5,18 @@ use std::path::{Path, PathBuf};
 
 use crate::collections::engine;
 use crate::content_tree;
-use crate::page::filename;
+use crate::page::create::{PageCreate, PageCreateOutcome, PageParent, initial_literal_fields};
+use crate::page::filename::{self, FilenameProjection};
 use crate::page::frontmatter::{self, FrontmatterFields};
-use crate::page::store::{self, Page, PageMeta};
+use crate::page::store::{self, Page, PageMeta, PageWarning};
 use crate::page::write::SourceSnapshot;
-use crate::page::{PageError, disk_spelling, ensure_path_in_space};
+use crate::page::{ChildSpaceRoots, PageError, disk_spelling, ensure_path_in_space};
 
 use crate::collections::engine::{
     README_FILE, TemplateSource, humanize_template_slug as humanize_slug,
     join_template_rel as join_rel, normalize_template_rel as normalize_rel,
-    resolve_template_source, template_head_rel, template_rel_abs as rel_abs, templates_dir,
+    resolve_template_source, template_head_rel, template_path_in_space,
+    template_rel_abs as rel_abs, templates_dir,
 };
 pub use crate::collections::engine::{
     TemplateInfo, TemplateKind, list_templates as list,
@@ -39,7 +41,6 @@ pub struct InstantiatedTemplate {
 }
 
 struct MarkdownDoc {
-    path: PathBuf,
     meta: PageMeta,
     body: String,
 }
@@ -316,7 +317,17 @@ pub fn duplicate(
     } else {
         vec![dest_root.clone()]
     };
-    rewrite_markdown_identities(&files, Some(&root_head), Some(&new_title), None, None, None)?;
+    let documents = files
+        .iter()
+        .map(|path| Ok((path, read_markdown_doc(path)?)))
+        .collect::<Result<Vec<_>, PageError>>()?;
+    for (path, mut doc) in documents {
+        if same_path(path, &root_head) {
+            doc.meta.title = new_title.clone();
+            doc.meta.mark_title_present();
+        }
+        fs::write(path, frontmatter::serialize(&doc.meta, &doc.body))?;
+    }
     engine::rewrite_internal_relation_refs_for_copy(
         space,
         &rel_from_abs(Path::new(space), &source.root_abs),
@@ -328,6 +339,97 @@ pub fn duplicate(
         old_title: source.title,
         new_title,
     })
+}
+
+/// Selection made once for a create under its immediate parent.
+pub enum TemplateSelection {
+    Default,
+    Specific(String),
+    None,
+}
+
+pub(crate) enum PageTemplatePlan {
+    Ordinary(Option<PageWarning>),
+    Instantiate(Box<Instantiation>),
+}
+
+pub(crate) fn prepare_page_template(
+    request: &PageCreate,
+    selection: &TemplateSelection,
+) -> Result<PageTemplatePlan, PageError> {
+    crate::page::create::ensure_title(request)?;
+    let scope = &request.space;
+    let parent = request.parent_path.as_deref().unwrap_or_default().trim();
+    ensure_path_in_space(scope, parent)?;
+    let unavailable =
+        || PageError::General("an explicit template requires a Collection parent".into());
+    if matches!(selection, TemplateSelection::None) {
+        return Ok(PageTemplatePlan::Ordinary(None));
+    }
+    let parent = match crate::page::create::resolve_page_parent(scope, parent)? {
+        PageParent::Directory(parent) => parent,
+        _ if matches!(selection, TemplateSelection::Specific(_)) => return Err(unavailable()),
+        _ => return Ok(PageTemplatePlan::Ordinary(None)),
+    };
+    let schema_path = Path::new(scope).join(&parent).join("schema.yaml");
+    let schema_rel = rel_from_abs(Path::new(scope), &schema_path);
+    let has_schema = match fs::symlink_metadata(&schema_path) {
+        Ok(metadata) => {
+            ensure_path_in_space(scope, &schema_rel)?;
+            if metadata.is_symlink() {
+                return Err(PageError::PathNotAccessible(schema_rel));
+            }
+            metadata.is_file()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if !has_schema {
+        if matches!(selection, TemplateSelection::Specific(_)) {
+            return Err(unavailable());
+        }
+        return Ok(PageTemplatePlan::Ordinary(None));
+    }
+    let schema = engine::read_collection_schema(scope, &parent)?;
+    let slug = match selection {
+        TemplateSelection::Specific(slug) => slug.as_str(),
+        TemplateSelection::Default => {
+            let Some(slug) = schema
+                .templates
+                .as_ref()
+                .and_then(|config| config.default.as_deref())
+            else {
+                return Ok(PageTemplatePlan::Ordinary(None));
+            };
+            slug
+        }
+        TemplateSelection::None => unreachable!(),
+    };
+    let Some(source) = engine::resolve_optional_template_source(scope, &parent, slug)? else {
+        if matches!(selection, TemplateSelection::Specific(_)) {
+            return Err(PageError::FileNotFound(format!("template '{slug}'")));
+        }
+        return Ok(PageTemplatePlan::Ordinary(Some(PageWarning {
+            kind: "default_template_missing".into(),
+            message: format!(
+                "Default template '{slug}' is missing. Created the item without a template."
+            ),
+            path: Some(parent),
+            ..PageWarning::default()
+        })));
+    };
+    Ok(PageTemplatePlan::Instantiate(Box::new(
+        Instantiation::prepare(
+            scope,
+            source,
+            &parent,
+            &request.title,
+            request.allocate_unique_title,
+            request.as_readme,
+            &FrontmatterFields::new(),
+            Some(request),
+        )?,
+    )))
 }
 
 pub fn instantiate(
@@ -342,134 +444,338 @@ pub fn instantiate(
 ) -> Result<InstantiatedTemplate, PageError> {
     ensure_path_in_space(space, collection_path)?;
     ensure_path_in_space(space, parent_dir)?;
-    let collection_path: &str = &disk_spelling(space, collection_path);
-    let parent_dir: &str = &disk_spelling(space, parent_dir);
+    let collection_path = disk_spelling(space, collection_path);
+    let parent_dir = disk_spelling(space, parent_dir);
     crate::page::naming::with_document_name_lock(space, || {
-        instantiate_inner(
+        let source = resolve_template_source(space, &collection_path, template_slug)?;
+        let template_title = source.title.clone();
+        let outcome = Instantiation::prepare(
             space,
-            collection_path,
-            template_slug,
-            parent_dir,
-            initial_title,
+            source,
+            &parent_dir,
+            initial_title.as_deref().unwrap_or_default(),
             allocate_unique_title,
             force_folder,
-            contextual_defaults,
-        )
+            &contextual_defaults.unwrap_or_default(),
+            None,
+        )?
+        .apply(space)?;
+        Ok(InstantiatedTemplate {
+            page: outcome.page,
+            template_title,
+        })
     })
 }
 
-fn instantiate_inner(
-    space: &str,
-    collection_path: &str,
-    template_slug: &str,
-    parent_dir: &str,
-    initial_title: Option<String>,
-    allocate_unique_title: bool,
-    force_folder: bool,
-    contextual_defaults: Option<FrontmatterFields>,
-) -> Result<InstantiatedTemplate, PageError> {
-    let source = resolve_template_source(space, collection_path, template_slug)?;
-    let contextual_defaults = contextual_defaults.unwrap_or_default();
-    let parent_rel = normalize_rel(parent_dir);
-    let parent_abs = rel_abs(space, &parent_rel);
-    if !parent_abs.is_dir() {
-        return Err(PageError::FileNotFound(parent_rel));
-    }
+/// The existing Collection template copy, including its destination tree
+/// and any order, counter and relation files it may update.
+pub(crate) struct Instantiation {
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) source: TemplateSource,
+    parent_rel: String,
+    dest: PathBuf,
+    head_rel: String,
+    tree: Vec<(PathBuf, bool)>,
+    external_paths: Vec<PathBuf>,
+    root_metadata: PageMeta,
+    root_body: String,
+    fields: Option<engine::PreparedItemFieldBatch>,
+    projection: FilenameProjection,
+    actual_projection: FilenameProjection,
+}
 
-    let hierarchy = force_folder || source.is_dir;
-    let requested_title = initial_title.unwrap_or_default();
-    let probe_id = ulid::Ulid::new().to_string().to_lowercase();
-    let scope_probe = if hierarchy {
-        join_rel(
-            &parent_rel,
-            &format!("svode-name-probe-{probe_id}/README.md"),
-        )
-    } else {
-        join_rel(&parent_rel, &format!(".svode-name-probe-{probe_id}.md"))
-    };
-    let root_title = if allocate_unique_title {
-        crate::page::naming::allocate_document_title(
-            Path::new(space),
-            &scope_probe,
-            &requested_title,
-        )?
-    } else {
-        crate::page::naming::ensure_document_name_available(
-            Path::new(space),
-            &scope_probe,
-            &requested_title,
-        )?;
-        requested_title
-    };
-    let projection = filename::project(&root_title);
-    let (dest_root_abs, actual_projection) =
-        filename::allocate_available_path(&parent_abs, &projection, (!hierarchy).then_some("md"))?;
-    let head_abs = if hierarchy {
-        dest_root_abs.join(README_FILE)
-    } else {
-        dest_root_abs.clone()
-    };
-    let head_rel = rel_from_abs(Path::new(space), &head_abs);
+impl Instantiation {
+    fn prepare(
+        space: &str,
+        source: TemplateSource,
+        parent_dir: &str,
+        requested_title: &str,
+        allocate_unique_title: bool,
+        force_folder: bool,
+        contextual_defaults: &FrontmatterFields,
+        initial: Option<&PageCreate>,
+    ) -> Result<Self, PageError> {
+        let parent_rel = normalize_rel(parent_dir);
+        let parent_abs = rel_abs(space, &parent_rel);
+        if !parent_abs.is_dir() {
+            return Err(PageError::FileNotFound(parent_rel));
+        }
 
-    validate_contextual_defaults(space, &head_rel, &contextual_defaults)?;
-
-    // The record's number advances `next`; a failed instantiation restores it.
-    let counter = engine::unique_id_schema_path_for_item(space, &head_rel)?;
-    let counter = SourceSnapshot::capture(counter.as_slice(), None)?;
-    let written = (|| -> Result<(), PageError> {
-        if hierarchy {
-            instantiate_hierarchy(
-                space,
-                &source,
-                &dest_root_abs,
-                &head_abs,
-                &head_rel,
-                &root_title,
-                &contextual_defaults,
-            )?;
-            append_order(
-                Path::new(space),
-                &parent_rel,
-                &dest_root_abs
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy(),
-            );
+        let hierarchy = force_folder || source.is_dir;
+        let probe_id = ulid::Ulid::new().to_string().to_lowercase();
+        let probe_name = format!("svode-name-probe-{probe_id}");
+        let scope_probe = if hierarchy {
+            join_rel(&parent_rel, &format!("{probe_name}/{README_FILE}"))
         } else {
-            fs::copy(&source.head_abs, &head_abs)?;
-            rewrite_markdown_identities(
-                &[head_abs.clone()],
-                Some(&head_abs),
-                Some(&root_title),
-                Some((space, head_rel.as_str())),
-                Some(&contextual_defaults),
-                None,
-            )?;
-            engine::rewrite_internal_relation_refs_for_copy(
-                space,
-                &rel_from_abs(Path::new(space), &source.root_abs),
-                &rel_from_abs(Path::new(space), &head_abs),
-            )?;
-            append_order(
+            join_rel(&parent_rel, &format!(".{probe_name}.md"))
+        };
+        let title = if allocate_unique_title {
+            crate::page::naming::allocate_document_title(
                 Path::new(space),
-                &parent_rel,
-                &head_abs.file_name().unwrap_or_default().to_string_lossy(),
+                &scope_probe,
+                requested_title,
+            )?
+        } else {
+            crate::page::naming::ensure_document_name_available(
+                Path::new(space),
+                &scope_probe,
+                requested_title,
+            )?;
+            requested_title.to_string()
+        };
+        let projection = filename::project(&title);
+        let (dest, actual_projection) = filename::allocate_available_path(
+            &parent_abs,
+            &projection,
+            (!hierarchy).then_some("md"),
+        )?;
+        let head = if hierarchy {
+            dest.join(README_FILE)
+        } else {
+            dest.clone()
+        };
+        let head_rel = rel_from_abs(Path::new(space), &head);
+        let canonical_space = Path::new(space).canonicalize()?;
+        let children = ChildSpaceRoots::read(&canonical_space)?;
+        let mut tree = Vec::new();
+        if source.is_dir {
+            collect_instantiation_tree(
+                Path::new(space),
+                &canonical_space,
+                &children,
+                &source.root_abs,
+                &source.root_abs,
+                &mut tree,
+            )?;
+            if source.kind == TemplateKind::NestedCollection {
+                engine::read_collection_schema(
+                    space,
+                    &rel_from_abs(Path::new(space), &source.root_abs),
+                )?;
+            }
+        } else if hierarchy {
+            tree.push((PathBuf::from(README_FILE), false));
+        }
+        let mut root = read_markdown_doc(&source.head_abs)?;
+        root.meta.title = title.clone();
+        root.meta.mark_title_present();
+        engine::apply_schema_defaults_for_path(space, &head_rel, &mut root.meta)?;
+        engine::apply_contextual_defaults_for_path_strict(
+            space,
+            &head_rel,
+            &mut root.meta,
+            contextual_defaults,
+        )?;
+        let mut fields = None;
+        if let Some(initial) = initial {
+            let values = initial_literal_fields(initial)?;
+            if !values.is_empty() {
+                // These relations belong to a new item, with no existing
+                // reverse links to remove when it sets an explicit value.
+                for key in values.keys() {
+                    root.meta.extra.shift_remove(key);
+                }
+                fields = Some(engine::prepare_item_field_batch_from_metadata(
+                    space,
+                    initial.project.as_deref(),
+                    &head_rel,
+                    root.meta.clone(),
+                    &values,
+                    engine::ItemFieldBatchIntent::Literal,
+                )?);
+            }
+            if let Some(body) = &initial.body {
+                root.body = body.clone();
+            }
+        }
+
+        let mut external_paths = vec![Path::new(space).join(".svode/order.json")];
+        external_paths.extend(engine::unique_id_schema_path_for_item(space, &head_rel)?);
+        if let Some(fields) = &fields {
+            external_paths.extend(
+                fields
+                    .mutation_paths()
+                    .iter()
+                    .filter(|path| **path != head)
+                    .cloned(),
             );
         }
-        Ok(())
-    })();
-    written.map_err(|error| counter.rollback(error))?;
+        external_paths.sort();
+        external_paths.dedup();
+        let mut paths = external_paths.clone();
+        paths.push(dest.clone());
+        paths.extend(tree.iter().map(|(rel, _)| dest.join(rel)));
+        for path in &paths {
+            let relative = rel_from_abs(Path::new(space), path);
+            if path.starts_with(&dest)
+                && let Some(space_id) = children.owner_of(&relative)
+            {
+                return Err(PageError::PathInOtherSpace {
+                    path: relative,
+                    space_id: space_id.to_string(),
+                });
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(Self {
+            paths,
+            source,
+            parent_rel,
+            dest,
+            head_rel,
+            tree,
+            external_paths,
+            root_metadata: root.meta,
+            root_body: root.body,
+            fields,
+            projection,
+            actual_projection,
+        })
+    }
 
-    let mut page = store::read(space, &head_rel)?;
-    page.warnings.extend(store::filename_allocation_warnings(
-        &projection,
-        &actual_projection,
-        &head_rel,
-    ));
-    Ok(InstantiatedTemplate {
-        page,
-        template_title: source.title,
-    })
+    pub(crate) fn apply(mut self, space: &str) -> Result<PageCreateOutcome, PageError> {
+        crate::git::access::ensure_mutation_paths_were_authorized(&self.paths)?;
+        let mut snapshot = SourceSnapshot::capture(&self.external_paths, None)?;
+        let result = (|| {
+            let parent = rel_abs(space, &self.parent_rel);
+            let stage = tempfile::Builder::new()
+                .prefix(".svode-template-stage-")
+                .tempdir_in(parent)?;
+            let stage_root = stage.path().join("content");
+            let hierarchy = !self.tree.is_empty();
+            let stage_head = if hierarchy {
+                fs::create_dir(&stage_root)?;
+                for (rel, directory) in &self.tree {
+                    let dest = stage_root.join(rel);
+                    if *directory {
+                        fs::create_dir(&dest)?;
+                    } else if self.source.is_dir {
+                        fs::copy(self.source.root_abs.join(rel), dest)?;
+                    } else {
+                        fs::copy(&self.source.head_abs, dest)?;
+                    }
+                }
+                stage_root.join(README_FILE)
+            } else {
+                fs::copy(&self.source.head_abs, &stage_root)?;
+                stage_root.clone()
+            };
+
+            if let Some(fields) = self.fields.take() {
+                engine::apply_prepared_item_field_relations(&fields)?;
+                self.root_metadata = fields.into_metadata();
+            }
+            engine::force_assign_unique_id_to_meta_for_path(
+                space,
+                &self.head_rel,
+                &mut self.root_metadata,
+            )?;
+            fs::write(
+                &stage_head,
+                frontmatter::serialize(&self.root_metadata, &self.root_body),
+            )?;
+            if hierarchy {
+                for path in collect_md_files_all(&stage_root)? {
+                    if path != stage_head {
+                        let doc = read_markdown_doc(&path)?;
+                        fs::write(path, frontmatter::serialize(&doc.meta, &doc.body))?;
+                    }
+                }
+            }
+            // The planned destination can only be installed once. The
+            // caller holds the name lock, plus repository guards for tools.
+            if fs::symlink_metadata(&self.dest).is_ok() {
+                return Err(PageError::FileAlreadyExists(rel_from_abs(
+                    Path::new(space),
+                    &self.dest,
+                )));
+            }
+            fs::rename(&stage_root, &self.dest)?;
+            if hierarchy {
+                snapshot.track_created_dir(self.dest.clone());
+                for (rel, directory) in &self.tree {
+                    let path = self.dest.join(rel);
+                    if *directory {
+                        snapshot.track_created_dir(path);
+                    } else {
+                        snapshot.track_created(path);
+                    }
+                }
+            } else {
+                snapshot.track_created(self.dest.clone());
+            }
+            engine::rewrite_internal_relation_refs_for_copy(
+                space,
+                &rel_from_abs(Path::new(space), &self.source.root_abs),
+                &rel_from_abs(Path::new(space), &self.dest),
+            )?;
+            append_order(
+                Path::new(space),
+                &self.parent_rel,
+                &self.dest.file_name().unwrap_or_default().to_string_lossy(),
+            )?;
+            let mut page = store::read(space, &self.head_rel)?;
+            page.warnings.extend(store::filename_allocation_warnings(
+                &self.projection,
+                &self.actual_projection,
+                &self.head_rel,
+            ));
+            Ok(PageCreateOutcome {
+                page,
+                changed_paths: snapshot.changes()?,
+            })
+        })();
+        result.map_err(|error| snapshot.rollback(error))
+    }
+}
+
+fn collect_instantiation_tree(
+    space: &Path,
+    canonical_space: &Path,
+    children: &ChildSpaceRoots,
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<(PathBuf, bool)>,
+) -> Result<(), PageError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let source_rel = rel_from_abs(space, &path);
+        if let Some(space_id) = children.owner_of(&source_rel) {
+            return Err(PageError::PathInOtherSpace {
+                path: source_rel,
+                space_id: space_id.to_string(),
+            });
+        }
+        let kind = entry.file_type()?;
+        let is_file = if kind.is_symlink() {
+            // A file alias is resolved by the same boundary as inventory.
+            // Directory aliases below the template root could cycle.
+            let checked = template_path_in_space(canonical_space, children, &path)?;
+            fs::metadata(checked)?.is_file()
+        } else {
+            kind.is_file()
+        };
+        if (!is_file && !kind.is_dir())
+            || entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(".git")
+        {
+            return Err(PageError::PathNotAccessible(source_rel));
+        }
+        out.push((
+            path.strip_prefix(root)
+                .expect("directory entry must be below template root")
+                .to_path_buf(),
+            kind.is_dir(),
+        ));
+        if kind.is_dir() {
+            collect_instantiation_tree(space, canonical_space, children, root, &path, out)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -826,112 +1132,6 @@ mod tests {
     }
 }
 
-fn instantiate_hierarchy(
-    space: &str,
-    source: &TemplateSource,
-    dest_root_abs: &Path,
-    head_abs: &Path,
-    head_rel: &str,
-    root_title: &str,
-    contextual_defaults: &FrontmatterFields,
-) -> Result<(), PageError> {
-    let stage_root = create_stage_dir()?.join(
-        dest_root_abs
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .as_ref(),
-    );
-    let result = (|| {
-        if source.is_dir {
-            copy_dir_recursive_all(&source.root_abs, &stage_root)?;
-        } else {
-            fs::create_dir_all(&stage_root)?;
-            fs::copy(&source.head_abs, stage_root.join(README_FILE))?;
-        }
-
-        let files = collect_md_files_all(&stage_root)?;
-        let staged_head = stage_root.join(README_FILE);
-        rewrite_markdown_identities(
-            &files,
-            Some(&staged_head),
-            Some(root_title),
-            Some((space, head_rel)),
-            Some(contextual_defaults),
-            None,
-        )?;
-
-        if let Some(parent) = dest_root_abs.parent() {
-            if !parent.is_dir() {
-                return Err(PageError::FileNotFound(
-                    parent.to_string_lossy().to_string(),
-                ));
-            }
-        }
-        fs::rename(&stage_root, dest_root_abs)?;
-        engine::rewrite_internal_relation_refs_for_copy(
-            space,
-            &rel_from_abs(Path::new(space), &source.root_abs),
-            &rel_from_abs(Path::new(space), dest_root_abs),
-        )?;
-        Ok(())
-    })();
-
-    if let Some(stage_parent) = stage_root.parent() {
-        let _ = fs::remove_dir_all(stage_parent);
-    }
-    if result.is_err() && head_abs.exists() {
-        let _ = fs::remove_file(head_abs);
-    }
-    result
-}
-
-fn rewrite_markdown_identities(
-    files: &[PathBuf],
-    root_head: Option<&Path>,
-    root_title: Option<&str>,
-    root_schema_path: Option<(&str, &str)>,
-    contextual_defaults: Option<&FrontmatterFields>,
-    title_suffix: Option<&str>,
-) -> Result<(), PageError> {
-    let mut docs = Vec::new();
-    for path in files {
-        let doc = read_markdown_doc(path)?;
-        docs.push(doc);
-    }
-
-    for doc in &mut docs {
-        let is_root = root_head.is_some_and(|head| same_path(head, &doc.path));
-
-        if is_root {
-            if let Some(title) = root_title {
-                doc.meta.title = title.to_string();
-                doc.meta.mark_title_present();
-            } else if let Some(suffix) = title_suffix {
-                doc.meta.title.push_str(suffix);
-                doc.meta.mark_title_present();
-            }
-            if let Some((space, rel_path)) = root_schema_path {
-                engine::apply_schema_defaults_for_path(space, rel_path, &mut doc.meta)?;
-                if let Some(defaults) = contextual_defaults {
-                    engine::apply_contextual_defaults_for_path_strict(
-                        space,
-                        rel_path,
-                        &mut doc.meta,
-                        defaults,
-                    )?;
-                }
-                // A number copied from the template file is not the record's.
-                engine::force_assign_unique_id_to_meta_for_path(space, rel_path, &mut doc.meta)?;
-            }
-        }
-
-        fs::write(&doc.path, frontmatter::serialize(&doc.meta, &doc.body))?;
-    }
-
-    Ok(())
-}
-
 fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, PageError> {
     let raw = fs::read_to_string(path)?;
     let (meta, body) = match frontmatter::try_parse(&raw)? {
@@ -944,26 +1144,7 @@ fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, PageError> {
             (PageMeta::new_persisted(humanize_slug(stem)), raw)
         }
     };
-    Ok(MarkdownDoc {
-        path: path.to_path_buf(),
-        meta,
-        body,
-    })
-}
-
-fn validate_contextual_defaults(
-    space: &str,
-    head_rel: &str,
-    contextual_defaults: &FrontmatterFields,
-) -> Result<(), PageError> {
-    let mut meta = PageMeta::new_persisted("");
-    engine::apply_contextual_defaults_for_path_strict(
-        space,
-        head_rel,
-        &mut meta,
-        contextual_defaults,
-    )?;
-    Ok(())
+    Ok(MarkdownDoc { meta, body })
 }
 
 fn unique_template_slug(templates_abs: &Path, base_slug: &str) -> String {
@@ -1023,29 +1204,21 @@ fn collect_md_files_inner(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), Pag
     Ok(())
 }
 
-fn create_stage_dir() -> Result<PathBuf, PageError> {
-    let path = std::env::temp_dir().join(format!(
-        "svode-template-stage-{}",
-        ulid::Ulid::new().to_string().to_lowercase()
-    ));
-    fs::create_dir_all(&path)?;
-    Ok(path)
-}
-
-fn append_order(space: &Path, parent_rel: &str, name: &str) {
+fn append_order(space: &Path, parent_rel: &str, name: &str) -> Result<(), PageError> {
     let key = if parent_rel.is_empty() || parent_rel == "." {
         ".".to_string()
     } else {
         parent_rel.to_string()
     };
-    let _ = content_tree::update_order(space, |order| {
+    content_tree::update_order(space, |order| {
         let items = order.children_mut(&key);
         if items.iter().any(|item| item == name) {
             return false;
         }
         items.push(name.to_string());
         true
-    });
+    })?;
+    Ok(())
 }
 
 fn rel_from_abs(space: &Path, path: &Path) -> String {

@@ -550,3 +550,66 @@ fn a_repository_without_access_evidence_refuses_the_write_before_any_effect() {
     );
     assert_eq!(source(root), before);
 }
+
+#[test]
+fn page_create_template_flags_and_missing_default_are_reported_in_both_formats() {
+    let Some(fixture) = fixture() else { return };
+    let root = &fixture.root;
+    write(
+        &root.join("tasks/schema.yaml"),
+        "columns: []\nviews: []\ntemplates: { default: missing }\n",
+    );
+    write(
+        &root.join("tasks/.templates/none.md"),
+        "---\ntitle: Explicit template\n---\nTemplate body\n",
+    );
+
+    let (exit, fallback) = json(
+        root,
+        &["page", "create", "--parent", "tasks", "--title", "Fallback"],
+        None,
+    );
+    assert_eq!(exit, 0, "{fallback}");
+    assert_eq!(fallback["path"], "tasks/Fallback.md");
+    assert_eq!(fallback["page"]["body"], "");
+    let warnings = &fallback["warnings"];
+    assert_eq!(warnings[0]["kind"], "default_template_missing");
+    assert!(warnings[0]["message"].as_str().unwrap().contains("missing"));
+
+    let human = common::process::svode(
+        root,
+        &["page", "create", "--parent", "tasks", "--title", "Human"],
+    );
+    assert!(
+        human.status.success(),
+        "{}",
+        String::from_utf8_lossy(&human.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&human.stderr)
+            .contains("warning[default_template_missing]: Default template 'missing'")
+    );
+    assert!(String::from_utf8_lossy(&human.stdout).contains("tasks/Human.md"));
+
+    for (title, args, body, exit_expected) in [
+        ("Explicit", vec!["--template", "none"], "Template body\n", 0),
+        ("Bypass", vec!["--no-template"], "", 0),
+        (
+            "Conflict",
+            vec!["--template", "none", "--no-template"],
+            "",
+            2,
+        ),
+    ] {
+        let mut command = vec!["page", "create", "--parent", "tasks", "--title", title];
+        command.extend(args);
+        let (exit, result) = json(root, &command, None);
+        assert_eq!(exit, exit_expected, "{result}");
+        if exit == 0 {
+            assert_eq!(result["page"]["body"], body);
+            assert_eq!(result["warnings"], serde_json::json!([]));
+        } else {
+            assert!(!root.join("tasks/Conflict.md").exists());
+        }
+    }
+}

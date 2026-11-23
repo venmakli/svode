@@ -658,6 +658,13 @@ pub struct PageCreateArgs {
     /// Initial Collection properties as a JSON object from a file, or `-`.
     #[arg(long, value_name = "PATH|-")]
     pub properties_file: Option<String>,
+    /// Apply a template slug from the parent Collection. By default, use
+    /// the Collection's assigned template if one exists.
+    #[arg(long, value_name = "SLUG", conflicts_with = "no_template")]
+    pub template: Option<String>,
+    /// Create without a template, even when the Collection assigns a default.
+    #[arg(long)]
+    pub no_template: bool,
 }
 
 #[derive(Debug, Args)]

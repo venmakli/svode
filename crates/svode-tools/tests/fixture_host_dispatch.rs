@@ -4570,3 +4570,283 @@ async fn results_report_the_disk_spelling_of_a_path_requested_in_another_letter_
     assert_eq!(deleted.content[0].text, "Deleted Page drafts/links.md.");
     assert_eq!(structured(&deleted)["deletedRoot"], "drafts/links.md");
 }
+
+#[tokio::test]
+async fn create_page_selects_collection_templates_and_publishes_their_actual_sources() {
+    let fixture = index_fixture();
+    let project = &fixture.project;
+    write(
+        &project.join("tasks/schema.yaml"),
+        "nested_items: true\ncolumns:\n  - { name: Status, type: text, default: Todo }\n  - { name: Points, type: number, default: 1 }\n  - { name: Key, type: unique_id, next: 5 }\n  - { name: Agenda, type: relation, relation: tasks, limit: one }\nviews: []\ntemplates: { default: default }\n",
+    );
+    write(
+        &project.join("tasks/.templates/default/README.md"),
+        "---\ntitle: Default template\nicon: F\ndescription: Folder summary\ncover: { type: color, value: blue }\nStatus: Scheduled\nPoints: 4\nKey: 77\nAgenda: .templates/default/agenda.md\n---\nInherited body\n",
+    );
+    write(
+        &project.join("tasks/.templates/default/agenda.md"),
+        "---\ntitle: Agenda\n---\nAgenda body\n",
+    );
+    write(
+        &project.join("tasks/.templates/none.md"),
+        "---\ntitle: Explicit leaf\n---\nSecond body\n",
+    );
+    write(
+        &project.join("tasks/.templates/nested/README.md"),
+        "---\ntitle: Nested template\n---\nNested body\n",
+    );
+    let nested_schema = "columns: [{ name: Note, type: text }]\nviews: []\n";
+    write(
+        &project.join("tasks/.templates/nested/schema.yaml"),
+        nested_schema,
+    );
+
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    for (index, (title, body, expected_body)) in [
+        ("Inherited", None, "Inherited body\n"),
+        ("Cleared", Some(""), ""),
+        ("Replaced", Some("Replacement\n"), "Replacement\n"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut input = json!({"parentPath": "tasks", "title": title});
+        if let Some(body) = body {
+            input["content"] = json!(body);
+        }
+        if title == "Replaced" {
+            input["properties"] = json!({"Points": 9});
+            input["icon"] = json!("R");
+            input["description"] = json!("New summary");
+            input["cover"] = json!({"type":"color","value":"red"});
+        }
+        if title == "Cleared" {
+            input["icon"] = Value::Null;
+            input["description"] = Value::Null;
+            input["cover"] = Value::Null;
+        }
+        let result = call_tool(&host, Some(&target), "create_page", input).await;
+        let created = structured(&result);
+        let head = format!("tasks/{title}/README.md");
+        let agenda = format!("tasks/{title}/agenda.md");
+        assert_eq!(created["path"], head);
+        assert_eq!(created["page"]["meta"]["title"], title);
+        assert_eq!(created["page"]["body"], expected_body);
+        let (icon, description, color) = match title {
+            "Cleared" => (Value::Null, Value::Null, Value::Null),
+            "Replaced" => (json!("R"), json!("New summary"), json!("red")),
+            _ => (json!("F"), json!("Folder summary"), json!("blue")),
+        };
+        assert_eq!(created["page"]["meta"]["icon"], icon);
+        assert_eq!(created["page"]["meta"]["description"], description);
+        assert_eq!(created["page"]["meta"]["cover"]["value"], color);
+        assert_eq!(created["page"]["meta"]["extra"]["Status"], "Scheduled");
+        assert_eq!(
+            created["page"]["meta"]["extra"]["Points"],
+            if title == "Replaced" { 9 } else { 4 }
+        );
+        assert_eq!(
+            created["page"]["meta"]["extra"]["Agenda"],
+            format!("{title}/agenda.md")
+        );
+        assert_eq!(created["page"]["meta"]["extra"]["Key"], 5 + index as u64);
+        assert!(
+            created["changedPaths"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(&agenda))
+        );
+        assert!(
+            created["changedPaths"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("tasks/schema.yaml"))
+        );
+        assert!(
+            fs::read_to_string(project.join(agenda))
+                .unwrap()
+                .contains("Agenda body\n")
+        );
+        let read = call_tool(
+            &host,
+            Some(&target),
+            "read_collection_item",
+            json!({"path": head}),
+        )
+        .await;
+        assert!(created["sourceVersion"].is_string());
+        assert_eq!(created["sourceVersion"], structured(&read)["sourceVersion"]);
+    }
+
+    for (title, template, expected_path, body) in [
+        (
+            "Leaf",
+            json!({"slug": "none"}),
+            "tasks/Leaf.md",
+            "Second body\n",
+        ),
+        ("Plain", json!({"mode": "none"}), "tasks/Plain.md", ""),
+        (
+            "Nested",
+            json!({"slug": "nested"}),
+            "tasks/Nested/README.md",
+            "Nested body\n",
+        ),
+    ] {
+        let result = call_tool(
+            &host,
+            Some(&target),
+            "create_page",
+            json!({
+                "parentPath": "tasks", "title": title, "template": template,
+            }),
+        )
+        .await;
+        let created = structured(&result);
+        assert_eq!(created["path"], expected_path);
+        assert_eq!(created["page"]["body"], body);
+        assert_eq!(created["page"]["meta"]["extra"]["Status"], "Todo");
+        assert_eq!(created["warnings"], json!([]));
+    }
+    assert_eq!(
+        fs::read_to_string(project.join("tasks/Nested/schema.yaml")).unwrap(),
+        nested_schema
+    );
+
+    let result = call_tool(&host, Some(&target), "query_collection_items", json!({"collectionPath": "tasks", "filter": [{"field": "Status", "op": "eq", "value": "Scheduled"}]})).await;
+    let mut matches = titles(&structured(&result)["items"]);
+    matches.sort_unstable();
+    assert_eq!(matches, ["Cleared", "Inherited", "Replaced"]);
+    let schema = svode_core::collections::engine::read_collection_schema(
+        &project.to_string_lossy(),
+        "tasks",
+    )
+    .unwrap();
+    assert_eq!(
+        schema.templates.unwrap().default.as_deref(),
+        Some("default")
+    );
+}
+
+#[tokio::test]
+async fn create_page_template_failures_leave_sources_order_and_number_unchanged() {
+    let fixture = index_fixture();
+    let project = &fixture.project;
+    write(
+        &project.join("tasks/schema.yaml"),
+        "columns: [{ name: Points, type: number }, { name: Key, type: unique_id, next: 5 }]\nviews: []\ntemplates: { default: broken }\n",
+    );
+    write(
+        &project.join("tasks/.templates/broken/agenda.md"),
+        "---\ntitle: Agenda\n---\n",
+    );
+    write(
+        &project.join("tasks/.templates/preset.md"),
+        "---\ntitle: Preset\n---\nBody\n",
+    );
+    write(
+        &project.join(".svode/order.json"),
+        r#"{"tasks":["alpha.md","beta.md"]}"#,
+    );
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let denying_host = FixtureHost::denying_mutations();
+    let target = root_target(&fixture);
+    let default_head = project.join("tasks/.templates/broken/README.md");
+    write(&default_head, "---\ntitle: Default\n---\n");
+    fs::remove_file(default_head).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            project.join("child/brief.md"),
+            project.join("tasks/.templates/other-space.md"),
+        )
+        .unwrap();
+        let cross_space = call_tool(
+            &host,
+            Some(&target),
+            "create_page",
+            json!({
+                "parentPath":"tasks","title":"Cross Space","template":{"slug":"other-space"}
+            }),
+        )
+        .await;
+        assert!(cross_space.is_error);
+        assert_eq!(
+            cross_space.structured_content.unwrap()["error"]["code"],
+            "PATH_IN_OTHER_SPACE"
+        );
+    }
+    let before_schema = fs::read(project.join("tasks/schema.yaml")).unwrap();
+    let before_order = fs::read(project.join(".svode/order.json")).unwrap();
+    let initial: std::collections::BTreeSet<_> = fs::read_dir(project.join("tasks"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+
+    for args in [
+        json!({"parentPath":"tasks","title":"Broken"}),
+        json!({"parentPath":"tasks","title":"Unknown","template":{"slug":"absent"}}),
+        json!({"parentPath":"tasks","title":"Empty","template":{"slug":""}}),
+        json!({"parentPath":"tasks","title":"Path","template":{"slug":"broken/agenda"}}),
+        json!({"parentPath":"tasks","title":"Both","template":{"slug":"preset","mode":"none"}}),
+        json!({"parentPath":"tasks","title":"Null","template":null}),
+        json!({"parentPath":"notes.md","title":"Outside","template":{"slug":"preset"}}),
+        json!({"parentPath":"tasks","title":" Alpha ","template":{"slug":"preset"}}),
+        json!({"parentPath":"tasks","title":"Wrong","template":{"slug":"preset"},"properties":{"Points":"invalid"}}),
+        json!({"parentPath":"tasks","title":"ReadOnly","template":{"slug":"preset"},"properties":{"Key":10}}),
+    ] {
+        let result = call_tool(&host, Some(&target), "create_page", args.clone()).await;
+        assert!(result.is_error, "{args}: {result:?}");
+    }
+    let denied = call_tool(
+        &denying_host,
+        Some(&target),
+        "create_page",
+        json!({
+            "parentPath":"tasks","title":"Refused","template":{"slug":"preset"}
+        }),
+    )
+    .await;
+    assert!(denied.is_error);
+    assert!(project.join("notes.md").is_file());
+    assert_eq!(
+        fs::read(project.join("tasks/schema.yaml")).unwrap(),
+        before_schema
+    );
+    assert_eq!(
+        fs::read(project.join(".svode/order.json")).unwrap(),
+        before_order
+    );
+    assert_eq!(
+        fs::read_dir(project.join("tasks"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>(),
+        initial
+    );
+
+    fs::remove_dir_all(project.join("tasks/.templates/broken")).unwrap();
+    let fallback = call_tool(
+        &host,
+        Some(&target),
+        "create_page",
+        json!({"parentPath":"tasks","title":"Broken"}),
+    )
+    .await;
+    let fallback = structured(&fallback);
+    assert_eq!(fallback["path"], "tasks/Broken.md");
+    assert_eq!(fallback["warnings"][0]["kind"], "default_template_missing");
+    assert!(
+        fallback["warnings"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("broken")
+    );
+    let schema = svode_core::collections::engine::read_collection_schema(
+        &project.to_string_lossy(),
+        "tasks",
+    )
+    .unwrap();
+    assert_eq!(schema.templates.unwrap().default.as_deref(), Some("broken"));
+}

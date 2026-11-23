@@ -614,7 +614,7 @@ async fn an_unrestorable_leaf_fails_the_create_with_only_its_path() {
     crate::page::create::inject_failure(Some("body"));
     // An icon makes the initial metadata write reach its checkpoint.
     let mut request = page_request(&root, "Parent.md", None);
-    request.icon = Some("wallet".into());
+    request.icon = Some(Some("wallet".into()));
     let result = create_page(request, &state, None).await;
     crate::page::create::inject_failure(None);
 
@@ -648,4 +648,77 @@ async fn page_create_alone_refuses_a_leaf_parent_without_a_write() {
 
     assert!(result.is_err());
     assert_eq!(sources(&root), before);
+}
+
+#[tokio::test]
+async fn template_create_reverts_an_installed_tree_when_a_nested_relation_is_malformed() {
+    use crate::page::templates::TemplateSelection;
+
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().canonicalize().unwrap();
+    scaffold_space(&space, "Project");
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&space)
+            .status()
+            .unwrap()
+            .success()
+    );
+    write_tree(
+        &space,
+        &[
+            (
+                "tasks/schema.yaml",
+                "nested_items: true\ncolumns:\n  - { name: Key, type: unique_id, next: 5 }\n  - { name: Link, type: relation, relation: tasks, limit: one }\nviews: []\n",
+            ),
+            (
+                "tasks/.templates/folder/README.md",
+                "---\ntitle: Folder\n---\nTemplate head\n",
+            ),
+            (
+                "tasks/.templates/folder/child/README.md",
+                "---\ntitle: Child\nLink: 42\n---\n",
+            ),
+            (".svode/order.json", r#"{"tasks":[]}"#),
+        ],
+    );
+    let expected = sources(&space);
+    let state = IndexRuntimeState::default();
+    let mut requested = page_request(&space, "tasks", None);
+    requested.publish_projection = false;
+    let failed = super::create_page_with_template(
+        requested,
+        TemplateSelection::Specific("folder".into()),
+        runtime(&state, None),
+        |paths| {
+            assert!(paths.contains(&space.join("tasks/Child/child/README.md")));
+            assert!(paths.contains(&space.join("tasks/schema.yaml")));
+            assert!(paths.contains(&space.join(".svode/order.json")));
+            async move { Ok::<_, PageError>(paths) }
+        },
+    )
+    .await;
+    assert!(failed.is_err());
+    assert_eq!(sources(&space), expected);
+
+    write_tree(
+        &space,
+        &[(
+            "tasks/.templates/folder/child/README.md",
+            "---\ntitle: Child\n---\n",
+        )],
+    );
+    let mut requested = page_request(&space, "tasks", None);
+    requested.publish_projection = false;
+    let recovered = super::create_page_with_template(
+        requested,
+        TemplateSelection::Specific("folder".into()),
+        runtime(&state, None),
+        |paths| async move { Ok::<_, PageError>(paths) },
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovered.page.meta.extra["Key"].as_u64(), Some(5));
+    assert_eq!(order(&space)["tasks"], serde_json::json!(["Child"]));
 }

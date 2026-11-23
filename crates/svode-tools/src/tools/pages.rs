@@ -13,6 +13,7 @@ use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::identity::ContentOwnerKind;
 use svode_core::page::metadata::{PageMetadataPatch, relative_changed_paths};
 use svode_core::page::store::{self, Cover};
+use svode_core::page::templates::TemplateSelection;
 use svode_core::page::write::{PageWrite, PageWriteOutcome};
 use svode_core::page::{PageError, SourceVersion};
 
@@ -49,14 +50,36 @@ pub(crate) struct CreatePageArgs {
     title: String,
     #[serde(default)]
     content: Option<String>,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    cover: Option<Cover>,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    icon: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    cover: Option<Option<Cover>>,
     #[serde(default)]
     properties: Option<IndexMap<String, Value>>,
+    #[serde(default)]
+    template: TemplateArgument,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum TemplateArgument {
+    #[default]
+    #[serde(skip)]
+    Default,
+    Specific {
+        slug: String,
+    },
+    Skip {
+        mode: SkipTemplate,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+enum SkipTemplate {
+    #[serde(rename = "none")]
+    None,
 }
 
 /// Metadata patch of a Page or Collection item: missing keeps a field,
@@ -188,7 +211,14 @@ pub(crate) async fn create_page(
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
     let handles = PageHandles::of(host);
-    let outcome = match Box::pin(svode_core::structure::create_page(
+    let selection = match args.template {
+        TemplateArgument::Default => TemplateSelection::Default,
+        TemplateArgument::Specific { slug } => TemplateSelection::Specific(slug),
+        TemplateArgument::Skip {
+            mode: SkipTemplate::None,
+        } => TemplateSelection::None,
+    };
+    let outcome = match Box::pin(svode_core::structure::create_page_with_template(
         PageCreate {
             space: space.clone(),
             parent_path: (!parent_path.is_empty()).then_some(parent_path),
@@ -204,6 +234,7 @@ pub(crate) async fn create_page(
             project: Some(target.project_path.clone()),
             publish_projection: true,
         },
+        selection,
         super::structure::structure_runtime(&handles),
         |paths| authorize(host, &space, paths),
     ))

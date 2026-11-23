@@ -50,16 +50,16 @@ pub fn list_templates(
 ) -> Result<Vec<TemplateInfo>, CollectionError> {
     let space_root = fs::canonicalize(space)?;
     let children = ChildSpaceRoots::read(&space_root)?;
-    let collection = inventory_path_in_space(
+    let collection = template_path_in_space(
         &space_root,
         &children,
         &collection_dir(space, collection_path),
     )?;
     let schema_path =
-        inventory_path_in_space(&space_root, &children, &collection.join(SCHEMA_FILE))?;
+        template_path_in_space(&space_root, &children, &collection.join(SCHEMA_FILE))?;
     let schema = read_schema_at(&schema_path)?;
     let templates_abs =
-        match inventory_path_in_space(&space_root, &children, &collection.join(TEMPLATES_DIR)) {
+        match template_path_in_space(&space_root, &children, &collection.join(TEMPLATES_DIR)) {
             Ok(path) => path,
             Err(CollectionError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Vec::new());
@@ -85,20 +85,20 @@ pub fn list_templates(
             let Some(slug) = path.file_stem().and_then(|stem| stem.to_str()) else {
                 continue;
             };
-            let head = inventory_path_in_space(&space_root, &children, &path)?;
+            let head = template_path_in_space(&space_root, &children, &path)?;
             if let Ok(info) = template_info_from_head(&schema, slug, TemplateKind::Leaf, &head) {
                 infos.push(info);
             }
         } else if path.is_dir() {
-            let directory = inventory_path_in_space(&space_root, &children, &path)?;
+            let directory = template_path_in_space(&space_root, &children, &path)?;
             let head = directory.join(README_FILE);
             if !head.is_file() {
                 continue;
             }
-            let head = inventory_path_in_space(&space_root, &children, &head)?;
+            let head = template_path_in_space(&space_root, &children, &head)?;
             let nested_schema = directory.join(SCHEMA_FILE);
             let kind = if nested_schema.is_file() {
-                inventory_path_in_space(&space_root, &children, &nested_schema)?;
+                template_path_in_space(&space_root, &children, &nested_schema)?;
                 TemplateKind::NestedCollection
             } else {
                 TemplateKind::Folder
@@ -113,7 +113,7 @@ pub fn list_templates(
     Ok(infos)
 }
 
-fn inventory_path_in_space(
+pub(crate) fn template_path_in_space(
     space: &Path,
     children: &ChildSpaceRoots,
     path: &Path,
@@ -209,40 +209,89 @@ pub fn resolve_template_source(
     collection_path: &str,
     template_slug: &str,
 ) -> Result<TemplateSource, CollectionError> {
+    resolve_optional_template_source(space, collection_path, template_slug)?
+        .ok_or_else(|| CollectionError::FileNotFound(format!("template '{template_slug}'")))
+}
+
+/// Absence means neither representation exists. A surviving folder without
+/// its head, an unreadable source and an unexpected file type are errors.
+pub(crate) fn resolve_optional_template_source(
+    space: &str,
+    collection_path: &str,
+    template_slug: &str,
+) -> Result<Option<TemplateSource>, CollectionError> {
+    if template_slug.is_empty()
+        || template_slug.starts_with('.')
+        || template_slug.contains(['/', '\\', ':', '\0'])
+    {
+        return Err(CollectionError::General(
+            "template slug must be a single template identifier".into(),
+        ));
+    }
+    let space_root = fs::canonicalize(space)?;
+    let children = ChildSpaceRoots::read(&space_root)?;
     let templates_abs = templates_dir(space, collection_path);
+    if !template_entry_exists(&space_root, &children, &templates_abs, true)? {
+        return Ok(None);
+    }
     let leaf = templates_abs.join(format!("{template_slug}.md"));
-    if leaf.is_file() {
+    if template_entry_exists(&space_root, &children, &leaf, false)? {
         let (title, _) = read_template_head(&leaf, template_slug)?;
-        return Ok(TemplateSource {
+        return Ok(Some(TemplateSource {
             kind: TemplateKind::Leaf,
             title,
             head_abs: leaf.clone(),
             root_abs: leaf,
             is_dir: false,
-        });
+        }));
     }
 
     let root = templates_abs.join(template_slug);
-    let head = root.join(README_FILE);
-    if root.is_dir() && head.is_file() {
-        let kind = if root.join(SCHEMA_FILE).is_file() {
-            TemplateKind::NestedCollection
-        } else {
-            TemplateKind::Folder
-        };
-        let (title, _) = read_template_head(&head, template_slug)?;
-        return Ok(TemplateSource {
-            kind,
-            title,
-            head_abs: head,
-            root_abs: root,
-            is_dir: true,
-        });
+    if !template_entry_exists(&space_root, &children, &root, true)? {
+        return Ok(None);
     }
+    let head = root.join(README_FILE);
+    if !template_entry_exists(&space_root, &children, &head, false)? {
+        return Err(CollectionError::Schema(format!(
+            "template '{template_slug}' is missing {README_FILE}"
+        )));
+    }
+    let kind = if template_entry_exists(&space_root, &children, &root.join(SCHEMA_FILE), false)? {
+        TemplateKind::NestedCollection
+    } else {
+        TemplateKind::Folder
+    };
+    let (title, _) = read_template_head(&head, template_slug)?;
+    Ok(Some(TemplateSource {
+        kind,
+        title,
+        head_abs: head,
+        root_abs: root,
+        is_dir: true,
+    }))
+}
 
-    Err(CollectionError::FileNotFound(format!(
-        "template '{template_slug}'"
-    )))
+fn template_entry_exists(
+    space: &Path,
+    children: &ChildSpaceRoots,
+    path: &Path,
+    directory: bool,
+) -> Result<bool, CollectionError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    }
+    let checked = template_path_in_space(space, children, path)?;
+    let metadata = fs::metadata(checked)?;
+    if (directory && metadata.is_dir()) || (!directory && metadata.is_file()) {
+        Ok(true)
+    } else {
+        Err(CollectionError::Schema(format!(
+            "invalid template entry: {}",
+            path.display()
+        )))
+    }
 }
 
 fn template_info_from_head(

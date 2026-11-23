@@ -246,6 +246,12 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 .selector("parentPath", "parent", args.parent)
                 .arg("title", args.title)
                 .optional(
+                    "template",
+                    args.template
+                        .map(|slug| json!({ "slug": slug }))
+                        .or_else(|| args.no_template.then(|| json!({ "mode": "none" }))),
+                )
+                .optional(
                     "content",
                     body(cwd, args.body.body_file.as_deref(), args.body.body)?,
                 )
