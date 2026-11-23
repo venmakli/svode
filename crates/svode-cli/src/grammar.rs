@@ -720,6 +720,9 @@ pub enum CollectionVerb {
     )]
     Schema(CollectionSelector),
     /// Templates of one Collection.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes collection template list --collection tasks"
+    )]
     Template {
         #[command(subcommand)]
         verb: CollectionTemplateVerb,

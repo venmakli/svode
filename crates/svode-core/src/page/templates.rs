@@ -123,21 +123,14 @@ fn plan_create(
         return Err(PageError::General("title must not be empty".into()));
     }
     let canonical_space = fs::canonicalize(space)?;
+    let children = ChildSpaceRoots::read(&canonical_space)?;
     let collection_abs = rel_abs(space, collection_path);
-    if !fs::canonicalize(&collection_abs)?.starts_with(&canonical_space) {
-        return Err(PageError::PathNotAccessible(collection_path.to_string()));
-    }
-    let schema_source = collection_abs.join(engine::SCHEMA_FILE);
-    let schema_rel = rel_from_abs(Path::new(space), &schema_source);
-    ensure_path_in_space(space, &schema_rel)?;
-    match fs::canonicalize(&schema_source) {
-        Ok(schema) if !schema.starts_with(&canonical_space) => {
-            return Err(PageError::PathNotAccessible(schema_rel));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
+    template_path_in_space(&canonical_space, &children, &collection_abs)?;
+    template_path_in_space(
+        &canonical_space,
+        &children,
+        &collection_abs.join(engine::SCHEMA_FILE),
+    )?;
     engine::read_collection_schema(space, collection_path)?;
     let templates_abs = templates_dir(space, collection_path);
     let templates_rel = rel_from_abs(Path::new(space), &templates_abs);
@@ -500,6 +493,9 @@ impl Instantiation {
         if !parent_abs.is_dir() {
             return Err(PageError::FileNotFound(parent_rel));
         }
+        let canonical_space = Path::new(space).canonicalize()?;
+        let children = ChildSpaceRoots::read(&canonical_space)?;
+        template_path_in_space(&canonical_space, &children, &parent_abs)?;
 
         let hierarchy = force_folder || source.is_dir;
         let probe_id = ulid::Ulid::new().to_string().to_lowercase();
@@ -535,8 +531,6 @@ impl Instantiation {
             dest.clone()
         };
         let head_rel = rel_from_abs(Path::new(space), &head);
-        let canonical_space = Path::new(space).canonicalize()?;
-        let children = ChildSpaceRoots::read(&canonical_space)?;
         let mut tree = Vec::new();
         if source.is_dir {
             collect_instantiation_tree(
@@ -870,6 +864,41 @@ mod tests {
         let result = create(space, "tasks", "Preset", TemplateKind::Leaf, None);
         assert!(matches!(result, Err(PageError::PathNotAccessible(_))));
         assert!(!tmp.path().join("tasks/.templates").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn template_operations_refuse_aliases_to_service_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let space = root.to_str().unwrap();
+        engine::write_default_collection_schema(space, "tasks").unwrap();
+        fs::create_dir(root.join("tasks/.templates")).unwrap();
+        fs::create_dir(root.join(".svode")).unwrap();
+        let settings = root.join(".svode/notes.md");
+        fs::write(&settings, "---\ntitle: Private notes\n---\n").unwrap();
+        std::os::unix::fs::symlink(settings, root.join("tasks/.templates/linked.md")).unwrap();
+
+        assert!(matches!(
+            list(space, "tasks"),
+            Err(crate::collections::CollectionError::PageSource(
+                crate::page::PageSourceError::Forbidden(_)
+            ))
+        ));
+        assert!(matches!(
+            instantiate(
+                space,
+                "tasks",
+                "linked",
+                "tasks",
+                Some("Copy".into()),
+                false,
+                false,
+                None
+            ),
+            Err(PageError::PathNotAccessible(_))
+        ));
+        assert!(!root.join("tasks/Copy.md").exists());
     }
 
     #[cfg(unix)]

@@ -81,27 +81,28 @@ pub fn rows(items: &Value) -> String {
 }
 
 pub fn templates(value: &Value) -> String {
-    lines(
-        value["templates"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|template| {
-                let default = if template["isDefault"] == true {
-                    " (default)"
-                } else {
-                    ""
-                };
-                format!(
-                    "{}\t{}\t{}\t{}{}",
-                    text(&template["slug"]),
-                    text(&template["kind"]),
-                    text(&template["icon"]),
-                    title(template),
-                    default
-                )
-            }),
-    )
+    let templates = value["templates"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if templates.is_empty() {
+        return "No templates.\n".to_string();
+    }
+    lines(templates.iter().map(|template| {
+        let default = if template["isDefault"] == true {
+            " (default)"
+        } else {
+            ""
+        };
+        format!(
+            "{}\t{}\t{}\t{}{}",
+            text(&template["slug"]),
+            text(&template["kind"]),
+            text(&template["icon"]),
+            title(template),
+            default
+        )
+    }))
 }
 
 pub fn tree(value: &Value) -> String {

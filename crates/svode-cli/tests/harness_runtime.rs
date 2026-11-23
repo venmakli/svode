@@ -266,7 +266,7 @@ fn paths(items: &Value) -> Vec<String> {
 }
 
 /// Read commands of slice 4.2 with the capability each one publishes.
-const READ_COMMANDS: [(&[&str], &str); 20] = [
+const READ_COMMANDS: [(&[&str], &str); 21] = [
     (&["project", "info"], "get_project_info"),
     (&["space", "list"], "list_spaces"),
     (&["space", "readme", "read"], "read_space_readme"),
@@ -275,6 +275,10 @@ const READ_COMMANDS: [(&[&str], &str); 20] = [
     (
         &["collection", "schema", "--collection", "tasks"],
         "get_collection_schema",
+    ),
+    (
+        &["collection", "template", "list", "--collection", "tasks"],
+        "list_collection_templates",
     ),
     (
         &["collection", "query", "--collection", "tasks"],

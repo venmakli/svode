@@ -121,8 +121,14 @@ pub(crate) fn template_path_in_space(
     let absolute = fs::canonicalize(path)?;
     let relative = absolute
         .strip_prefix(space)
-        .map_err(|_| PageSourceError::Forbidden(path.display().to_string()))?
-        .to_string_lossy();
+        .map_err(|_| PageSourceError::Forbidden(path.display().to_string()))?;
+    if relative.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy();
+        name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case(".svode")
+    }) {
+        return Err(PageSourceError::Forbidden(path.display().to_string()).into());
+    }
+    let relative = relative.to_string_lossy();
     if let Some(space_id) = children.owner_of(&relative) {
         return Err(CollectionError::PathInOtherSpace {
             path: relative.to_string(),
