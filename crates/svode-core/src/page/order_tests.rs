@@ -326,7 +326,14 @@ fn instantiating_a_template_changes_only_its_parent_section() {
     assert_order_change(
         |root| {
             write_default_collection_schema(space_str(root), "alpha").unwrap();
-            templates::create(space_str(root), "alpha", "Template", TemplateKind::Leaf).unwrap();
+            templates::create(
+                space_str(root),
+                "alpha",
+                "Template",
+                TemplateKind::Leaf,
+                None,
+            )
+            .unwrap();
         },
         |root| {
             templates::instantiate(

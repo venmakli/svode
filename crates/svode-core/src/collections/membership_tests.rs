@@ -510,8 +510,9 @@ async fn only_new_items_receive_schema_defaults_and_unique_ids() {
     );
     assert_eq!(item.meta.extra.get("Key"), Some(&Value::Number(5.into())));
 
-    let template =
-        templates::create(space, "tasks", "Plan", templates::TemplateKind::Leaf).unwrap();
+    let template = templates::create(space, "tasks", "Plan", templates::TemplateKind::Leaf, None)
+        .unwrap()
+        .head_path;
     let template = fs::read_to_string(root.join(template)).unwrap();
     assert!(template.contains("Status: Todo"), "{template}");
 

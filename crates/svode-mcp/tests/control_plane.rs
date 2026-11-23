@@ -131,7 +131,7 @@ fn control_plane_reports_host_version_and_filtered_catalog() {
             && value.ends_with(svode_tools::catalog::GIT_RULES)
     }));
 
-    assert_eq!(tool_names(&host).len(), 58);
+    assert_eq!(tool_names(&host).len(), 59);
     let limited = CatalogHost {
         served: Some(&LIMITED_CATALOG),
         ..CatalogHost::full()
@@ -188,7 +188,7 @@ fn run_routine_is_neither_published_nor_routed_without_a_host_runner() {
         ..CatalogHost::full()
     };
     let names = tool_names(&host);
-    assert_eq!(names.len(), 57);
+    assert_eq!(names.len(), 58);
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
         respond(&host, "tools/call", json!({ "name": "run_routine" }))

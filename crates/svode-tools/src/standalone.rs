@@ -45,7 +45,7 @@ use crate::host::{
 /// Catalog tools a standalone process serves: every data and guidance
 /// capability. An explicit Routine launch and App process state and control
 /// need the Desktop execution owner and are never served.
-const SERVED_TOOLS: [&str; 59] = [
+const SERVED_TOOLS: [&str; 60] = [
     "get_svode_guide",
     "validate_app_manifest",
     "list_apps",
@@ -88,6 +88,7 @@ const SERVED_TOOLS: [&str; 59] = [
     "delete_collection_view",
     "create_page",
     "create_collection",
+    "create_collection_template",
     "delete_page",
     "delete_collection_item",
     "delete_collection",

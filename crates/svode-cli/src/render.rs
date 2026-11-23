@@ -442,6 +442,10 @@ pub fn project_created(value: &Value) -> String {
     out + &changes(value)
 }
 
+pub fn template_created(value: &Value) -> String {
+    format!("{}\t{}\n", text(&value["slug"]), text(&value["path"]))
+}
+
 /// Changed paths of a mutation, one per line.
 pub fn changes(value: &Value) -> String {
     lines(

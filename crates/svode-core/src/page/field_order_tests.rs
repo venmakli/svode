@@ -299,7 +299,9 @@ fn moving_a_page_into_a_collection_keeps_its_fields_and_appends_defaults() {
 fn template_instance_keeps_template_order_and_contextual_defaults_change_values_in_place() {
     let tmp = TempDir::new().unwrap();
     let space = collection(tmp.path());
-    let head = templates::create(&space, "tasks", "Bug", TemplateKind::Leaf).unwrap();
+    let head = templates::create(&space, "tasks", "Bug", TemplateKind::Leaf, None)
+        .unwrap()
+        .head_path;
     fs::write(
         tmp.path().join(&head),
         "---\ntitle: Bug\nSprint: S0\nPriority: 1\nStatus: Todo\nArea: Core\nOwner: Ann\n---\nSteps\n",

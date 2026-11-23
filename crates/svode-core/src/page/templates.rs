@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::collections::engine;
@@ -10,7 +12,7 @@ use crate::page::write::SourceSnapshot;
 use crate::page::{PageError, disk_spelling, ensure_path_in_space};
 
 use crate::collections::engine::{
-    README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
+    README_FILE, TemplateSource, humanize_template_slug as humanize_slug,
     join_template_rel as join_rel, normalize_template_rel as normalize_rel,
     resolve_template_source, template_head_rel, template_rel_abs as rel_abs, templates_dir,
 };
@@ -42,42 +44,225 @@ struct MarkdownDoc {
     body: String,
 }
 
+pub struct TemplateInitialValues<'a> {
+    pub content: Option<String>,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+    pub cover: Option<store::Cover>,
+    pub properties: BTreeMap<String, serde_json::Value>,
+    pub project: Option<&'a str>,
+}
+
+pub struct CreatedTemplate {
+    pub slug: String,
+    pub head_path: String,
+    pub changed_paths: Vec<PathBuf>,
+}
+
+struct TemplateCreatePlan {
+    slug: String,
+    head_rel: String,
+    templates_abs: PathBuf,
+    root_abs: PathBuf,
+    head_abs: PathBuf,
+    schema_abs: Option<PathBuf>,
+    batch: engine::PreparedItemFieldBatch,
+}
+
+impl TemplateCreatePlan {
+    fn mutation_paths(&self) -> Vec<PathBuf> {
+        let mut paths = self.batch.mutation_paths().to_vec();
+        paths.extend(self.schema_abs.iter().cloned());
+        paths
+    }
+}
+
+pub fn create_mutation_paths(
+    space: &str,
+    collection_path: &str,
+    title: &str,
+    kind: TemplateKind,
+    initial: Option<&TemplateInitialValues<'_>>,
+) -> Result<Vec<PathBuf>, PageError> {
+    Ok(plan_create(space, collection_path, title, kind, initial)?.mutation_paths())
+}
+
 pub fn create(
     space: &str,
     collection_path: &str,
     title: &str,
     kind: TemplateKind,
-) -> Result<String, PageError> {
+    initial: Option<&TemplateInitialValues<'_>>,
+) -> Result<CreatedTemplate, PageError> {
     ensure_path_in_space(space, collection_path)?;
+    crate::page::naming::with_document_name_lock(space, || {
+        let plan = plan_create(space, collection_path, title, kind, initial)?;
+        crate::git::access::ensure_mutation_paths_were_authorized(&plan.mutation_paths())?;
+        commit_create(
+            space,
+            plan,
+            initial
+                .and_then(|initial| initial.content.as_deref())
+                .unwrap_or(""),
+        )
+    })
+}
+
+fn plan_create(
+    space: &str,
+    collection_path: &str,
+    title: &str,
+    kind: TemplateKind,
+    initial: Option<&TemplateInitialValues<'_>>,
+) -> Result<TemplateCreatePlan, PageError> {
+    let collection_path = normalize_rel(&disk_spelling(space, collection_path));
+    let collection_path = collection_path.as_str();
+    ensure_path_in_space(space, collection_path)?;
+    if title.trim().is_empty() {
+        return Err(PageError::General("title must not be empty".into()));
+    }
+    let canonical_space = fs::canonicalize(space)?;
+    let collection_abs = rel_abs(space, collection_path);
+    if !fs::canonicalize(&collection_abs)?.starts_with(&canonical_space) {
+        return Err(PageError::PathNotAccessible(collection_path.to_string()));
+    }
+    let schema_source = collection_abs.join(engine::SCHEMA_FILE);
+    let schema_rel = rel_from_abs(Path::new(space), &schema_source);
+    ensure_path_in_space(space, &schema_rel)?;
+    match fs::canonicalize(&schema_source) {
+        Ok(schema) if !schema.starts_with(&canonical_space) => {
+            return Err(PageError::PathNotAccessible(schema_rel));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     engine::read_collection_schema(space, collection_path)?;
     let templates_abs = templates_dir(space, collection_path);
-    fs::create_dir_all(&templates_abs)?;
-
-    let base_slug = store::slugify(title);
-    let slug = unique_template_slug(&templates_abs, &base_slug);
-    let (head_abs, head_rel) = match kind {
-        TemplateKind::Leaf => {
-            let rel = template_head_rel(collection_path, &slug, TemplateKind::Leaf);
-            (templates_abs.join(format!("{slug}.md")), rel)
+    let templates_rel = rel_from_abs(Path::new(space), &templates_abs);
+    ensure_path_in_space(space, &templates_rel)?;
+    match fs::symlink_metadata(&templates_abs) {
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(PageError::PathNotAccessible(templates_rel));
         }
-        TemplateKind::Folder | TemplateKind::NestedCollection => {
-            let root = templates_abs.join(&slug);
-            fs::create_dir_all(&root)?;
-            let rel = template_head_rel(collection_path, &slug, kind);
-            (root.join(README_FILE), rel)
-        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let slug = unique_template_slug(&templates_abs, &store::slugify(title));
+    let head_rel = template_head_rel(collection_path, &slug, kind);
+    ensure_path_in_space(space, &head_rel)?;
+    let head_abs = rel_abs(space, &head_rel);
+    let root_abs = if kind == TemplateKind::Leaf {
+        head_abs.clone()
+    } else {
+        templates_abs.join(&slug)
     };
-
+    let schema_abs =
+        (kind == TemplateKind::NestedCollection).then(|| root_abs.join(engine::SCHEMA_FILE));
     let mut meta = PageMeta::new_persisted(title.to_string());
     engine::apply_schema_defaults_for_path(space, &head_rel, &mut meta)?;
-    fs::write(&head_abs, frontmatter::serialize(&meta, ""))?;
 
-    if kind == TemplateKind::NestedCollection {
-        let template_collection = join_rel(collection_path, &format!("{TEMPLATES_DIR}/{slug}"));
-        engine::write_default_collection_schema(space, &template_collection)?;
+    let mut fields = BTreeMap::new();
+    if let Some(initial) = initial {
+        if let Some(key) = initial.properties.keys().find(|key| {
+            matches!(
+                key.as_str(),
+                "title" | "icon" | "description" | "cover" | "created" | "updated"
+            )
+        }) {
+            return Err(PageError::General(format!(
+                "system metadata '{key}' must not be passed in properties"
+            )));
+        }
+        fields.extend(initial.properties.clone());
+        fields.extend(
+            initial
+                .icon
+                .as_ref()
+                .map(|value| ("icon".into(), value.clone().into())),
+        );
+        fields.extend(
+            initial
+                .description
+                .as_ref()
+                .map(|value| ("description".into(), value.clone().into())),
+        );
+        if let Some(cover) = &initial.cover {
+            fields.insert("cover".into(), serde_json::to_value(cover)?);
+        }
     }
+    let batch = engine::prepare_item_field_batch_from_metadata(
+        space,
+        initial.and_then(|initial| initial.project),
+        &head_rel,
+        meta,
+        &fields,
+        engine::ItemFieldBatchIntent::TemplateInitial,
+    )?;
+    Ok(TemplateCreatePlan {
+        slug,
+        head_rel,
+        templates_abs,
+        root_abs,
+        head_abs,
+        schema_abs,
+        batch,
+    })
+}
 
-    Ok(head_rel)
+fn commit_create(
+    space: &str,
+    plan: TemplateCreatePlan,
+    body: &str,
+) -> Result<CreatedTemplate, PageError> {
+    let paths = plan.batch.mutation_paths();
+    let reverse_paths = paths
+        .iter()
+        .filter(|path| **path != plan.head_abs)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut snapshot = SourceSnapshot::capture(&reverse_paths, None)?;
+    let result = (|| -> Result<Vec<PathBuf>, PageError> {
+        match fs::create_dir(&plan.templates_abs) {
+            Ok(()) => snapshot.track_created_dir(plan.templates_abs.clone()),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        let stage = tempfile::Builder::new()
+            .prefix(".svode-template-")
+            .tempdir_in(&plan.templates_abs)?;
+        let staged_root = stage.path().join("template");
+        fs::create_dir(&staged_root)?;
+        let staged_head = staged_root.join(README_FILE);
+        engine::apply_prepared_item_field_relations(&plan.batch)?;
+        let meta = plan.batch.into_metadata();
+        fs::write(&staged_head, frontmatter::serialize(&meta, body))?;
+        if plan.schema_abs.is_some() {
+            engine::write_default_collection_schema(
+                space,
+                &rel_from_abs(Path::new(space), &staged_root),
+            )?;
+        }
+        let mut changed_paths = snapshot.changes()?;
+        if plan.root_abs.symlink_metadata().is_ok() {
+            return Err(PageError::FileAlreadyExists(plan.head_rel.clone()));
+        }
+        if plan.root_abs == plan.head_abs {
+            fs::rename(staged_head, &plan.root_abs)?;
+        } else {
+            fs::rename(staged_root, &plan.root_abs)?;
+        }
+        changed_paths.push(plan.head_abs);
+        changed_paths.extend(plan.schema_abs);
+        changed_paths.sort();
+        Ok(changed_paths)
+    })();
+    Ok(CreatedTemplate {
+        slug: plan.slug,
+        head_path: plan.head_rel,
+        changed_paths: result.map_err(|error| snapshot.rollback(error))?,
+    })
 }
 
 pub fn delete(
@@ -293,12 +478,130 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn template_create_rolls_back_reverse_relations_and_staging_when_a_write_fails() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_str().unwrap();
+        let tasks = tmp.path().join("tasks");
+        let people = tmp.path().join("people");
+        fs::create_dir(&tasks).unwrap();
+        fs::create_dir(&people).unwrap();
+        fs::write(
+            tasks.join("schema.yaml"),
+            "columns:\n  - { name: A, type: relation, relation: people, two_way: TasksA }\n  - { name: Z, type: relation, relation: people, two_way: TasksZ }\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            people.join("schema.yaml"),
+            "columns:\n  - { name: TasksA, type: relation, relation: tasks, two_way: A }\n  - { name: TasksZ, type: relation, relation: tasks, two_way: Z }\nviews: []\n",
+        )
+        .unwrap();
+        let ada = "---\ntitle: Ada\n---\n";
+        let zac = "---\ntitle: Zac\nTasksZ: 42\n---\n";
+        fs::write(people.join("Ada.md"), ada).unwrap();
+        fs::write(people.join("Zac.md"), zac).unwrap();
+        let initial = TemplateInitialValues {
+            content: Some("Close the loop".into()),
+            icon: None,
+            description: None,
+            cover: None,
+            properties: BTreeMap::from([
+                ("A".into(), serde_json::json!(["Ada.md"])),
+                ("Z".into(), serde_json::json!(["Zac.md"])),
+            ]),
+            project: None,
+        };
+        let planned = create_mutation_paths(
+            space,
+            "tasks",
+            "Preset",
+            TemplateKind::NestedCollection,
+            Some(&initial),
+        )
+        .unwrap();
+        assert!(planned.contains(&people.join("Ada.md")));
+        assert!(planned.contains(&people.join("Zac.md")));
+        let error = create(
+            space,
+            "tasks",
+            "Preset",
+            TemplateKind::NestedCollection,
+            Some(&initial),
+        )
+        .err()
+        .expect("invalid reverse field fails the mutation");
+        assert!(error.to_string().contains("TasksZ"), "{error}");
+        assert_eq!(fs::read_to_string(people.join("Ada.md")).unwrap(), ada);
+        assert_eq!(fs::read_to_string(people.join("Zac.md")).unwrap(), zac);
+        assert!(!tasks.join(".templates").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn template_create_refuses_linked_template_storage() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let space = tmp.path().to_str().unwrap();
+        engine::write_default_collection_schema(space, "tasks").unwrap();
+        std::os::unix::fs::symlink(outside.path(), tmp.path().join("tasks/.templates")).unwrap();
+        let result = create(space, "tasks", "Preset", TemplateKind::Leaf, None);
+        assert!(matches!(result, Err(PageError::PathNotAccessible(_))));
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn template_create_refuses_a_linked_collection_schema_outside_the_space() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let space = tmp.path().to_str().unwrap();
+        engine::write_default_collection_schema(outside.path().to_str().unwrap(), "tasks").unwrap();
+        fs::create_dir(tmp.path().join("tasks")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("tasks/schema.yaml"),
+            tmp.path().join("tasks/schema.yaml"),
+        )
+        .unwrap();
+        let result = create(space, "tasks", "Preset", TemplateKind::Leaf, None);
+        assert!(matches!(result, Err(PageError::PathNotAccessible(_))));
+        assert!(!tmp.path().join("tasks/.templates").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn template_create_refuses_a_linked_relation_target_outside_its_space() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let space = tmp.path().to_str().unwrap();
+        fs::create_dir(tmp.path().join("tasks")).unwrap();
+        fs::write(
+            tmp.path().join("tasks/schema.yaml"),
+            "columns:\n  - { name: Owner, type: relation, relation: people, limit: one }\nviews: []\n",
+        )
+        .unwrap();
+        engine::write_default_collection_schema(space, "people").unwrap();
+        let person = outside.path().join("Ada.md");
+        fs::write(&person, "---\ntitle: Ada\n---\n").unwrap();
+        std::os::unix::fs::symlink(&person, tmp.path().join("people/Ada.md")).unwrap();
+        let initial = TemplateInitialValues {
+            content: None,
+            icon: None,
+            description: None,
+            cover: None,
+            properties: BTreeMap::from([("Owner".into(), serde_json::json!("Ada.md"))]),
+            project: None,
+        };
+        let result = create(space, "tasks", "Preset", TemplateKind::Leaf, Some(&initial));
+        assert!(matches!(result, Err(PageError::PathNotAccessible(_))));
+        assert!(!tmp.path().join("tasks/.templates").exists());
+    }
+
+    #[test]
     fn template_instantiation_uses_collection_document_name_contract() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path().to_string_lossy();
         fs::create_dir(tmp.path().join("collection")).unwrap();
         engine::write_default_collection_schema(&space, "collection").unwrap();
-        create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
+        create(&space, "collection", "Template", TemplateKind::Leaf, None).unwrap();
         store::create_with_options(&space, Some("collection"), "Shared", None, false, false)
             .unwrap();
 
@@ -352,14 +655,14 @@ mod tests {
             "columns:\n  - { name: Key, type: unique_id, prefix: TASK, next: 5 }\nviews: []\n",
         )
         .unwrap();
-        create(&space, "tasks", "Note", TemplateKind::Leaf).unwrap();
-        create(&space, "tasks", "Kickoff", TemplateKind::Folder).unwrap();
+        create(&space, "tasks", "Note", TemplateKind::Leaf, None).unwrap();
+        create(&space, "tasks", "Kickoff", TemplateKind::Folder, None).unwrap();
         fs::write(
             tmp.path().join("tasks/.templates/kickoff/agenda.md"),
             "---\ntitle: Agenda\n---\nAgenda body",
         )
         .unwrap();
-        create(&space, "tasks", "Preset", TemplateKind::Leaf).unwrap();
+        create(&space, "tasks", "Preset", TemplateKind::Leaf, None).unwrap();
         let preset = tmp.path().join("tasks/.templates/preset.md");
         let mut preset_doc = read_markdown_doc(&preset).unwrap();
         preset_doc
@@ -435,7 +738,7 @@ mod tests {
 
         fs::create_dir(tmp.path().join("notes")).unwrap();
         engine::write_default_collection_schema(&space, "notes").unwrap();
-        create(&space, "notes", "Plain", TemplateKind::Leaf).unwrap();
+        create(&space, "notes", "Plain", TemplateKind::Leaf, None).unwrap();
         let schema_before = fs::read(tmp.path().join("notes/schema.yaml")).unwrap();
         let plain = instantiate(
             &space,
@@ -469,7 +772,7 @@ mod tests {
             "columns:\n  - { name: Key, type: unique_id, next: 5 }\nviews: []\n",
         )
         .unwrap();
-        create(&space, "tasks", "Note", TemplateKind::Leaf).unwrap();
+        create(&space, "tasks", "Note", TemplateKind::Leaf, None).unwrap();
         // The copied record keeps the template's mode, so writing it fails
         // after its number was allocated.
         let template = tmp.path().join("tasks/.templates/note.md");
@@ -496,7 +799,7 @@ mod tests {
         let space = tmp.path().to_string_lossy().to_string();
         fs::create_dir(tmp.path().join("collection")).unwrap();
         engine::write_default_collection_schema(&space, "collection").unwrap();
-        create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
+        create(&space, "collection", "Template", TemplateKind::Leaf, None).unwrap();
         let schema_path = tmp.path().join("collection/schema.yaml");
 
         let selected = prepare_set_default(&space, "collection", Some("template".to_string()))
@@ -670,8 +973,11 @@ fn unique_template_slug(templates_abs: &Path, base_slug: &str) -> String {
         } else {
             format!("{base_slug}-{i}")
         };
-        if !templates_abs.join(format!("{candidate}.md")).exists()
-            && !templates_abs.join(&candidate).exists()
+        if templates_abs
+            .join(format!("{candidate}.md"))
+            .symlink_metadata()
+            .is_err()
+            && templates_abs.join(&candidate).symlink_metadata().is_err()
         {
             return candidate;
         }

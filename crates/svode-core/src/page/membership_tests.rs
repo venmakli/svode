@@ -526,7 +526,7 @@ async fn run_every_write_through_root(
     let tasks = at("Tasks");
     refused!(
         "templates::create",
-        templates::create(space, &tasks, "Fresh", templates::TemplateKind::Leaf)
+        templates::create(space, &tasks, "Fresh", templates::TemplateKind::Leaf, None)
     );
     refused!(
         "templates::delete",
@@ -1888,6 +1888,7 @@ const INVENTORY: &[(&str, &str, Guard)] = {
         ("page/target.rs", "resolve_space_target", READ),
         ("page/target.rs", "resolve_owned_page_target", READ),
         ("page/target.rs", "read_standalone_page", READ),
+        ("page/templates.rs", "create_mutation_paths", READ),
         ("page/templates.rs", "create", Direct),
         ("page/templates.rs", "delete", Direct),
         ("page/templates.rs", "duplicate", Direct),

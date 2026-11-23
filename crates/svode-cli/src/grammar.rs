@@ -772,6 +772,53 @@ pub enum CollectionTemplateVerb {
         after_help = "Example:\n  svode --project ~/Notes collection template list --collection tasks --json"
     )]
     List(CollectionSelector),
+    /// Create a reusable template with optional initial content and values.
+    #[command(after_help = write_help("svode --project ~/Notes collection template create --collection tasks --title Bug --kind leaf --body-file bug.md --json"))]
+    Create(CollectionTemplateCreateArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum CollectionTemplateKind {
+    Leaf,
+    Folder,
+    NestedCollection,
+}
+
+impl CollectionTemplateKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Leaf => "leaf",
+            Self::Folder => "folder",
+            Self::NestedCollection => "nested_collection",
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionTemplateCreateArgs {
+    #[command(flatten)]
+    pub collection: CollectionSelector,
+    /// Title for the template head.
+    #[arg(long)]
+    pub title: String,
+    /// Shape of the template.
+    #[arg(long, value_enum)]
+    pub kind: CollectionTemplateKind,
+    #[command(flatten)]
+    pub body: OptionalBody,
+    /// Icon.
+    #[arg(long)]
+    pub icon: Option<String>,
+    /// Description.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Cover as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub cover_file: Option<String>,
+    /// Initial Collection properties as a JSON object from a file, or `-`.
+    #[arg(long, value_name = "PATH|-")]
+    pub properties_file: Option<String>,
 }
 
 #[derive(Debug, Args)]

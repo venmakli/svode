@@ -619,6 +619,27 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "create_collection_template",
+            "Create a reusable entry template in an existing Collection. The head can be filled with Markdown, icon, description, cover, and editable properties. Initial values override Collection defaults. Returns the allocated slug and the Space-relative head path. Does not create an item, change the default template, or autocommit.",
+            schema(
+                &[
+                    space_id(),
+                    collection_path_req("collectionPath"),
+                    str_req("title"),
+                    ("kind", json!({ "type": "string", "enum": ["leaf", "folder", "nested_collection"] })),
+                    str_opt("content"),
+                    str_opt("icon"),
+                    str_opt("description"),
+                    cover_opt("cover"),
+                    fields_opt("properties"),
+                ],
+                &["collectionPath", "title", "kind"],
+            ),
+            write_ann(false, Some(false)),
+            None,
+        )
+        .changing(const { &[object(ObjectChange::Created, None, at("/path"))] }),
+        def(
             "query_collection_items",
             "Query items from an existing Collection. Use list_collections first if you are unsure whether a Collection exists. Relation field values are Collection item path refs, not row IDs.",
             schema(
@@ -2988,6 +3009,7 @@ mod tests {
                 "delete_routine",
                 "run_routine",
                 "control_app",
+                "create_collection_template",
                 "update_collection_item_fields",
                 "update_collection_item_body",
                 "update_collection_item_metadata",

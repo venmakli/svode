@@ -66,6 +66,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `collection column add --collection --column-file` | `add_collection_column` | yes |
 | `collection column update --collection --name --patch-file` | `update_collection_column` | yes |
 | `collection column delete --collection --name [--delete-values]` | `delete_collection_column` | yes |
+| `collection template create --collection --title --kind [--body-file\|--body] [--icon --description --cover-file] [--properties-file]` | `create_collection_template` | yes |
 | `collection view add --collection --view-file [--position]` | `add_collection_view` | yes |
 | `collection view update --collection --name --patch-file` | `update_collection_view` | yes |
 | `collection view delete --collection --name` | `delete_collection_view` | yes |

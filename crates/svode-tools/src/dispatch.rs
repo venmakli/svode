@@ -164,6 +164,10 @@ async fn call(
             let args = decode(args)?;
             collections::list_collection_templates(require(target)?, args)
         }
+        "create_collection_template" => {
+            let args = decode(args)?;
+            collections::create_collection_template(host, require(target)?, args).await
+        }
         "query_collection_items" => {
             let args = decode(args)?;
             collections::query_collection_items(host, require(target)?, args).await

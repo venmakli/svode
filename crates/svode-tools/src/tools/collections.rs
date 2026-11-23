@@ -1,6 +1,7 @@
 //! Collection schema, item queries, actor catalog, schema/view changes and
 //! integrity through the shared core Collections engine.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -11,6 +12,8 @@ use svode_core::collections::engine::{
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::page::metadata::relative_changed_paths;
+use svode_core::page::store::Cover;
+use svode_core::page::templates::{self, TemplateInitialValues, TemplateKind};
 
 use crate::args::{CollectionArgs, clamp_limit};
 use crate::error::ToolError;
@@ -34,6 +37,20 @@ pub(crate) struct QueryCollectionItemsArgs {
     limit: Option<i64>,
     #[serde(default)]
     offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CreateCollectionTemplateArgs {
+    space_id: Option<String>,
+    collection_path: String,
+    title: String,
+    kind: TemplateKind,
+    content: Option<String>,
+    icon: Option<String>,
+    description: Option<String>,
+    cover: Option<Cover>,
+    properties: Option<BTreeMap<String, Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,6 +170,59 @@ pub(crate) fn list_collection_templates(
             templates.len()
         ),
         json!({ "collectionPath": collection_path, "templates": templates }),
+    ))
+}
+
+pub(crate) async fn create_collection_template(
+    host: &impl ToolHost,
+    target: &RequestTarget,
+    args: CreateCollectionTemplateArgs,
+) -> Result<ToolCallResult, ToolError> {
+    let (space, collection_path) =
+        collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
+    let initial = TemplateInitialValues {
+        content: args.content,
+        icon: args.icon,
+        description: args.description,
+        cover: args.cover,
+        properties: args.properties.unwrap_or_default(),
+        project: Some(&target.project_path),
+    };
+    let plan = templates::create_mutation_paths(
+        &space,
+        &collection_path,
+        &args.title,
+        args.kind,
+        Some(&initial),
+    )?;
+    let authorized = authorize(host, &space, plan).await?;
+    let created = within_authorized(authorized, async {
+        Ok(templates::create(
+            &space,
+            &collection_path,
+            &args.title,
+            args.kind,
+            Some(&initial),
+        )?)
+    })
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
+    host.read_runtime()
+        .index
+        .expire_verification(Path::new(&target.project_path), &created.changed_paths)
+        .await;
+    let changed_paths = relative_changed_paths(&space, &created.changed_paths);
+    Ok(ToolCallResult::ok(
+        format!(
+            "Created template {} at {}.",
+            created.slug, created.head_path
+        ),
+        json!({
+            "collectionPath": collection_path,
+            "slug": created.slug,
+            "path": created.head_path,
+            "changedPaths": changed_paths,
+        }),
     ))
 }
 

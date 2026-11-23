@@ -427,8 +427,8 @@ fn error_code(result: &ToolCallResult) -> String {
 #[test]
 fn served_catalog_is_filtered_by_host_declaration_and_capabilities() {
     let host = FixtureHost::new(None);
-    assert_eq!(served_definitions(&host).len(), 58);
-    assert_eq!(catalog::definitions().len(), 62);
+    assert_eq!(served_definitions(&host).len(), 59);
+    assert_eq!(catalog::definitions().len(), 63);
     // Creating a Space or a Project needs the Git host of the host.
     for name in ["create_space", "create_project"] {
         assert_eq!(check_tool(&host, name).unwrap_err().code, "UNKNOWN_TOOL");
@@ -1060,6 +1060,167 @@ async fn create_page_uses_the_shared_create_and_rejects_legacy_arguments() {
     }
     assert!(!fixture.project.join("Legacy.md").exists());
     assert!(!fixture.project.join("tasks/Legacy.md").exists());
+}
+
+#[tokio::test]
+async fn create_collection_template_populates_all_shapes_excluded_from_item_queries() {
+    use svode_core::page::{store, templates};
+
+    let fixture = write_fixture();
+    let schema = "templates: { default: seed, order: [seed] }\ncolumns:\n  - { name: Status, type: text, default: Todo }\n  - { name: Active, type: boolean, default: true }\n  - { name: Tags, type: multi_select, options: [ready], default: [ready] }\n  - { name: Owner, type: relation, relation: people, limit: one }\n  - { name: Key, type: unique_id, prefix: TASK, next: 5 }\nviews: []\n";
+    write(&fixture.project.join("tasks/schema.yaml"), schema);
+    write(
+        &fixture.project.join("tasks/.templates/seed.md"),
+        "---\ntitle: Seed\n---\n",
+    );
+    write(
+        &fixture.project.join("people/schema.yaml"),
+        "columns: []\nviews: []\n",
+    );
+    write(
+        &fixture.project.join("people/Ada.md"),
+        "---\ntitle: Ada\n---\n",
+    );
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let space = target.project_path.as_str();
+    let body = "# Reproduce\n\n- First step\n- Second step\n";
+    let cover = json!({ "type": "color", "value": "blue" });
+    for (kind, expected_slug, expected_path) in [
+        ("leaf", "bug", "tasks/.templates/bug.md"),
+        ("folder", "bug-1", "tasks/.templates/bug-1/README.md"),
+        (
+            "nested_collection",
+            "bug-2",
+            "tasks/.templates/bug-2/README.md",
+        ),
+    ] {
+        let result = call_tool(
+            &host,
+            Some(&target),
+            "create_collection_template",
+            json!({
+                "collectionPath": "tasks", "title": "Bug", "kind": kind, "content": body,
+                "icon": "🐛", "description": "Triage new bugs", "cover": cover,
+                "properties": { "Status": "Waiting", "Active": false, "Tags": [], "Owner": "Ada.md" },
+            }),
+        )
+        .await;
+        let result = structured(&result);
+        assert_eq!(result["slug"], expected_slug);
+        assert_eq!(result["path"], expected_path);
+        assert!(changed(result).contains(&expected_path.to_string()));
+        let page = store::read(space, expected_path).unwrap();
+        assert_eq!(page.body, body);
+        let meta = serde_json::to_value(page.meta).unwrap();
+        assert_eq!(meta["title"], "Bug");
+        assert_eq!(meta["icon"], "🐛");
+        assert_eq!(meta["description"], "Triage new bugs");
+        assert_eq!(meta["cover"], cover);
+        assert_eq!(meta["extra"]["Status"], "Waiting");
+        assert_eq!(meta["extra"]["Active"], false);
+        assert_eq!(meta["extra"]["Tags"], json!([]));
+        assert_eq!(meta["extra"]["Owner"], "Ada.md");
+        assert!(meta["extra"].get("Key").is_none());
+        let template_dir = fixture.project.join("tasks/.templates").join(expected_slug);
+        assert_eq!(
+            template_dir.join("schema.yaml").is_file(),
+            kind == "nested_collection"
+        );
+    }
+
+    let minimal = call_tool(
+        &host,
+        Some(&target),
+        "create_collection_template",
+        json!({ "collectionPath": "tasks", "title": "Minimal", "kind": "leaf" }),
+    )
+    .await;
+    let minimal = store::read(space, structured(&minimal)["path"].as_str().unwrap()).unwrap();
+    assert_eq!(minimal.body, "");
+    assert_eq!(minimal.meta.extra["Status"].as_str(), Some("Todo"));
+    assert_eq!(minimal.meta.extra["Active"].as_bool(), Some(true));
+    assert_eq!(read(&fixture, "tasks/schema.yaml"), schema);
+
+    let inventory = templates::list(space, "tasks").unwrap();
+    assert_eq!(inventory[0].slug, "seed");
+    assert!(inventory[0].is_default);
+    assert_eq!(inventory.len(), 5);
+    let collections = call_tool(&host, Some(&target), "list_collections", json!({})).await;
+    let tasks = structured(&collections)["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|collection| collection["path"] == "tasks")
+        .unwrap();
+    assert_eq!(tasks["rowCount"], 1);
+    let host = indexed_host(&fixture, host).await;
+    let rows = call_tool(
+        &host,
+        Some(&target),
+        "query_collection_items",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    assert_eq!(titles(&structured(&rows)["items"]), ["A"]);
+
+    let item = templates::instantiate(
+        space,
+        "tasks",
+        "bug-2",
+        "tasks",
+        Some("From preset".into()),
+        false,
+        false,
+        None,
+    )
+    .unwrap()
+    .page;
+    assert_eq!(item.body, body);
+    let meta = serde_json::to_value(item.meta).unwrap();
+    assert_eq!(meta["extra"]["Key"], 5);
+    assert_eq!(meta["extra"]["Status"], "Waiting");
+    assert_eq!(meta["extra"]["Active"], false);
+    assert_eq!(meta["extra"]["Tags"], json!([]));
+    assert_eq!(meta["extra"]["Owner"], "Ada.md");
+    assert_eq!(meta["cover"], cover);
+}
+
+#[tokio::test]
+async fn create_collection_template_rejects_invalid_values_and_access_before_writing() {
+    let fixture = write_fixture();
+    write(
+        &fixture.project.join("tasks/schema.yaml"),
+        "columns:\n  - { name: Key, type: unique_id, next: 3 }\n  - { name: Points, type: number }\nviews: []\n",
+    );
+    write(
+        &fixture.project.join("child/tasks/schema.yaml"),
+        "columns: []\nviews: []\n",
+    );
+    let host = FixtureHost::new(None);
+    let denied = FixtureHost::denying_mutations();
+    let target = root_target(&fixture);
+    let before = source_snapshot(&fixture.project);
+    for (host, path, properties, expected) in [
+        (&host, "tasks", json!({"Points": "wrong"}), "SVODE_ERROR"),
+        (&host, "tasks", json!({"Key": null}), "SVODE_ERROR"),
+        (&host, "child/tasks", json!({}), "PATH_IN_OTHER_SPACE"),
+        (&denied, "tasks", json!({}), "REPOSITORY_ACCESS_DENIED"),
+    ] {
+        let result = call_tool(
+            host,
+            Some(&target),
+            "create_collection_template",
+            json!({
+                "collectionPath": path, "title": "Refused", "kind": "nested_collection", "properties": properties,
+            }),
+        )
+        .await;
+        assert_eq!(error_code(&result), expected, "{result:?}");
+        assert_eq!(source_snapshot(&fixture.project), before);
+        assert!(!fixture.project.join("tasks/.templates").exists());
+        assert!(!fixture.project.join("child/tasks/.templates").exists());
+    }
 }
 
 #[tokio::test]
@@ -3521,7 +3682,7 @@ async fn run_routine_goes_through_the_host_runner_and_is_blocked_for_routine_cal
 
     let without_runner = FixtureHost::without_runner();
     let names = served_names(&without_runner);
-    assert_eq!(names.len(), 57);
+    assert_eq!(names.len(), 58);
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
         error_code(&call_tool(&without_runner, Some(&target), "run_routine", run_args).await),
@@ -3548,7 +3709,7 @@ async fn every_catalog_tool_is_dispatched_by_the_library() {
         .into_iter()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 58);
+    assert_eq!(names.len(), 59);
     for name in names {
         let result = call_tool(&host, Some(&target), name, json!({})).await;
         if result.is_error {

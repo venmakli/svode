@@ -191,6 +191,77 @@ fn text(root: &Path, path: &str) -> String {
     fs::read_to_string(root.join(path)).unwrap()
 }
 
+#[test]
+fn create_collection_template_cli_accepts_all_shapes_with_page_style_input() {
+    let Some((_temp, root)) = project() else {
+        return;
+    };
+    write(
+        &root.join("input/template.md"),
+        "# Checklist\n\n- Inspect\n",
+    );
+    write(
+        &root.join("input/cover.json"),
+        r#"{"type":"color","value":"blue"}"#,
+    );
+    let before = git(&root, &["rev-parse", "HEAD"]);
+    for (index, kind) in ["leaf", "folder", "nested_collection"]
+        .into_iter()
+        .enumerate()
+    {
+        let (exit, result) = json(
+            &root,
+            &[
+                "collection",
+                "template",
+                "create",
+                "--collection",
+                "tasks",
+                "--title",
+                "Preset",
+                "--kind",
+                kind,
+                "--body-file",
+                "input/template.md",
+                "--icon",
+                "T",
+                "--description",
+                "A checklist",
+                "--cover-file",
+                "input/cover.json",
+                "--properties-file",
+                "-",
+            ],
+            Some(r#"{"Person":"Ada.md"}"#),
+        );
+        assert_eq!(exit, 0, "{result}");
+        let slug = if index == 0 {
+            "preset".to_string()
+        } else {
+            format!("preset-{index}")
+        };
+        let path = if kind == "leaf" {
+            format!("tasks/.templates/{slug}.md")
+        } else {
+            format!("tasks/.templates/{slug}/README.md")
+        };
+        assert_eq!(result["slug"], slug);
+        assert_eq!(result["path"], path);
+        let source = text(&root, &path);
+        assert!(source.ends_with("# Checklist\n\n- Inspect\n"), "{source}");
+        assert!(source.contains("description: A checklist"), "{source}");
+        assert!(source.contains("icon: T"), "{source}");
+        assert!(source.contains("value: blue"), "{source}");
+        assert!(source.contains("Ada.md"), "{source}");
+        assert_eq!(
+            root.join(format!("tasks/.templates/{slug}/schema.yaml"))
+                .is_file(),
+            kind == "nested_collection"
+        );
+    }
+    assert_eq!(git(&root, &["rev-parse", "HEAD"]), before);
+}
+
 fn strings(value: &Value) -> BTreeSet<String> {
     value
         .as_array()

@@ -291,13 +291,38 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 render::pretty(&value["schema"])
             })
             .selector("collectionPath", "collection", args.collection),
-            CollectionVerb::Template {
-                verb: CollectionTemplateVerb::List(args),
-            } => ToolCommand::new("list_collection_templates", render::templates).selector(
-                "collectionPath",
-                "collection",
-                args.collection,
-            ),
+            CollectionVerb::Template { verb } => match verb {
+                CollectionTemplateVerb::List(args) => ToolCommand::new(
+                    "list_collection_templates",
+                    render::templates,
+                )
+                .selector("collectionPath", "collection", args.collection),
+                CollectionTemplateVerb::Create(args) => {
+                    input::one_stdin(&[
+                        ("body-file", args.body.body_file.as_deref()),
+                        ("cover-file", args.cover_file.as_deref()),
+                        ("properties-file", args.properties_file.as_deref()),
+                    ])?;
+                    ToolCommand::new("create_collection_template", render::template_created)
+                        .selector("collectionPath", "collection", args.collection.collection)
+                        .arg("title", args.title)
+                        .arg("kind", args.kind.as_str())
+                        .optional(
+                            "content",
+                            body(cwd, args.body.body_file.as_deref(), args.body.body)?,
+                        )
+                        .optional("icon", args.icon)
+                        .optional("description", args.description)
+                        .optional(
+                            "cover",
+                            json_input(cwd, "cover-file", args.cover_file.as_deref())?,
+                        )
+                        .optional(
+                            "properties",
+                            json_input(cwd, "properties-file", args.properties_file.as_deref())?,
+                        )
+                }
+            },
             CollectionVerb::Query(args) => {
                 input::one_stdin(&[
                     ("filter-file", args.filter_file.as_deref()),

@@ -22,12 +22,13 @@ const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 59] = [
+const SERVED: [&str; 60] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
     "convert_to_collection",
     "create_collection",
+    "create_collection_template",
     "create_page",
     "create_project",
     "create_routine",
@@ -2091,6 +2092,13 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     );
 
     // Creation, structure, order, import and deletion.
+    let template = ok(
+        &mut live,
+        "create_collection_template",
+        json!({ "collectionPath": "tasks", "title": "Preset", "kind": "folder", "content": "Template body\n" }),
+    );
+    assert_eq!(template["slug"], "preset");
+    assert_eq!(template["path"], "tasks/.templates/preset/README.md");
     ok(
         &mut live,
         "create_page",

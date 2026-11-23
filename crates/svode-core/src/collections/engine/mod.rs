@@ -40,7 +40,7 @@ use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::page::ColorName;
 use crate::page::frontmatter::{self, FrontmatterFields, PageMeta};
 
-const SCHEMA_FILE: &str = "schema.yaml";
+pub(crate) const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
     "title",
     "icon",
@@ -440,6 +440,7 @@ fn canonicalize_relation_target_value(
     if !target_abs.is_file() {
         return Err(CollectionError::FileNotFound(target_rel));
     }
+    let target_rel = crate::page::resolve_page_target(Path::new(target_space), &target_rel)?.path;
     let expected = collection_rel(relation);
     let actual = find_collection_root(Path::new(target_space), &target_rel).ok_or_else(|| {
         schema_error(format!(
@@ -2081,6 +2082,7 @@ pub fn update_relation_item_field(
 pub enum ItemFieldBatchIntent {
     Literal,
     Routine,
+    TemplateInitial,
 }
 
 struct PreparedRelationFieldUpdate {
@@ -2129,7 +2131,18 @@ pub fn prepare_item_field_batch(
     values: &std::collections::BTreeMap<String, serde_json::Value>,
     intent: ItemFieldBatchIntent,
 ) -> Result<PreparedItemFieldBatch, CollectionError> {
-    let mut metadata = frontmatter::read_page_meta(Path::new(space), file_path)?;
+    let metadata = frontmatter::read_page_meta(Path::new(space), file_path)?;
+    prepare_item_field_batch_from_metadata(space, project_path, file_path, metadata, values, intent)
+}
+
+pub(crate) fn prepare_item_field_batch_from_metadata(
+    space: &str,
+    project_path: Option<&str>,
+    file_path: &str,
+    mut metadata: PageMeta,
+    values: &std::collections::BTreeMap<String, serde_json::Value>,
+    intent: ItemFieldBatchIntent,
+) -> Result<PreparedItemFieldBatch, CollectionError> {
     let mut title = None;
     let mut relation_updates = Vec::new();
     let mut mutation_paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
@@ -2145,7 +2158,7 @@ pub fn prepare_item_field_batch(
             )));
         }
         let value = match intent {
-            ItemFieldBatchIntent::Literal => raw.clone(),
+            ItemFieldBatchIntent::Literal | ItemFieldBatchIntent::TemplateInitial => raw.clone(),
             ItemFieldBatchIntent::Routine => resolve_routine_runtime_value(raw),
         };
         if is_system {
@@ -2178,10 +2191,13 @@ pub fn prepare_item_field_batch(
                 (normalized, None)
             }
         };
-        if normalized.is_null()
-            || normalized
-                .as_sequence()
-                .is_some_and(|sequence| sequence.is_empty())
+        // An explicit empty template field must override a Collection default
+        // when this head is copied into a future item.
+        if !matches!(intent, ItemFieldBatchIntent::TemplateInitial)
+            && (normalized.is_null()
+                || normalized
+                    .as_sequence()
+                    .is_some_and(|sequence| sequence.is_empty()))
         {
             metadata.extra.shift_remove(field);
         } else {

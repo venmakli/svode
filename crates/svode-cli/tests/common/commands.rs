@@ -255,6 +255,21 @@ pub const CASES: &[Case] = &[
         &["delete_collection_column"],
     ),
     case(
+        "collection template create",
+        &[
+            "collection",
+            "template",
+            "create",
+            "--collection",
+            "tasks",
+            "--title",
+            "New template",
+            "--kind",
+            "leaf",
+        ],
+        &["create_collection_template"],
+    ),
+    case(
         "collection view add",
         &[
             "collection",

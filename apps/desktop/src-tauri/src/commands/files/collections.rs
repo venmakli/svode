@@ -20,8 +20,14 @@ pub async fn create_template(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let path = templates::create(&space, &collection_path, &title, kind)?;
+    let paths = templates::create_mutation_paths(&space, &collection_path, &title, kind, None)?;
+    let authorized = require_planned_mutation_paths(&app, &space, paths).await?;
+    let path = scope_authorized_mutation_paths(authorized, async {
+        templates::create(&space, &collection_path, &title, kind, None)
+            .map(|created| created.head_path)
+            .map_err(AppError::from)
+    })
+    .await?;
     let root = root_path_for_head(&path);
     maybe_autocommit_structural_paths(
         &autocommit,
