@@ -22,7 +22,7 @@ const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 58] = [
+const SERVED: [&str; 59] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
@@ -52,6 +52,7 @@ const SERVED: [&str; 58] = [
     "list_actors",
     "list_agent_actors",
     "list_apps",
+    "list_collection_templates",
     "list_collections",
     "list_pages",
     "list_routines",
@@ -254,6 +255,109 @@ fn business_code(response: &Value) -> &str {
     response["result"]["structuredContent"]["error"]["code"]
         .as_str()
         .unwrap()
+}
+
+#[test]
+fn collection_template_list_respects_nested_owners_and_space_boundaries() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let schema = "columns: []\nviews: []\n";
+    write(
+        &project.join("tasks/schema.yaml"),
+        &format!("{schema}templates:\n  default: gone\n"),
+    );
+    write(
+        &project.join("tasks/.templates/bug.md"),
+        "---\ntitle: Bug\nicon: 🐛\n---\n",
+    );
+    write(&project.join("tasks/nested/schema.yaml"), schema);
+    write(
+        &project.join("tasks/nested/.templates/brief.md"),
+        "---\ntitle: Brief\n---\n",
+    );
+    write(&project.join("child/tasks/schema.yaml"), schema);
+    write(
+        &project.join("child/tasks/.templates/child-only.md"),
+        "---\ntitle: Child only\n---\n",
+    );
+    let before = snapshot(fixture.temp.path());
+
+    let responses = session(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+        &[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+            call(
+                2,
+                "list_collection_templates",
+                json!({ "collectionPath": "tasks" }),
+            ),
+            call(
+                3,
+                "list_collection_templates",
+                json!({ "collectionPath": "tasks/nested" }),
+            ),
+            call(
+                4,
+                "list_collection_templates",
+                json!({ "collectionPath": "child/tasks" }),
+            ),
+            call(
+                5,
+                "list_collection_templates",
+                json!({ "collectionPath": "tasks", "spaceId": "child" }),
+            ),
+        ],
+    );
+    let tools = responses[&1]["result"]["tools"].as_array().unwrap();
+    let definition = tools
+        .iter()
+        .find(|tool| tool["name"] == "list_collection_templates")
+        .unwrap();
+    assert_eq!(definition["annotations"]["readOnlyHint"], true);
+    assert_eq!(
+        definition["inputSchema"]["required"],
+        json!(["collectionPath"])
+    );
+    assert_eq!(
+        structured(&responses[&2]),
+        &json!({
+            "collectionPath": "tasks",
+            "templates": [{ "slug": "bug", "kind": "leaf", "title": "Bug", "icon": "🐛", "isDefault": false }],
+        })
+    );
+    assert_eq!(
+        structured(&responses[&3])["templates"],
+        json!([{ "slug": "brief", "kind": "leaf", "title": "Brief", "icon": null, "isDefault": false }])
+    );
+    assert_eq!(business_code(&responses[&4]), "PATH_IN_OTHER_SPACE");
+    assert_eq!(
+        structured(&responses[&5])["templates"],
+        json!([{ "slug": "child-only", "kind": "leaf", "title": "Child only", "icon": null, "isDefault": false }])
+    );
+    assert_eq!(snapshot(fixture.temp.path()), before);
+}
+
+#[test]
+#[cfg(unix)]
+fn collection_template_list_refuses_heads_outside_the_space() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let outside = fixture.temp.path().join("outside.md");
+    write(&outside, "---\ntitle: Outside the project\n---\n");
+    let folder = project.join("tasks/.templates/folder");
+    fs::create_dir_all(&folder).unwrap();
+    std::os::unix::fs::symlink(&outside, folder.join("README.md")).unwrap();
+    let responses = session(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+        &[call(
+            1,
+            "list_collection_templates",
+            json!({ "collectionPath": "tasks" }),
+        )],
+    );
+    assert_eq!(business_code(&responses[&1]), "PATH_NOT_ACCESSIBLE");
 }
 
 #[test]
@@ -1836,6 +1940,11 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     ok(&mut live, "list_spaces", json!({}));
     ok(&mut live, "list_pages", json!({}));
     ok(&mut live, "list_collections", json!({}));
+    ok(
+        &mut live,
+        "list_collection_templates",
+        json!({ "collectionPath": "tasks" }),
+    );
     ok(
         &mut live,
         "get_collection_schema",

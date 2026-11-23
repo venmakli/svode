@@ -133,6 +133,11 @@ pub const CASES: &[Case] = &[
         &["get_collection_schema"],
     ),
     case(
+        "collection template list",
+        &["collection", "template", "list", "--collection", "tasks"],
+        &["list_collection_templates"],
+    ),
+    case(
         "collection query",
         &[
             "collection",

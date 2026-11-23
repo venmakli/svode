@@ -36,6 +36,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `page list [--path <dir>] [--limit --offset]` | `list_pages` | yes |
 | `collection list` | `list_collections` | yes |
 | `collection schema --collection` | `get_collection_schema` | yes |
+| `collection template list --collection` | `list_collection_templates` (saved templates in display order, including the default designation) | yes |
 | `collection query --collection [--filter-file] [--sort-file] [--limit --offset]` | `query_collection_items` | yes |
 | `collection readme read --collection` | `read_collection_readme` | yes |
 | `item read --path` | `read_collection_item` | yes |

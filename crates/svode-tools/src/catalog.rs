@@ -609,6 +609,16 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "list_collection_templates",
+            "List the saved templates of one Collection in Desktop order. Returns each template's slug, title, kind (leaf, folder, nested_collection), icon and isDefault. No item is marked as default when the configured template is missing. A nested Collection has its own templates.",
+            schema(
+                &[space_id(), collection_path_req("collectionPath")],
+                &["collectionPath"],
+            ),
+            read_only_ann(),
+            None,
+        ),
+        def(
             "query_collection_items",
             "Query items from an existing Collection. Use list_collections first if you are unsure whether a Collection exists. Relation field values are Collection item path refs, not row IDs.",
             schema(

@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    CollectionError, CollectionSchema, PreparedCollectionMutation, ensure_paths_in_space,
-    read_collection_schema, reorder_templates, schema_mutation_paths, set_default_template,
+    CollectionError, CollectionSchema, PreparedCollectionMutation, collection_dir,
+    ensure_paths_in_space, read_collection_schema, read_schema_at, reorder_templates,
+    schema_mutation_paths, set_default_template,
 };
-use crate::page::frontmatter;
+use crate::page::{ChildSpaceRoots, PageSourceError, frontmatter};
 
 pub const TEMPLATES_DIR: &str = ".templates";
 pub const README_FILE: &str = "README.md";
@@ -47,8 +48,24 @@ pub fn list_templates(
     space: &str,
     collection_path: &str,
 ) -> Result<Vec<TemplateInfo>, CollectionError> {
-    let schema = read_collection_schema(space, collection_path)?;
-    let templates_abs = templates_dir(space, collection_path);
+    let space_root = fs::canonicalize(space)?;
+    let children = ChildSpaceRoots::read(&space_root)?;
+    let collection = inventory_path_in_space(
+        &space_root,
+        &children,
+        &collection_dir(space, collection_path),
+    )?;
+    let schema_path =
+        inventory_path_in_space(&space_root, &children, &collection.join(SCHEMA_FILE))?;
+    let schema = read_schema_at(&schema_path)?;
+    let templates_abs =
+        match inventory_path_in_space(&space_root, &children, &collection.join(TEMPLATES_DIR)) {
+            Ok(path) => path,
+            Err(CollectionError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
     if !templates_abs.is_dir() {
         return Ok(Vec::new());
     }
@@ -68,15 +85,20 @@ pub fn list_templates(
             let Some(slug) = path.file_stem().and_then(|stem| stem.to_str()) else {
                 continue;
             };
-            if let Ok(info) = template_info_from_head(&schema, slug, TemplateKind::Leaf, &path) {
+            let head = inventory_path_in_space(&space_root, &children, &path)?;
+            if let Ok(info) = template_info_from_head(&schema, slug, TemplateKind::Leaf, &head) {
                 infos.push(info);
             }
         } else if path.is_dir() {
-            let head = path.join(README_FILE);
+            let directory = inventory_path_in_space(&space_root, &children, &path)?;
+            let head = directory.join(README_FILE);
             if !head.is_file() {
                 continue;
             }
-            let kind = if path.join(SCHEMA_FILE).is_file() {
+            let head = inventory_path_in_space(&space_root, &children, &head)?;
+            let nested_schema = directory.join(SCHEMA_FILE);
+            let kind = if nested_schema.is_file() {
+                inventory_path_in_space(&space_root, &children, &nested_schema)?;
                 TemplateKind::NestedCollection
             } else {
                 TemplateKind::Folder
@@ -89,6 +111,25 @@ pub fn list_templates(
 
     sort_templates(&mut infos, &schema);
     Ok(infos)
+}
+
+fn inventory_path_in_space(
+    space: &Path,
+    children: &ChildSpaceRoots,
+    path: &Path,
+) -> Result<PathBuf, CollectionError> {
+    let absolute = fs::canonicalize(path)?;
+    let relative = absolute
+        .strip_prefix(space)
+        .map_err(|_| PageSourceError::Forbidden(path.display().to_string()))?
+        .to_string_lossy();
+    if let Some(space_id) = children.owner_of(&relative) {
+        return Err(CollectionError::PathInOtherSpace {
+            path: relative.to_string(),
+            space_id: space_id.to_string(),
+        });
+    }
+    Ok(absolute)
 }
 
 pub fn ensure_template_exists(

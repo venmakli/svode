@@ -712,6 +712,11 @@ pub enum CollectionVerb {
         after_help = "Example:\n  svode --project ~/Notes collection schema --collection tasks --json"
     )]
     Schema(CollectionSelector),
+    /// Templates of one Collection.
+    Template {
+        #[command(subcommand)]
+        verb: CollectionTemplateVerb,
+    },
     /// Query Collection items with optional filter and sort.
     #[command(after_help = format!("Filter and sort are JSON arrays of the shared query shape, read from a file or stdin (`-`).\n\n{INDEXED}\n\nExample:\n  svode --project ~/Notes collection query --collection tasks --filter-file filter.json --limit 20 --json"))]
     Query(CollectionQueryArgs),
@@ -758,6 +763,15 @@ pub enum CollectionVerb {
         #[command(subcommand)]
         verb: ViewVerb,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollectionTemplateVerb {
+    /// List templates in display order, including the default designation.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes collection template list --collection tasks --json"
+    )]
+    List(CollectionSelector),
 }
 
 #[derive(Debug, Args)]

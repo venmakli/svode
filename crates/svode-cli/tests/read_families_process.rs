@@ -367,6 +367,67 @@ fn source_reads_follow_the_shared_mapping_and_change_nothing() {
 }
 
 #[test]
+fn collection_template_list_reads_file_inventory_in_display_order() {
+    let fixture = fixture();
+    let root = &fixture.root;
+    let args = ["collection", "template", "list", "--collection", "tasks"];
+    let before = snapshot(root);
+    let (exit, empty) = json(root, &args);
+    assert_eq!(exit, 0, "{empty}");
+    assert_eq!(empty["templates"], serde_json::json!([]));
+    assert_eq!(snapshot(root), before);
+
+    let schema =
+        "columns: []\nviews: []\ntemplates:\n  default: check\n  order: [sprint, check, bug]\n";
+    write(&root.join("tasks/schema.yaml"), schema);
+    let templates = root.join("tasks/.templates");
+    write(
+        &templates.join("bug.md"),
+        "---\ntitle: Bug\nicon: 🐛\n---\n",
+    );
+    write(
+        &templates.join("check/README.md"),
+        "---\ntitle: Check\n---\n",
+    );
+    write(
+        &templates.join("sprint/README.md"),
+        "---\ntitle: Sprint\n---\n",
+    );
+    write(
+        &templates.join("sprint/schema.yaml"),
+        "columns: []\nviews: []\n",
+    );
+    let before = snapshot(root);
+
+    let (exit, listed) = json(root, &args);
+    assert_eq!(exit, 0, "{listed}");
+    assert_eq!(listed["collectionPath"], "tasks");
+    assert_eq!(
+        listed["templates"],
+        serde_json::json!([
+            { "slug": "sprint", "kind": "nested_collection", "title": "Sprint", "icon": null, "isDefault": false },
+            { "slug": "check", "kind": "folder", "title": "Check", "icon": null, "isDefault": true },
+            { "slug": "bug", "kind": "leaf", "title": "Bug", "icon": "🐛", "isDefault": false },
+        ])
+    );
+    let human = svode(root, &args);
+    assert!(human.status.success());
+    assert!(
+        String::from_utf8(human.stdout)
+            .unwrap()
+            .contains("Check (default)")
+    );
+    let help = svode(root, &["collection", "template", "list", "--help"]);
+    assert!(help.status.success());
+    assert!(
+        String::from_utf8(help.stdout)
+            .unwrap()
+            .contains("--collection <DIR>")
+    );
+    assert_eq!(snapshot(root), before);
+}
+
+#[test]
 fn structured_input_comes_from_a_file_or_one_stdin() {
     let fixture = fixture();
     let root = &fixture.root;
@@ -451,7 +512,7 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     assert!(served.contains(&Value::from("create_routine")));
     assert!(served.contains(&Value::from("list_agent_actors")));
     assert!(!served.contains(&Value::from("run_routine")));
-    assert_eq!(served.len(), 58);
+    assert_eq!(served.len(), 59);
     let human = svode(&root.join("child/deep"), &["doctor"]);
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.contains("space child: ready"), "{human}");

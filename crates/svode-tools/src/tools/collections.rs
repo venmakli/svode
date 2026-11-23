@@ -140,6 +140,22 @@ pub(crate) fn get_collection_schema(
     ))
 }
 
+pub(crate) fn list_collection_templates(
+    target: &RequestTarget,
+    args: CollectionArgs,
+) -> Result<ToolCallResult, ToolError> {
+    let (space, collection_path) =
+        collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
+    let templates = engine::list_templates(&space, &collection_path)?;
+    Ok(ToolCallResult::ok(
+        format!(
+            "Listed {} templates for collection {collection_path}.",
+            templates.len()
+        ),
+        json!({ "collectionPath": collection_path, "templates": templates }),
+    ))
+}
+
 pub(crate) async fn query_collection_items(
     host: &impl ToolHost,
     target: &RequestTarget,

@@ -12,10 +12,10 @@ use svode_tools::path::normalize_absolute;
 
 use crate::error::CliError;
 use crate::grammar::{
-    ActorVerb, AgentVerb, AppVerb, AssetVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb,
-    ContentVerb, ConvertTarget, GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb,
-    MetaVerb, MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, RoutineOwner,
-    RoutineVerb, SpaceReadmeVerb, SpaceVerb, ViewVerb,
+    ActorVerb, AgentVerb, AppVerb, AssetVerb, CollectionReadmeVerb, CollectionTemplateVerb,
+    CollectionVerb, ColumnVerb, ContentVerb, ConvertTarget, GitVerb, ItemFieldsVerb, ItemVerb,
+    KnowledgeScope, KnowledgeVerb, MetaVerb, MetadataPatch, NamedSelector, Noun, Pagination,
+    ProjectVerb, RoutineOwner, RoutineVerb, SpaceReadmeVerb, SpaceVerb, ViewVerb,
 };
 use crate::input;
 use crate::output::Outcome;
@@ -291,6 +291,13 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 render::pretty(&value["schema"])
             })
             .selector("collectionPath", "collection", args.collection),
+            CollectionVerb::Template {
+                verb: CollectionTemplateVerb::List(args),
+            } => ToolCommand::new("list_collection_templates", render::templates).selector(
+                "collectionPath",
+                "collection",
+                args.collection,
+            ),
             CollectionVerb::Query(args) => {
                 input::one_stdin(&[
                     ("filter-file", args.filter_file.as_deref()),

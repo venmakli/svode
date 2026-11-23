@@ -80,6 +80,30 @@ pub fn rows(items: &Value) -> String {
     )
 }
 
+pub fn templates(value: &Value) -> String {
+    lines(
+        value["templates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|template| {
+                let default = if template["isDefault"] == true {
+                    " (default)"
+                } else {
+                    ""
+                };
+                format!(
+                    "{}\t{}\t{}\t{}{}",
+                    text(&template["slug"]),
+                    text(&template["kind"]),
+                    text(&template["icon"]),
+                    title(template),
+                    default
+                )
+            }),
+    )
+}
+
 pub fn tree(value: &Value) -> String {
     fn walk(node: &Value, depth: usize, out: &mut Vec<String>) {
         out.push(format!(
