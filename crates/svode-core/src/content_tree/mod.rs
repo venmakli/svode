@@ -279,27 +279,23 @@ fn is_readme_name(name: &str) -> bool {
 /// Direct markers of a directory on disk, whatever the tree visibility
 /// policy shows of them.
 pub fn source_directory_facts(dir: &Path) -> Result<DirectoryFacts, std::io::Error> {
-    let mut has_head = false;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        if is_readme_name(&entry.file_name().to_string_lossy()) && entry.file_type()?.is_file() {
-            has_head = true;
-            break;
-        }
-    }
-    Ok(DirectoryFacts {
-        has_head,
-        has_schema: is_regular_source(&dir.join("schema.yaml")),
-        has_app: is_regular_source(&dir.join("app.yaml")),
-    })
+    directory_markers(dir, |_| true).map(|(facts, _)| facts)
 }
 
 /// Find a readme.md file inside a directory (case-insensitive).
-/// Returns the absolute path if found.
 fn find_readme(
     base: &Path,
     dir: &Path,
     policy: &TreeIgnorePolicy,
+) -> Result<Option<std::path::PathBuf>, std::io::Error> {
+    find_readme_where(dir, |path| {
+        !policy.is_ignored_rel(path.strip_prefix(base).unwrap_or(path), TreePathKind::File)
+    })
+}
+
+fn find_readme_where(
+    dir: &Path,
+    visible: impl Fn(&Path) -> bool,
 ) -> Result<Option<std::path::PathBuf>, std::io::Error> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -307,11 +303,7 @@ fn find_readme(
         if !is_readme_name(&entry.file_name().to_string_lossy()) {
             continue;
         }
-        let rel = path.strip_prefix(base).unwrap_or(&path);
-        if policy.is_ignored_rel(rel, TreePathKind::File) {
-            continue;
-        }
-        if entry.file_type()?.is_file() {
+        if visible(&path) && entry.file_type()?.is_file() {
             return Ok(Some(path));
         }
     }
@@ -896,12 +888,20 @@ fn directory_facts(
     dir: &Path,
     policy: &TreeIgnorePolicy,
 ) -> Result<(DirectoryFacts, Option<std::path::PathBuf>), std::io::Error> {
+    directory_markers(dir, |path| {
+        !policy.is_ignored_rel(path.strip_prefix(base).unwrap_or(path), TreePathKind::File)
+    })
+}
+
+fn directory_markers(
+    dir: &Path,
+    visible: impl Fn(&Path) -> bool,
+) -> Result<(DirectoryFacts, Option<std::path::PathBuf>), std::io::Error> {
     let visible_marker = |name: &str| {
         let path = dir.join(name);
-        is_regular_source(&path)
-            && !policy.is_ignored_rel(path.strip_prefix(base).unwrap_or(&path), TreePathKind::File)
+        visible(&path) && is_regular_source(&path)
     };
-    let readme = find_readme(base, dir, policy)?;
+    let readme = find_readme_where(dir, &visible)?;
     Ok((
         DirectoryFacts {
             has_head: readme.is_some(),

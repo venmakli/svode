@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use svode_core::content_tree::{
     TreeChildKind, build_tree, find_project_files, list_project_children,
@@ -242,6 +242,43 @@ fn scope_owner_facts_follow_the_tree_marker_rule_for_every_owner_form() {
         );
     }
     assert!(scope_owner_facts(root, "../outside.md").is_err());
+}
+
+#[test]
+fn explicitly_opened_template_directories_keep_their_physical_markers() {
+    use svode_core::content_tree::owner::{ScopeOwnerIdentity, scope_owner_facts};
+    use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
+
+    let space = tempfile::tempdir().unwrap();
+    let root = space.path();
+    fs::create_dir_all(root.join("tasks/.templates/folder")).unwrap();
+    fs::create_dir_all(root.join("tasks/.templates/nested")).unwrap();
+    fs::write(root.join("tasks/schema.yaml"), "columns: []\nviews: []").unwrap();
+    fs::write(
+        root.join("tasks/.templates/folder/readme.md"),
+        "folder body",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tasks/.templates/nested/README.md"),
+        "nested body",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tasks/.templates/nested/schema.yaml"),
+        "columns: []\nviews: []",
+    )
+    .unwrap();
+
+    let folder = scope_owner_facts(root, "tasks/.templates/folder/README.md").unwrap();
+    assert_eq!(folder.identity, ScopeOwnerIdentity::PageDirectory);
+    assert_eq!(folder.content_path, "tasks/.templates/folder/readme.md");
+    let nested = scope_owner_facts(root, "tasks/.templates/nested").unwrap();
+    assert_eq!(nested.identity, ScopeOwnerIdentity::CollectionDirectory);
+    assert_eq!(nested.content_path, "tasks/.templates/nested/README.md");
+    let policy = TreeIgnorePolicy::from_space_root(root);
+    assert!(policy.is_ignored_rel(Path::new(&folder.content_path), TreePathKind::File));
+    assert!(policy.is_ignored_rel(Path::new(&nested.owner_path), TreePathKind::Directory));
 }
 
 #[test]

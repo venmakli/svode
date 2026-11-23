@@ -3,9 +3,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::children::DirectoryKind;
+use crate::collections::engine::{SCHEMA_FILE, TEMPLATES_DIR, template_path_in_space};
+use crate::page::ChildSpaceRoots;
+
+use super::children::{DirectoryKind, is_regular_source};
 use super::policy::TreeIgnorePolicy;
-use super::{ContentTreeError, directory_facts, is_readme_name, normalize_parent_path};
+use super::{
+    ContentTreeError, directory_facts, directory_markers, is_readme_name, normalize_parent_path,
+};
 
 /// Scope owner identity of one content target, by the same direct-marker rule
 /// the content tree uses for its nodes.
@@ -85,8 +90,22 @@ pub fn scope_owner_facts(space: &Path, path: &str) -> Result<ScopeOwnerFacts, Co
     if !owner_abs.is_dir() {
         return Err(ContentTreeError::FileNotFound(rel));
     }
-    let policy = TreeIgnorePolicy::from_space_root(space);
-    let (facts, readme) = directory_facts(space, &owner_abs, &policy)?;
+    let collection = Path::new(&owner_rel)
+        .parent()
+        .filter(|path| path.file_name().is_some_and(|name| name == TEMPLATES_DIR))
+        .and_then(Path::parent);
+    let (facts, readme) =
+        if collection.is_some_and(|path| is_regular_source(&space.join(path).join(SCHEMA_FILE))) {
+            // An explicit template editor uses physical markers in its hidden directory.
+            let canonical_space = space.canonicalize()?;
+            let children = ChildSpaceRoots::read(&canonical_space)?;
+            template_path_in_space(&canonical_space, &children, &owner_abs)
+                .map_err(|_| ContentTreeError::PathNotAccessible(owner_rel.clone()))?;
+            directory_markers(&owner_abs, |_| true)?
+        } else {
+            let policy = TreeIgnorePolicy::from_space_root(space);
+            directory_facts(space, &owner_abs, &policy)?
+        };
     let identity = match facts.kind() {
         DirectoryKind::Collection => ScopeOwnerIdentity::CollectionDirectory,
         DirectoryKind::Page => ScopeOwnerIdentity::PageDirectory,
