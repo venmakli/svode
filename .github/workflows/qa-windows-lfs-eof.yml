@@ -1,0 +1,40 @@
+name: QA Windows LFS EOF
+
+on:
+  push:
+    branches:
+      - qa/windows-lfs-eof-20261124
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  lfs:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: Svode-windows-nsis
+          run-id: 44998445223
+          github-token: ${{ github.token }}
+          path: installer
+      - name: Install Svode 0.0.11
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem installer -Filter *-setup.exe -Recurse | Select-Object -First 1
+          if (-not $installer) { throw "Windows installer missing" }
+          $dir = Join-Path $env:RUNNER_TEMP 'Svode QA'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "NSIS install failed ($($process.ExitCode))" }
+          $binary = Join-Path $dir 'svode-lfs.exe'
+          if (-not (Test-Path -LiteralPath $binary)) { throw "Installed LFS agent missing" }
+          "QA_LFS_BINARY=$binary" >> $env:GITHUB_ENV
+      - name: Compare agent startup and LFS download
+        shell: pwsh
+        run: |
+          python -u .github/scripts/qa-windows-lfs-eof.py $env:QA_LFS_BINARY
