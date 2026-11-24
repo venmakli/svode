@@ -3016,6 +3016,115 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn qwen_windows_chat_uses_listed_spelling_in_the_checked_space_after_restart() {
+        use crate::agent_sessions::chat::chat_target;
+        use crate::agent_sessions::scope::project_folders;
+
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project = temp.path().join("Project Пример");
+        let child = project.join("Child Space");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&child).unwrap();
+        fs::create_dir(&outside).unwrap();
+        write_root_config(
+            &project,
+            vec![
+                space_ref("child", "Child Space", None),
+                space_ref("missing", "missing", None),
+            ],
+        );
+        let project = project.canonicalize().unwrap();
+        let child = child.canonicalize().unwrap();
+        let ordinary_root = PathBuf::from(svode_core::system_path::user_facing_path(&project));
+        let ordinary_child = PathBuf::from(svode_core::system_path::user_facing_path(&child));
+        let project_str = ordinary_root.to_string_lossy().into_owned();
+        assert_eq!(project_folders(&project), [project.clone(), child.clone()]);
+        let state = AgentSessionsState::with_home(home.clone());
+        let records = vec![
+            ("normal-root", ordinary_root.as_path(), LISTED_AT),
+            ("legacy-root", project.as_path(), LISTED_AT),
+            ("normal-child", ordinary_child.as_path(), LISTED_AT),
+            ("legacy-child", child.as_path(), LISTED_AT),
+            ("unrelated", outside.as_path(), LISTED_AT),
+        ];
+        acp_list(&state, "qwen-code", true, records.clone());
+        let assert_targets = |state: &AgentSessionsState| {
+            let listed = list(state, &project);
+            assert_eq!(listed.sessions.len(), 4);
+            assert_eq!(
+                listed.summary.unresolved_candidates,
+                if listed.cache.mode == AgentSessionsCacheMode::Current {
+                    1
+                } else {
+                    0
+                }
+            );
+            for (id, checked, spelling, space) in [
+                ("normal-root", &project, &ordinary_root, None),
+                ("legacy-root", &project, &project, None),
+                ("normal-child", &child, &ordinary_child, Some("child")),
+                ("legacy-child", &child, &child, Some("child")),
+            ] {
+                let catalogue_id = format!("qwen-code:{id}");
+                let shown = by_id(&listed, &catalogue_id);
+                assert_eq!(shown.space_id.as_deref(), space);
+                assert_eq!(shown.acp_cwd.as_deref(), Some(spelling.as_path()));
+                let target = chat_target(
+                    state,
+                    project_str.clone(),
+                    &catalogue_id,
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(target.key, SessionKey::from_acp("qwen-code", id, true));
+                assert_eq!(&target.cwd, checked);
+                assert_eq!(target.qwen_cwd.as_deref(), Some(spelling.as_path()));
+            }
+            assert!(
+                chat_target(
+                    state,
+                    project_str.clone(),
+                    "qwen-code:unrelated",
+                    Vec::new(),
+                    Vec::new()
+                )
+                .unwrap()
+                .is_none()
+            );
+        };
+
+        assert_targets(&state);
+        state.acp_lists.apply(
+            "qwen-code",
+            Err(svode_agents::AgentRuntimeError::Timeout),
+            0,
+        );
+        let stale = list(&state, &project);
+        assert!(
+            stale
+                .sources
+                .iter()
+                .any(|source| source.source == AgentAdapterKind::QwenCode.id()
+                    && source.status == AgentSessionSourceStatus::Stale)
+        );
+        assert_targets(&state);
+        drop(state);
+
+        let restarted = AgentSessionsState::with_home(home);
+        assert_eq!(
+            list(&restarted, &project).cache.mode,
+            AgentSessionsCacheMode::StaleSnapshot
+        );
+        assert_targets(&restarted);
+        acp_list(&restarted, "qwen-code", true, records);
+        assert_targets(&restarted);
+    }
+
     /// A native status source of an agent of `07`, as slices 8.1–8.5 add
     /// them: its reads, or the problem of its store.
     struct StoreSource(Result<HashMap<String, NativeLogRead>, String>);

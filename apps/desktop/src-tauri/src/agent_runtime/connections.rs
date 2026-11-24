@@ -28,7 +28,7 @@ use svode_agents::turns::TurnMark;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterRefusal};
 use svode_agents::{
     AcpLaunch, AgentCheck, AgentInfo, AgentRuntime, AgentRuntimeError, ConnectionLease,
-    SettingValue,
+    ExistingSessionDirectory, SettingValue,
 };
 use svode_core::agent_adapters::AgentAdapterKind;
 
@@ -466,17 +466,18 @@ impl AgentConnections {
     /// read without a writer carries the values its `native` settings match
     /// (R2). Opening never sends a prompt, and a session a managed terminal
     /// drives is left to it.
-    pub async fn open_session(
+    pub async fn open_session<'a>(
         &self,
         agent: &str,
         session: &SessionKey,
-        cwd: &Path,
+        directory: impl Into<ExistingSessionDirectory<'a>>,
         liveness: ExternalLiveness,
         turn_open: bool,
         intent: OpenIntent,
         settings: &[SettingValue],
         native: Option<&NativeSessionSettings>,
     ) -> Result<SessionOpening, AgentRuntimeError> {
+        let directory = directory.into();
         if self.runtime.writers().writer(session) == Some(Writer::Pty) {
             return Ok(SessionOpening::TerminalActive);
         }
@@ -492,7 +493,7 @@ impl AgentConnections {
         if intent == OpenIntent::Read {
             match self
                 .runtime
-                .read_session(lease.connection(), session, cwd, liveness, turn_open)
+                .read_session(lease.connection(), session, directory, liveness, turn_open)
                 .await
             {
                 Err(AgentRuntimeError::ReadOnlyUnsupported) => {}
@@ -514,7 +515,7 @@ impl AgentConnections {
             .open_session(
                 lease.connection(),
                 session,
-                cwd,
+                directory,
                 liveness,
                 unknown,
                 settings,

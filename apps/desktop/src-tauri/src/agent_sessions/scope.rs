@@ -1,12 +1,13 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use svode_core::content_tree::{ProjectChild, list_project_children};
+use svode_core::page::SpaceReadiness;
+
 use super::types::{
     AgentSessionScope, AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
 };
 use crate::error::AppError;
-use crate::space::content_tree;
-use crate::space::types::{SpaceInfo, SpaceStatus};
 
 #[derive(Debug, Clone)]
 pub(super) struct ScopeIndex {
@@ -24,7 +25,7 @@ struct ScopeEntry {
 }
 
 impl ScopeIndex {
-    pub(super) fn new(project: &Path, child_spaces: Vec<SpaceInfo>) -> Result<Self, AppError> {
+    pub(super) fn new(project: &Path, child_spaces: Vec<ProjectChild>) -> Result<Self, AppError> {
         let project_path = project.to_string_lossy().into_owned();
         let mut entries = vec![ScopeEntry {
             kind: AgentSessionScopeKind::Project,
@@ -36,8 +37,7 @@ impl ScopeIndex {
         }];
 
         for space in child_spaces {
-            let raw_path = PathBuf::from(&space.path);
-            let Some(path) = normalize_existing_or_lexical(&raw_path) else {
+            let Some(path) = normalize_existing_or_lexical(&space.path) else {
                 continue;
             };
             entries.push(ScopeEntry {
@@ -90,13 +90,15 @@ pub(super) fn project_folders(project: &Path) -> Vec<PathBuf> {
         .chain(
             spaces
                 .iter()
-                .filter_map(|space| normalize_existing_or_lexical(Path::new(&space.path))),
+                .filter(|space| !cfg!(windows) || space.status == SpaceReadiness::Ready)
+                .filter_map(|space| normalize_existing_or_lexical(&space.path))
+                .filter(|path| !cfg!(windows) || (path.starts_with(project) && path.is_dir())),
         )
         .collect()
 }
 
-pub(super) fn load_child_spaces(project: &Path) -> Result<Vec<SpaceInfo>, AppError> {
-    match content_tree::list_child_spaces(project) {
+pub(super) fn load_child_spaces(project: &Path) -> Result<Vec<ProjectChild>, AppError> {
+    match list_project_children(project).map_err(AppError::from) {
         Ok(spaces) => Ok(spaces),
         Err(AppError::FileNotFound(_)) => Ok(Vec::new()),
         Err(error) => Err(error),
@@ -126,11 +128,11 @@ pub(super) fn normalize_project_path(project_path: &str) -> Result<PathBuf, AppE
     Ok(normalized)
 }
 
-fn scope_status(status: SpaceStatus) -> AgentSessionScopeStatus {
+fn scope_status(status: SpaceReadiness) -> AgentSessionScopeStatus {
     match status {
-        SpaceStatus::Ready => AgentSessionScopeStatus::Ready,
-        SpaceStatus::Missing => AgentSessionScopeStatus::Missing,
-        SpaceStatus::Broken => AgentSessionScopeStatus::Broken,
+        SpaceReadiness::Ready => AgentSessionScopeStatus::Ready,
+        SpaceReadiness::Missing => AgentSessionScopeStatus::Missing,
+        SpaceReadiness::Broken => AgentSessionScopeStatus::Broken,
     }
 }
 

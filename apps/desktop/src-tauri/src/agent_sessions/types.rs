@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use svode_agents::identity::{IdentityNamespace, SessionKey};
@@ -163,6 +165,10 @@ pub struct AgentSession {
     /// `source_session_id`: the tip of a Hermes chain (`07` N6).
     #[serde(skip)]
     pub(crate) resume_session_id: Option<String>,
+    /// The working-directory spelling held by the ACP source, before the
+    /// catalogue resolved it to a canonical project or Space folder.
+    #[serde(skip)]
+    pub(crate) acp_cwd: Option<PathBuf>,
     /// The native evidence of the turn tells that a process outside Svode
     /// drives the session (Stage 10 `02` C7, `07` N6).
     #[serde(skip)]

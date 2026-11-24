@@ -2081,6 +2081,7 @@ fn list_runtime(list: ListBounds) -> AgentRuntime {
     })
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn a_folder_list_sends_its_cwd_on_every_page() {
     let runtime = AgentRuntime::default();
@@ -2113,6 +2114,219 @@ async fn a_folder_list_sends_its_cwd_on_every_page() {
         }
     );
     assert_eq!(list.unwrap().sessions.len(), 2);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn qwen_windows_catalog_reads_both_spellings_and_prefers_the_ordinary_key() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let canonical = root.join("Project Пример");
+    std::fs::create_dir(&canonical).unwrap();
+    let legacy = canonical.to_str().unwrap();
+    assert!(legacy.starts_with(r"\\?\"));
+    let ordinary = svode_core::system_path::user_facing_path(&canonical);
+    let reported_case = ordinary.to_lowercase();
+    let outside = root.join("Unrelated");
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("qwen-code"));
+    let (list, ()) = tokio::join!(runtime.list_folder_sessions(id, &canonical), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        for (params, result) in [
+            (
+                json!({ "cwd": ordinary }),
+                json!({ "sessions": [listed_entry("shared", &ordinary), listed_entry("old", outside.to_str().unwrap())], "nextCursor": "page2" }),
+            ),
+            (
+                json!({ "cwd": ordinary, "cursor": "page2" }),
+                json!({ "sessions": [listed_entry("normal", &reported_case)] }),
+            ),
+            (
+                json!({ "cwd": legacy }),
+                json!({ "sessions": [listed_entry("shared", legacy), listed_entry("old", legacy)], "nextCursor": "page2" }),
+            ),
+            (
+                json!({ "cwd": legacy, "cursor": "page2" }),
+                json!({ "sessions": [listed_entry("another-old", legacy)] }),
+            ),
+        ] {
+            let request = agent.expect("session/list").await;
+            assert_eq!(request["params"], params);
+            agent.reply(&request, result).await;
+        }
+        agent.silent().await;
+    });
+    let list = list.unwrap();
+    let entries = list
+        .sessions
+        .iter()
+        .map(|session| {
+            (
+                session.key.session_id.as_str(),
+                session.cwd.to_str().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        [
+            ("shared", ordinary.as_str()),
+            ("normal", ordinary.as_str()),
+            ("old", legacy),
+            ("another-old", legacy)
+        ]
+    );
+    assert_eq!(list.skipped, 2);
+    assert!(!list.truncated);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn qwen_windows_catalog_shares_the_page_limit_across_spellings() {
+    let temp = tempfile::tempdir().unwrap();
+    let canonical = temp.path().canonicalize().unwrap();
+    let ordinary = svode_core::system_path::user_facing_path(&canonical);
+    let runtime = list_runtime(ListBounds {
+        pages: 2,
+        ..ListBounds::default()
+    });
+    let (id, mut agent) = attached_with(&runtime, &listing("qwen-code"));
+    let (list, ()) = tokio::join!(runtime.list_folder_sessions(id, &canonical), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        for (params, result) in [
+            (
+                json!({ "cwd": ordinary }),
+                json!({ "sessions": [listed_entry("normal", &ordinary)], "nextCursor": "2" }),
+            ),
+            (
+                json!({ "cwd": ordinary, "cursor": "2" }),
+                json!({ "sessions": [] }),
+            ),
+        ] {
+            let request = agent.expect("session/list").await;
+            assert_eq!(request["params"], params);
+            agent.reply(&request, result).await;
+        }
+        agent.silent().await;
+    });
+    let list = list.unwrap();
+    assert_eq!(list.sessions.len(), 1);
+    assert!(list.truncated);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn qwen_windows_catalog_surfaces_an_error_from_the_legacy_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let canonical = temp.path().canonicalize().unwrap();
+    let ordinary = svode_core::system_path::user_facing_path(&canonical);
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("qwen-code"));
+    let (list, ()) = tokio::join!(runtime.list_folder_sessions(id, &canonical), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        let request = agent.expect("session/list").await;
+        assert_eq!(request["params"], json!({ "cwd": ordinary }));
+        agent
+            .reply(
+                &request,
+                json!({ "sessions": [listed_entry("normal", &ordinary)] }),
+            )
+            .await;
+        let request = agent.expect("session/list").await;
+        assert_eq!(request["params"], json!({ "cwd": canonical }));
+        agent.reply(&request, json!({ "sessions": false })).await;
+    });
+    assert!(matches!(list, Err(AgentRuntimeError::Protocol { .. })));
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Degraded
+    );
+}
+
+#[tokio::test]
+async fn qwen_acp_global_catalog_omits_the_folder_filter() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("qwen-code"));
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        let request = agent.expect("session/list").await;
+        assert_eq!(request["params"], json!({}));
+        agent.reply(&request, json!({ "sessions": [] })).await;
+        agent.silent().await;
+    });
+    assert_eq!(list.unwrap(), SessionList::default());
+}
+
+#[tokio::test]
+async fn qwen_acp_replays_and_attaches_with_the_selected_spelling() {
+    let temp = tempfile::tempdir().unwrap();
+    let checked = temp.path().canonicalize().unwrap();
+    let ordinary = PathBuf::from(svode_core::system_path::user_facing_path(&checked));
+    let qwen = AdapterRuntimeRegistry;
+    for (method, read_only, listed) in [
+        ("session/load", true, &checked),
+        ("session/load", false, &ordinary),
+        ("session/resume", false, &checked),
+        ("session/resume", false, &ordinary),
+    ] {
+        let runtime = AgentRuntime::default();
+        let (id, mut agent) = attached_with(
+            &runtime,
+            &AcpLaunch {
+                read_only_open: true,
+                ..listing("qwen-code")
+            },
+        );
+        let key = SessionKey::from_acp("qwen-code", "s1", false);
+        let cwd = qwen.qwen_session_cwd(&checked, Some(listed));
+        let directory = ExistingSessionDirectory::qwen(&checked, &cwd);
+        let (opened, ()) = tokio::join!(
+            async {
+                if read_only {
+                    runtime
+                        .read_session(id, &key, directory, ExternalLiveness::Free, false)
+                        .await
+                } else {
+                    runtime
+                        .open_session(
+                            id,
+                            &key,
+                            directory,
+                            ExternalLiveness::Free,
+                            UnknownLiveness::Confirmed,
+                            &[],
+                        )
+                        .await
+                }
+            },
+            async {
+                agent
+                    .initialize(if method == "session/load" {
+                        json!({ "loadSession": true })
+                    } else {
+                        json!({ "sessionCapabilities": { "resume": {} } })
+                    })
+                    .await;
+                let request = agent.expect(method).await;
+                assert_eq!(
+                    request["params"],
+                    json!({ "sessionId": "s1", "cwd": listed, "mcpServers": [] })
+                );
+                agent.reply(&request, json!({})).await;
+                agent.silent().await;
+            },
+        );
+        opened.unwrap();
+        assert_eq!(runtime.session(&key).unwrap().cwd, checked);
+    }
 }
 
 #[tokio::test]

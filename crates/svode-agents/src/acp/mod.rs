@@ -4,6 +4,7 @@
 pub(crate) mod mcp;
 pub(crate) mod media;
 pub(crate) mod normalize;
+pub(crate) mod qwen;
 pub(crate) mod rpc;
 mod wire;
 

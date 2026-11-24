@@ -15,7 +15,7 @@ use svode_agents::status::{
     SessionState, SessionStatus, StatusConfidence, StatusSource, StopReason,
 };
 use svode_agents::writer::ExternalLiveness;
-use svode_core::agent_adapters::AgentId;
+use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
 
 pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 
@@ -225,6 +225,10 @@ pub(super) fn map_listed(
     saved_outcomes: &[SavedTerminalOutcome],
 ) -> AgentSession {
     let id = catalog_session_id(&source, &listed.key);
+    let acp_cwd = (cfg!(windows)
+        && source.builtin() == Some(AgentAdapterKind::QwenCode)
+        && listing.is_none())
+    .then_some(listed.cwd);
     // Only a native id is the target of the agent's CLI resume and of a
     // managed PTY of Svode.
     let listed_namespace = listed.key.namespace;
@@ -331,6 +335,7 @@ pub(super) fn map_listed(
         },
         alias_ids,
         resume_session_id,
+        acp_cwd,
         native_external_writer,
     };
     if native {
@@ -515,6 +520,8 @@ pub(super) fn map_runtime_session(
         },
         alias_ids: Vec::new(),
         resume_session_id: None,
+        acp_cwd: (cfg!(windows) && runtime.key.agent == AgentAdapterKind::QwenCode.as_str())
+            .then(|| runtime.cwd.clone()),
         native_external_writer: false,
     }
 }

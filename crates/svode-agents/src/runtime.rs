@@ -116,6 +116,46 @@ impl Default for Retention {
     }
 }
 
+/// A checked working directory and, for Windows Qwen Code, the spelling
+/// that addresses the same directory in its existing chat store.
+#[derive(Clone, Copy)]
+pub struct ExistingSessionDirectory<'a> {
+    checked: &'a Path,
+    qwen_cwd: Option<&'a Path>,
+}
+
+impl<'a> ExistingSessionDirectory<'a> {
+    pub fn qwen(checked: &'a Path, qwen_cwd: &'a Path) -> Self {
+        Self {
+            checked,
+            qwen_cwd: Some(qwen_cwd),
+        }
+    }
+
+    fn request_cwd(self, adapter: Option<AgentAdapterKind>) -> &'a Path {
+        if cfg!(windows) && adapter == Some(AgentAdapterKind::QwenCode) {
+            self.qwen_cwd.unwrap_or(self.checked)
+        } else {
+            self.checked
+        }
+    }
+}
+
+impl<'a> From<&'a Path> for ExistingSessionDirectory<'a> {
+    fn from(checked: &'a Path) -> Self {
+        Self {
+            checked,
+            qwen_cwd: None,
+        }
+    }
+}
+
+impl<'a> From<&'a PathBuf> for ExistingSessionDirectory<'a> {
+    fn from(checked: &'a PathBuf) -> Self {
+        checked.as_path().into()
+    }
+}
+
 /// How to start one agent's ACP entrypoint. One launch provenance per
 /// connection: a Routine caller token in `env` never serves sessions of
 /// another origin.
@@ -761,53 +801,117 @@ impl AgentRuntime {
         let deadline = Instant::now() + bounds.timeout;
         let mut list = SessionList::default();
         let mut keys = HashSet::new();
-        let mut cursors = HashSet::new();
-        let mut cursor: Option<String> = None;
-        for page in 1.. {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                connection.set_state(ConnectionState::Degraded);
-                return Err(AgentRuntimeError::Timeout);
+        let qwen_windows =
+            cfg!(windows) && connection.adapter() == Some(AgentAdapterKind::QwenCode);
+        let qwen_folder = folder.filter(|_| qwen_windows);
+        let ordinary = match qwen_folder {
+            Some(folder) => {
+                let checked = folder.to_path_buf();
+                connection
+                    .list_filesystem_check(deadline, move || acp::qwen::ordinary_cwd(&checked))
+                    .await?
             }
-            let response = connection
-                .call(
-                    acp::SESSION_LIST,
-                    acp::list_request(cursor.as_deref(), folder),
-                    Some(remaining),
-                )
-                .await?;
-            let received = acp::list_page(response).map_err(|message| {
-                connection.set_state(ConnectionState::Degraded);
-                AgentRuntimeError::Protocol { message }
-            })?;
-            list.skipped += received.malformed;
-            for entry in received.entries {
-                if list.sessions.len() >= bounds.sessions {
+            None => None,
+        };
+        let mut resolved_reports: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
+        let mut pages = 0;
+        let cwds = std::iter::once(ordinary.as_deref().or(folder))
+            .chain(folder.filter(|_| ordinary.is_some()).map(Some));
+        for cwd in cwds {
+            let mut cursors = HashSet::new();
+            let mut cursor: Option<String> = None;
+            loop {
+                if pages >= bounds.pages.max(1) {
                     list.truncated = true;
-                    break;
+                    return Ok(list);
                 }
-                match catalog::listed(
-                    entry,
-                    &connection.agent,
-                    connection.acp_id_is_native,
-                    &bounds,
-                ) {
-                    Some(session) if keys.insert(session.key.clone()) => {
-                        list.sessions.push(session)
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    connection.set_state(ConnectionState::Degraded);
+                    return Err(AgentRuntimeError::Timeout);
+                }
+                pages += 1;
+                let response = connection
+                    .call(
+                        acp::SESSION_LIST,
+                        acp::list_request(cursor.as_deref(), cwd),
+                        Some(remaining),
+                    )
+                    .await?;
+                let received = acp::list_page(response).map_err(|message| {
+                    connection.set_state(ConnectionState::Degraded);
+                    AgentRuntimeError::Protocol { message }
+                })?;
+                list.skipped += received.malformed;
+                for entry in received.entries {
+                    if list.sessions.len() >= bounds.sessions {
+                        list.truncated = true;
+                        return Ok(list);
                     }
-                    _ => list.skipped += 1,
+                    let Some(mut session) = catalog::listed(
+                        entry,
+                        &connection.agent,
+                        connection.acp_id_is_native,
+                        &bounds,
+                    ) else {
+                        list.skipped += 1;
+                        continue;
+                    };
+                    if let (Some(folder), Some(cwd)) = (qwen_folder, cwd) {
+                        let reported = session.cwd.as_path();
+                        if reported == folder || ordinary.as_deref() == Some(reported) {
+                            // This spelling found the key in Qwen's store.
+                            session.cwd = cwd.to_path_buf();
+                        } else if acp::qwen::report_may_belong_to_folder(
+                            reported,
+                            folder,
+                            ordinary.as_deref(),
+                        ) {
+                            // Check each additional reported path once.
+                            let resolved = match resolved_reports.get(&session.cwd) {
+                                Some(resolved) => resolved.clone(),
+                                None => {
+                                    let reported = session.cwd.clone();
+                                    let resolved = connection
+                                        .list_filesystem_check(deadline, move || {
+                                            reported.canonicalize().ok()
+                                        })
+                                        .await?;
+                                    if resolved_reports.len() < bounds.sessions {
+                                        resolved_reports
+                                            .insert(session.cwd.clone(), resolved.clone());
+                                    }
+                                    resolved
+                                }
+                            };
+                            match resolved.as_deref() {
+                                Some(path) if path == folder => session.cwd = cwd.to_path_buf(),
+                                Some(path) if path.starts_with(folder) => {}
+                                _ => {
+                                    list.skipped += 1;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            list.skipped += 1;
+                            continue;
+                        }
+                    }
+                    if !keys.insert(session.key.clone()) {
+                        list.skipped += 1;
+                        continue;
+                    }
+                    list.sessions.push(session);
                 }
-            }
-            match received.next_cursor {
-                Some(next) if !list.truncated => {
-                    // A repeated cursor would page forever.
-                    if page >= bounds.pages || !cursors.insert(next.clone()) {
+                match received.next_cursor {
+                    None => break,
+                    Some(next) if cursors.insert(next.clone()) => cursor = Some(next),
+                    Some(_) => {
+                        // A repeated cursor would page forever.
                         list.truncated = true;
                         break;
                     }
-                    cursor = Some(next);
                 }
-                _ => break,
             }
         }
         Ok(list)
@@ -1393,15 +1497,16 @@ impl AgentRuntime {
     /// refuses, closes the session again and refuses the opening. A
     /// session this connection already drives is left as it is, with the
     /// plan applied to it.
-    pub async fn open_session(
+    pub async fn open_session<'a>(
         &self,
         id: ConnectionId,
         key: &SessionKey,
-        cwd: &Path,
+        directory: impl Into<ExistingSessionDirectory<'a>>,
         liveness: ExternalLiveness,
         unknown: UnknownLiveness,
         settings: &[SettingValue],
     ) -> Result<(), AgentRuntimeError> {
+        let directory = directory.into();
         let connection = self.connection(id)?;
         connection.require_open()?;
         if *key
@@ -1468,7 +1573,7 @@ impl AgentRuntime {
             &connection,
             &acp_id,
             key.clone(),
-            cwd,
+            directory.checked,
             history,
             method == acp::SESSION_LOAD,
             Some(claim),
@@ -1477,7 +1582,7 @@ impl AgentRuntime {
         let result = connection
             .call(
                 method,
-                acp::open_session_request(&acp_id, cwd),
+                acp::open_session_request(&acp_id, directory.request_cwd(connection.adapter())),
                 self.timeout(),
             )
             .await;
@@ -1520,14 +1625,15 @@ impl AgentRuntime {
     /// and its store alone or that it refuses such a load (DF-177 R1). The
     /// snapshot does not follow the session afterwards: reading it again
     /// replays it anew. A session this runtime drives is left as it is.
-    pub async fn read_session(
+    pub async fn read_session<'a>(
         &self,
         id: ConnectionId,
         key: &SessionKey,
-        cwd: &Path,
+        directory: impl Into<ExistingSessionDirectory<'a>>,
         liveness: ExternalLiveness,
         turn_open: bool,
     ) -> Result<(), AgentRuntimeError> {
+        let directory = directory.into();
         let connection = self.connection(id)?;
         connection.require_open()?;
         if *key
@@ -1571,7 +1677,7 @@ impl AgentRuntime {
             &connection,
             &acp_id,
             key.clone(),
-            cwd,
+            directory.checked,
             HistoryState {
                 source: HistorySource::Replay,
                 available: true,
@@ -1584,7 +1690,7 @@ impl AgentRuntime {
         let result = connection
             .call(
                 acp::SESSION_LOAD,
-                acp::open_session_request(&acp_id, cwd),
+                acp::open_session_request(&acp_id, directory.request_cwd(connection.adapter())),
                 self.timeout(),
             )
             .await;
@@ -2327,6 +2433,23 @@ impl Session {
 }
 
 impl Connection {
+    async fn list_filesystem_check<T: Send + 'static>(
+        &self,
+        deadline: Instant,
+        check: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, AgentRuntimeError> {
+        let error =
+            match tokio::time::timeout_at(deadline, tokio::task::spawn_blocking(check)).await {
+                Ok(Ok(result)) => return Ok(result),
+                Ok(Err(error)) => AgentRuntimeError::Protocol {
+                    message: error.to_string(),
+                },
+                Err(_) => AgentRuntimeError::Timeout,
+            };
+        self.set_state(ConnectionState::Degraded);
+        Err(error)
+    }
+
     /// One agent call. Success restores a degraded connection; an error or
     /// timeout degrades it; a lost peer closes it.
     async fn call(

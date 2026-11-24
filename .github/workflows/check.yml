@@ -269,6 +269,24 @@ jobs:
           cargo test -p svode-cli --test lfs_registration_process
       - name: Chat paths of the agent runtime
         run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
+      - name: Qwen Code session catalogue and attach paths
+        run: cargo test -p svode-agents --lib -- qwen_windows_catalog qwen_acp_
+      - name: Qwen Code session catalogue scopes and restart
+        run: cargo test -p svode-desktop --lib -- qwen_windows_chat_uses_listed_spelling_in_the_checked_space_after_restart
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Qwen Code 0.24.7 replays both Windows cwd spellings
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'svode-qwen-fixture'
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $fixture 'package.json') -Value '{"private":true,"dependencies":{"@qwen-code/qwen-code":"0.24.7"}}'
+          bun install --cwd $fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SVODE_QWEN_TEST_NODE_ENTRY = Join-Path $fixture 'node_modules/@qwen-code/qwen-code/cli-entry.js'
+          cargo test -p svode-agents --test qwen_catalog_process -- --ignored --nocapture
       - name: Chat paths of Desktop
         run: cargo test -p svode-desktop --lib -- commands::space::tests::path_kind media::source::tests::a_local_file shell_open_scope
       # The paths WebView2 hands for files dropped from the Explorer, built

@@ -380,6 +380,13 @@ impl AdapterRuntimeRegistry {
         adapter == AgentAdapterKind::QwenCode
     }
 
+    /// The `cwd` to send when opening a Windows Qwen Code session. `checked`
+    /// is the host's canonical working directory and `listed` the spelling
+    /// that found the session, which can still include a verbatim prefix.
+    pub fn qwen_session_cwd(&self, checked: &Path, listed: Option<&Path>) -> PathBuf {
+        crate::acp::qwen::existing_cwd(checked, listed)
+    }
+
     /// Whether the agent's ACP `sessionId` is its native session id. E01:
     /// every listed id of Codex is the rollout `session_meta.id` and every
     /// listed id of Claude Code is the jsonl session UUID. Slice 3.2: the

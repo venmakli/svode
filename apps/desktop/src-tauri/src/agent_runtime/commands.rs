@@ -248,7 +248,7 @@ pub async fn agent_runtime_open_session(
         .open_session(
             &target.agent,
             &target.key,
-            &target.cwd,
+            target.directory(),
             target.liveness,
             target.turn_open,
             intent,
