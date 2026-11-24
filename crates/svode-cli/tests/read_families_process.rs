@@ -116,9 +116,13 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_named("project")
+}
+
+fn fixture_named(name: &str) -> Fixture {
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path().canonicalize().unwrap();
-    let root = base.join("project");
+    let root = base.join(name);
     write(
         &root.join(".svode/config.json"),
         r#"{"name":"Project","spaces":[{"id":"child","path":"child","repo":null},{"id":"gone","path":"gone","repo":"https://example.invalid/gone.git"}]}"#,
@@ -168,6 +172,127 @@ fn root_str(fixture: &Fixture) -> &str {
     fixture.root.to_str().unwrap()
 }
 
+fn public_fixture_path(path: &Path) -> &str {
+    let path = path.to_str().unwrap();
+    #[cfg(windows)]
+    let path = path.strip_prefix(r"\\?\").expect("canonical drive path");
+    path
+}
+
+#[test]
+fn public_project_paths_match_the_cli_target_and_point_to_the_registered_folders() {
+    let fixture = fixture_named("Project Пример");
+    let root = &fixture.root;
+    let child = root.join("child");
+    let deep = child.join("deep");
+    let project_path = public_fixture_path(root);
+    let config = root.join(".svode/config.json");
+    let mut content: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    content["spaces"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id": "broken", "path": "Broken Space", "repo": null
+        }));
+    fs::write(config, content.to_string()).unwrap();
+    write(&child.join(".svode/index.db"), "prior index");
+    let expected_spaces = [
+        ("root", "ready", root.clone()),
+        ("child", "ready", child.clone()),
+        ("gone", "missing", root.join("gone")),
+        ("broken", "broken", root.join("Broken Space")),
+    ];
+
+    for (cwd, selectors, id, space_path) in [
+        (
+            &fixture.elsewhere,
+            vec!["--project", project_path, "--space", "root"],
+            "root",
+            root,
+        ),
+        (
+            &fixture.elsewhere,
+            vec!["--project", project_path, "--space", "child"],
+            "child",
+            &child,
+        ),
+        (&deep, Vec::new(), "child", &child),
+    ] {
+        for command in [["project", "info"], ["space", "list"]] {
+            let mut args = selectors.clone();
+            args.extend(command);
+            let (exit, value) = json(cwd, &args);
+            assert_eq!(exit, 0, "{args:?}: {value}");
+            assert_eq!(value["target"]["projectPath"], project_path);
+            assert_eq!(
+                value["target"]["spacePath"],
+                public_fixture_path(space_path)
+            );
+            assert_eq!(value["target"]["spaceId"], id);
+            assert_eq!(value["activeMcpSpaceId"], id);
+            if command == ["project", "info"] {
+                assert_eq!(value["projectPath"], value["target"]["projectPath"]);
+                assert_eq!(value["activeSpacePath"], value["target"]["spacePath"]);
+            }
+
+            let spaces = value["spaces"].as_array().unwrap();
+            assert_eq!(spaces.len(), expected_spaces.len());
+            for (space, (id, status, path)) in spaces.iter().zip(&expected_spaces) {
+                assert_eq!(space["id"], *id);
+                assert_eq!(space["status"], *status);
+                let reported = space["path"].as_str().unwrap();
+                assert_eq!(reported, public_fixture_path(path));
+                assert!(Path::new(reported).is_absolute());
+                if *status == "ready" {
+                    assert_eq!(Path::new(reported).canonicalize().unwrap(), *path);
+                }
+            }
+
+            let output = svode(cwd, &args);
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            if command == ["project", "info"] {
+                assert_eq!(stdout.lines().nth(1), Some(project_path));
+            }
+            for (id, status, path) in &expected_spaces {
+                assert!(
+                    stdout
+                        .lines()
+                        .any(|line| line.starts_with(&format!("{id}\t"))
+                            && line
+                                .ends_with(&format!("\t{status}\t{}", public_fixture_path(path)))),
+                    "{stdout}"
+                );
+            }
+        }
+    }
+
+    let (exit, refused) = json(&deep, &["--space", "unknown", "space", "list"]);
+    assert_eq!(exit, 1);
+    assert_eq!(code(&refused), "SPACE_UNAVAILABLE");
+    assert_eq!(
+        refused["error"]["target"],
+        serde_json::json!({
+            "projectPath": project_path,
+            "spaceId": "unknown",
+        })
+    );
+    let (exit, refused) = json(&deep, &["page", "read", "--path", "../outside.md"]);
+    assert_eq!(exit, 1);
+    assert_eq!(code(&refused), "INVALID_PATH");
+    assert_eq!(refused["error"]["target"]["projectPath"], project_path);
+    assert_eq!(
+        refused["error"]["target"]["spacePath"],
+        public_fixture_path(&child)
+    );
+
+    let (exit, doctor) = json(&deep, &["doctor"]);
+    assert_eq!(exit, 0);
+    assert_eq!(doctor["doctor"]["spaces"][3]["status"], "broken");
+    assert_eq!(doctor["doctor"]["spaces"][3]["index"]["present"], false);
+    assert_eq!(doctor["doctor"]["spaces"][1]["index"]["present"], true);
+}
+
 #[test]
 fn target_falls_back_to_the_current_directory_and_explicit_selectors_win() {
     let fixture = fixture();
@@ -179,7 +304,7 @@ fn target_falls_back_to_the_current_directory_and_explicit_selectors_win() {
         &["page", "read", "--path", "notes/valid.md"],
     );
     assert_eq!(exit, 0, "{value}");
-    assert_eq!(value["target"]["projectPath"], root_str(&fixture));
+    assert_eq!(value["target"]["projectPath"], public_fixture_path(root));
     assert_eq!(value["target"]["spaceId"], "root");
     assert_eq!(value["page"]["body"], "Body\n");
 
@@ -187,9 +312,9 @@ fn target_falls_back_to_the_current_directory_and_explicit_selectors_win() {
     // Space is the default target of every command.
     let deep = child.join("deep");
     let (_, value) = json(&deep, &["page", "read", "--path", "note.md"]);
-    assert_eq!(value["target"]["projectPath"], root_str(&fixture));
+    assert_eq!(value["target"]["projectPath"], public_fixture_path(root));
     assert_eq!(value["target"]["spaceId"], "child");
-    assert_eq!(value["target"]["spacePath"], child.to_str().unwrap());
+    assert_eq!(value["target"]["spacePath"], public_fixture_path(&child));
     let (_, listing) = json(&deep, &["page", "list"]);
     assert_eq!(listing["target"]["spaceId"], "child");
     let (_, info) = json(&deep, &["project", "info"]);
@@ -236,7 +361,10 @@ fn target_falls_back_to_the_current_directory_and_explicit_selectors_win() {
         let (exit, value) = json(root, &["--space", space, "page", "list"]);
         assert_eq!(exit, 1);
         assert_eq!(code(&value), "SPACE_UNAVAILABLE");
-        assert_eq!(value["error"]["target"]["projectPath"], root_str(&fixture));
+        assert_eq!(
+            value["error"]["target"]["projectPath"],
+            public_fixture_path(root)
+        );
         assert!(value["error"]["target"].get("spacePath").is_none());
     }
 
@@ -345,7 +473,10 @@ fn source_reads_follow_the_shared_mapping_and_change_nothing() {
         let (exit, value) = json(root, &args);
         assert_eq!(exit, 1, "{args:?}: {value}");
         assert_eq!(code(&value), expected, "{args:?}");
-        assert_eq!(value["error"]["target"]["projectPath"], root_str(&fixture));
+        assert_eq!(
+            value["error"]["target"]["projectPath"],
+            public_fixture_path(root)
+        );
     }
 
     let human = svode(root, &["item", "read", "--path", "tasks/alpha.md"]);

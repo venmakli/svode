@@ -188,7 +188,10 @@ async fn a_project_created_outside_a_project_is_registered_and_later_commands_ad
     // `--project`.
     let (exit, listed) = fixture.json(&acme, &["page", "list"]);
     assert_eq!(exit, 0, "{listed}");
-    assert_eq!(listed["target"]["projectPath"], path);
+    assert_eq!(
+        listed["target"]["projectPath"],
+        svode_core::system_path::user_facing_path(&acme)
+    );
     let (exit, info) = fixture.json(&fixture.work, &["--project", "acme", "project", "info"]);
     assert_eq!(exit, 0, "{info}");
     assert_eq!(info["projectName"], "Acme");

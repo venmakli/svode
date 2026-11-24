@@ -148,8 +148,9 @@ fn reads_valid_pages_from_an_unrelated_cwd_with_relative_project() {
     assert_eq!(code, 0);
     assert_eq!(value["schemaVersion"], 1);
     assert_eq!(value["ok"], true);
-    assert_eq!(value["target"]["projectPath"], canonical.to_str().unwrap());
-    assert_eq!(value["target"]["spacePath"], canonical.to_str().unwrap());
+    let project_path = svode_core::system_path::user_facing_path(&canonical);
+    assert_eq!(value["target"]["projectPath"], project_path);
+    assert_eq!(value["target"]["spacePath"], project_path);
     assert_eq!(value["target"]["spaceId"], "root");
     assert_eq!(value["target"]["path"], "notes/valid.md");
     assert_eq!(value["page"]["path"], "notes/valid.md");
@@ -187,7 +188,7 @@ fn reads_valid_pages_from_an_unrelated_cwd_with_relative_project() {
     assert_eq!(child["target"]["spaceId"], "child");
     assert_eq!(
         child["target"]["spacePath"],
-        canonical.join("child").to_str().unwrap()
+        svode_core::system_path::user_facing_path(&canonical.join("child"))
     );
     assert_eq!(child["page"]["body"], "Child body");
 }
@@ -264,7 +265,7 @@ fn source_and_context_failures_have_stable_codes_and_exit_one() {
         assert_eq!(value["error"]["target"]["spaceId"], space);
         assert_eq!(
             value["error"]["target"]["projectPath"],
-            canonical.to_str().unwrap()
+            svode_core::system_path::user_facing_path(&canonical)
         );
         assert!(!value["error"]["message"].as_str().unwrap().is_empty());
     }

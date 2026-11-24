@@ -111,8 +111,12 @@ fn git(dir: &Path, args: &[&str]) -> bool {
 }
 
 fn fixture() -> Fixture {
+    fixture_named("project")
+}
+
+fn fixture_named(name: &str) -> Fixture {
     let temp = tempfile::tempdir().unwrap();
-    let project = temp.path().canonicalize().unwrap().join("project");
+    let project = temp.path().canonicalize().unwrap().join(name);
     write(
         &project.join(".svode/config.json"),
         &json!({
@@ -452,7 +456,10 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
     );
     assert_eq!(structured(&responses[&9])["item"]["body"], "Alpha body\n");
     let project_info = structured(&responses[&10]);
-    assert_eq!(project_info["projectPath"], project);
+    assert_eq!(
+        project_info["projectPath"],
+        public_fixture_path(&fixture.project)
+    );
     assert_eq!(project_info["activeMcpSpaceId"], "root");
     if fixture.git {
         // Repository access comes from the shared evidence store without a
@@ -791,6 +798,86 @@ fn an_index_that_cannot_be_prepared_is_a_business_error() {
 fn default_space(cwd: &Path, args: &[&str]) -> Value {
     let responses = session(cwd, args, &[call(1, "get_project_info", json!({}))]);
     structured(&responses[&1])["activeMcpSpaceId"].clone()
+}
+
+fn public_fixture_path(path: &Path) -> &str {
+    let path = path.to_str().unwrap();
+    #[cfg(windows)]
+    let path = path.strip_prefix(r"\\?\").expect("canonical drive path");
+    path
+}
+
+#[test]
+fn public_project_paths_follow_standalone_mcp_addressing() {
+    let fixture = fixture_named("Project Пример");
+    let root = &fixture.project;
+    let child = root.join("child");
+    let nested = child.join("nested");
+    fs::create_dir(&nested).unwrap();
+    let config = root.join(".svode/config.json");
+    let mut content: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    content["spaces"].as_array_mut().unwrap().extend([
+        json!({ "id": "missing", "path": "Missing Space", "repo": "https://example.invalid/missing.git" }),
+        json!({ "id": "broken", "path": "Broken Space", "repo": null }),
+    ]);
+    fs::write(config, content.to_string()).unwrap();
+    let expected_spaces = [
+        ("root", "ready", root.clone()),
+        ("child", "ready", child.clone()),
+        ("missing", "missing", root.join("Missing Space")),
+        ("broken", "broken", root.join("Broken Space")),
+    ];
+    let project = public_fixture_path(root);
+    let outside = fixture.temp.path();
+    for (cwd, args, id, active) in [
+        (
+            outside,
+            vec!["--project", project, "--space", "root"],
+            "root",
+            root,
+        ),
+        (
+            outside,
+            vec!["--project", project, "--space", "child"],
+            "child",
+            &child,
+        ),
+        (
+            nested.as_path(),
+            vec!["--project", project],
+            "child",
+            &child,
+        ),
+        (nested.as_path(), Vec::new(), "child", &child),
+    ] {
+        let responses = session(
+            cwd,
+            &args,
+            &[
+                call(1, "get_project_info", json!({})),
+                call(2, "list_spaces", json!({})),
+            ],
+        );
+        let info = structured(&responses[&1]);
+        let listing = structured(&responses[&2]);
+        assert_eq!(info["projectPath"], project);
+        assert_eq!(info["activeSpacePath"], public_fixture_path(active));
+        assert_eq!(info["activeMcpSpaceId"], id);
+        assert_eq!(listing["activeMcpSpaceId"], id);
+        assert_eq!(info["spaces"], listing["spaces"]);
+        let spaces = listing["spaces"].as_array().unwrap();
+        assert_eq!(spaces.len(), expected_spaces.len());
+        for (space, (id, status, path)) in spaces.iter().zip(&expected_spaces) {
+            assert_eq!(space["id"], *id);
+            assert_eq!(space["status"], *status);
+            let reported = space["path"].as_str().unwrap();
+            assert_eq!(reported, public_fixture_path(path));
+            assert!(Path::new(reported).is_absolute());
+            if *status == "ready" {
+                assert_eq!(Path::new(reported).canonicalize().unwrap(), *path);
+            }
+        }
+    }
 }
 
 #[test]
@@ -1268,7 +1355,7 @@ fn a_session_with_a_project_creates_another_and_keeps_its_own() {
         })
     );
     let info = live.ok("get_project_info", json!({}));
-    assert_eq!(info["projectPath"], project.to_str().unwrap());
+    assert_eq!(info["projectPath"], public_fixture_path(&project));
     let page = live.ok(
         "create_page",
         json!({ "parentPath": "", "title": "Kickoff", "content": "Agenda" }),

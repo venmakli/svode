@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 use svode_core::page::ResolvedSpaceTarget;
+use svode_core::system_path::user_facing_path;
 use svode_tools::error::ToolError;
 use svode_tools::host::{RequestTarget, ToolHost};
 use svode_tools::path::normalize_absolute;
@@ -65,7 +66,7 @@ impl Selectors<'_> {
             None => project_for_cwd(self.cwd).map_err(context_error)?,
         };
         let project = resolve_project(&project_dir).map_err(context_error)?;
-        let project_path = project.project_path.display().to_string();
+        let project_path = user_facing_path(&project.project_path);
         let space = resolve_default_space(project, self.space, self.cwd).map_err(|error| {
             let mut error = context_error(error);
             error
@@ -86,12 +87,12 @@ impl Target {
         let mut target = Map::new();
         target.insert(
             "projectPath".into(),
-            json!(self.space.project_path.display().to_string()),
+            json!(user_facing_path(&self.space.project_path)),
         );
         target.insert("spaceId".into(), json!(self.space_id()));
         target.insert(
             "spacePath".into(),
-            json!(self.space.space_path.display().to_string()),
+            json!(user_facing_path(&self.space.space_path)),
         );
         target
     }

@@ -139,7 +139,10 @@ async fn the_command_result_is_the_capability_result_and_its_files_are_those_of_
         );
         assert_eq!(exit, 0, "{value}");
         assert_eq!(value["ok"], true);
-        assert_eq!(value["target"]["projectPath"], by_cli.to_str().unwrap());
+        assert_eq!(
+            value["target"]["projectPath"],
+            svode_core::system_path::user_facing_path(&by_cli)
+        );
         assert_eq!(value["target"]["folder"], folder);
         let id = value["space"]["id"].as_str().unwrap().to_string();
         assert_eq!(git(&by_cli, &["rev-parse", "HEAD"]), base, "no commit");

@@ -252,7 +252,11 @@ fn without_desktop_the_session_serves_the_project_of_the_launch_directory() {
         assert_eq!(tools.len(), 60);
         assert!(!tools.contains(&"run_routine"));
         let info = structured(&responses[&3]);
-        assert_eq!(info["projectPath"], project.to_str().unwrap(), "{cwd:?}");
+        assert_eq!(
+            info["projectPath"],
+            svode_core::system_path::user_facing_path(&project),
+            "{cwd:?}"
+        );
         assert_eq!(info["activeMcpSpaceId"], space, "{cwd:?}");
         assert_eq!(structured(&responses[&4])["page"]["body"], "Notes body\n");
     }
@@ -360,7 +364,7 @@ fn outside_a_project_the_session_works_with_the_project_it_creates() {
     );
     assert_eq!(
         structured(&responses[&5])["projectPath"],
-        acme.to_str().unwrap()
+        svode_core::system_path::user_facing_path(&acme)
     );
     assert_eq!(structured(&responses[&6])["path"], "Kickoff.md");
     assert!(acme.join("Kickoff.md").is_file());
@@ -404,7 +408,7 @@ fn a_stale_discovery_file_starts_the_headless_session() {
     );
     assert_eq!(
         structured(&responses[&1])["projectPath"],
-        project.to_str().unwrap()
+        svode_core::system_path::user_facing_path(&project)
     );
 }
 

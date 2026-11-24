@@ -103,7 +103,7 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
             } else {
                 assert_eq!(
                     error["target"]["projectPath"],
-                    fixture.project.to_str().unwrap(),
+                    svode_core::system_path::user_facing_path(&fixture.project),
                     "{}: failure keeps the resolved target",
                     case.name
                 );
@@ -124,7 +124,7 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
         if value["ok"] == true && case.name != "app validate" && case.name != "guide" {
             assert_eq!(
                 value["target"]["projectPath"],
-                fixture.project.to_str().unwrap(),
+                svode_core::system_path::user_facing_path(&fixture.project),
                 "{}",
                 case.name
             );

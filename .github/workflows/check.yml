@@ -289,6 +289,10 @@ jobs:
           cargo test -p svode-agents --test qwen_catalog_process -- --ignored --nocapture
       - name: Chat paths of Desktop
         run: cargo test -p svode-desktop --lib -- commands::space::tests::path_kind media::source::tests::a_local_file shell_open_scope
+      - name: Public project and Space paths through CLI and MCP
+        run: cargo test -p svode-cli -p svode-mcp -p svode-tools --test read_families_process --test headless_process --test fixture_host_dispatch -- public_project_paths project_and_space_reads_use_the_frozen_target
+      - name: Public project and Space paths with Desktop MCP context
+        run: cargo test -p svode-desktop --lib -- public_project_paths_match_the_desktop_active_context
       # The paths WebView2 hands for files dropped from the Explorer, built
       # with the WebView2 host code of this OS, and the network share refusal
       # of a terminal drop.

@@ -28,6 +28,7 @@ use svode_core::routines::model::{
 use svode_core::routines::store_state::RoutineStoreState;
 use svode_core::storage::config::AssetsSpaceConfig;
 use svode_core::storage::connection::LfsNotReady;
+use svode_core::system_path::user_facing_path;
 use svode_tools::catalog;
 use svode_tools::dispatch::{call_tool, check_tool, served_definitions};
 use svode_tools::error::ToolError;
@@ -57,6 +58,7 @@ struct FixtureHost {
     deny_mutations: bool,
     denied_repositories: Mutex<Vec<PathBuf>>,
     authorized: Mutex<Vec<PathBuf>>,
+    inspected: Mutex<Vec<PathBuf>>,
     lfs_ready: Option<bool>,
     lfs_probes: Mutex<Vec<PathBuf>>,
     deliveries: Mutex<Vec<ManagedImportDelivery>>,
@@ -81,6 +83,7 @@ impl FixtureHost {
             deny_mutations: false,
             denied_repositories: Mutex::new(Vec::new()),
             authorized: Mutex::new(Vec::new()),
+            inspected: Mutex::new(Vec::new()),
             lfs_ready: None,
             lfs_probes: Mutex::new(Vec::new()),
             deliveries: Mutex::new(Vec::new()),
@@ -184,6 +187,10 @@ impl ToolHost for FixtureHost {
         &self,
         space_path: &Path,
     ) -> Result<RepositoryAccessSnapshot, ToolError> {
+        self.inspected
+            .lock()
+            .unwrap()
+            .push(space_path.to_path_buf());
         if space_path.ends_with("child") {
             return Err(ToolError::new("GIT_NOT_FOUND", "Git not found"));
         }
@@ -460,10 +467,14 @@ async fn project_and_space_reads_use_the_frozen_target() {
     let fixture = fixture();
     let host = FixtureHost::new(None);
     let target = child_target(&fixture);
+    let child = fixture.project.join("child");
+    let missing = fixture.project.join("missing");
 
     let info = call_tool(&host, Some(&target), "get_project_info", json!({})).await;
     let info = structured(&info);
     assert_eq!(info["projectName"], "Project");
+    assert_eq!(info["projectPath"], user_facing_path(&fixture.project));
+    assert_eq!(info["activeSpacePath"], user_facing_path(&child));
     assert_eq!(info["rootSpaceId"], "root");
     assert_eq!(info["activeSpaceId"], "child");
     assert_eq!(info["activeMcpSpaceId"], "child");
@@ -504,6 +515,26 @@ async fn project_and_space_reads_use_the_frozen_target() {
     assert_eq!(spaces[1]["lastOpened"], Value::Null);
     assert_eq!(spaces[2]["name"], "missing");
     assert_eq!(spaces[1]["addressing"]["nullBehavior"], "active-default");
+    assert_eq!(spaces[0]["path"], user_facing_path(&fixture.project));
+    assert_eq!(spaces[1]["path"], user_facing_path(&child));
+    assert_eq!(spaces[2]["path"], user_facing_path(&missing));
+    assert_eq!(
+        host.inspected.lock().unwrap().iter().collect::<Vec<_>>(),
+        [&fixture.project, &child, &missing].repeat(2),
+    );
+}
+
+#[tokio::test]
+async fn public_project_paths_format_a_verbatim_unc_address_without_opening_it() {
+    let fixture = fixture();
+    let host = FixtureHost::new(None);
+    let mut target = child_target(&fixture);
+    target.default_space_path = r"\\?\UNC\server\share\Child Space".into();
+    let result = call_tool(&host, Some(&target), "get_project_info", json!({})).await;
+    assert_eq!(
+        structured(&result)["activeSpacePath"],
+        r"\\server\share\Child Space"
+    );
 }
 
 #[tokio::test]

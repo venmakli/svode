@@ -232,6 +232,42 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn public_project_paths_match_the_desktop_active_context() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("Project Пример");
+        let child = project.join("Child Space");
+        write_project(&project, &[("child", "Child Space", None)]);
+        write_project(&child, &[]);
+        let caller = child.canonicalize().unwrap();
+        let context = context_for_project_cwd(&project, Some(&caller)).unwrap();
+        assert_eq!(context.active_space_id.as_deref(), Some("child"));
+        let target = super::super::request_target(&context, None);
+        let host = svode_tools::standalone::StandaloneHost::new("test");
+        let result = svode_tools::dispatch::call_tool(
+            &host,
+            Some(&target),
+            "get_project_info",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(!result.is_error, "{result:?}");
+        let info = result.structured_content.unwrap();
+        assert_eq!(info["projectPath"], context.project_path);
+        assert_eq!(info["activeSpacePath"], context.active_space_path);
+        assert_eq!(info["spaces"][0]["path"], context.project_path);
+        assert_eq!(info["spaces"][1]["path"], context.active_space_path);
+        let result = svode_tools::dispatch::call_tool(
+            &host,
+            Some(&target),
+            "list_spaces",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(!result.is_error, "{result:?}");
+        assert_eq!(result.structured_content.unwrap()["spaces"], info["spaces"]);
+    }
+
     /// Stage 11 05 «Сессия MCP после создания проекта» п. 3: after the
     /// shared `create_project` capability registers a Project in the list
     /// Desktop reads, the next requests of a caller address it only when the

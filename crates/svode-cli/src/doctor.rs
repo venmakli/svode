@@ -7,8 +7,10 @@
 use serde_json::{Value, json};
 use svode_core::git::cli::GitCli;
 use svode_core::index::lifecycle::index_path;
+use svode_core::page::registered_spaces;
 use svode_tools::dispatch::{call_tool, served_definitions};
 use svode_tools::host::ToolHost;
+use svode_tools::target::ROOT_SPACE_ID;
 
 use crate::output::Outcome;
 use crate::target::Selectors;
@@ -37,15 +39,22 @@ pub async fn run(host: &impl ToolHost, selectors: Selectors<'_>) -> Outcome {
         Ok(target) => {
             let listing = call_tool(host, Some(&target.request()), "list_spaces", json!({})).await;
             let listing = listing.structured_content.unwrap_or_default();
+            let project_path = &target.space.project_path;
+            let registered = registered_spaces(project_path).unwrap_or_default();
             let spaces = listing["spaces"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
                 .map(|mut space| {
-                    let present = space["path"]
-                        .as_str()
-                        .is_some_and(|path| index_path(path.as_ref()).is_file());
+                    let present =
+                        match space["id"].as_str() {
+                            Some(ROOT_SPACE_ID) => index_path(project_path).is_file(),
+                            Some(id) => registered.iter().find(|child| child.id == id).is_some_and(
+                                |child| index_path(&project_path.join(&child.path)).is_file(),
+                            ),
+                            None => false,
+                        };
                     space["index"] = json!({ "present": present });
                     space
                 })

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde_json::{Value, json};
+use svode_core::system_path::{user_facing_path, user_facing_path_str};
 
 use crate::args::SpaceArgs;
 use crate::catalog;
@@ -17,11 +18,11 @@ pub(crate) async fn get_project_info(
     let spaces = spaces_payload(host, project_path).await?;
     let project = svode_core::content_tree::read_space_display(project_path)?;
     let structured = json!({
-        "projectPath": target.project_path,
+        "projectPath": user_facing_path(project_path),
         "rootSpaceId": ROOT_SPACE_ID,
         "activeSpaceId": target.default_space_id,
         "activeMcpSpaceId": default_space_id(target),
-        "activeSpacePath": target.default_space_path,
+        "activeSpacePath": user_facing_path_str(&target.default_space_path),
         "projectName": project.name,
         "spaces": spaces,
         "spaceAddressing": {
@@ -83,7 +84,7 @@ async fn spaces_payload(
         "name": root.name,
         "icon": root.icon,
         "description": root.description,
-        "path": project_path.to_string_lossy().to_string(),
+        "path": user_facing_path(project_path),
         "kind": "root",
         "isRoot": true,
         "spaceId": ROOT_SPACE_ID,
@@ -110,7 +111,7 @@ async fn spaces_payload(
             "name": child.name,
             "icon": child.icon,
             "description": child.description,
-            "path": child.path.to_string_lossy().to_string(),
+            "path": user_facing_path(&child.path),
             "kind": "child",
             "isRoot": false,
             "spaceId": child.id,
