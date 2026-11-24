@@ -12,7 +12,7 @@ struct Repo {
 }
 
 impl Repo {
-    fn git(&self, args: &[&str], index: Option<&Path>, stdin: &[u8]) -> Vec<u8> {
+    fn command(&self, args: &[&str], index: Option<&Path>) -> Command {
         let mut command = Command::new("git");
         command
             .args(args)
@@ -27,7 +27,11 @@ impl Repo {
         if let Some(index) = index {
             command.env("GIT_INDEX_FILE", index);
         }
-        let mut child = command.spawn().unwrap();
+        command
+    }
+
+    fn git(&self, args: &[&str], index: Option<&Path>, stdin: &[u8]) -> Vec<u8> {
+        let mut child = self.command(args, index).spawn().unwrap();
         let written = child.stdin.take().unwrap().write_all(stdin);
         let result = child.wait_with_output().unwrap();
         assert!(
@@ -103,6 +107,34 @@ fn run(base: &Path, config: &Path, mode: &str, unborn: bool) {
     assert!(!index.exists());
 
     let base_tree = if unborn { "--empty" } else { "HEAD" };
+    let index = if has_prefix {
+        let head_path = repo.dir.join(".git/refs/heads/main");
+        let head_before = fs::read(&head_path).ok();
+        let rejected = repo
+            .command(&["read-tree", base_tree], Some(&index))
+            .output()
+            .unwrap();
+        let error = String::from_utf8_lossy(&rejected.stderr);
+        println!(
+            "Prefix trial: git read-tree {base_tree}, {}, error: {}",
+            rejected.status,
+            error.trim()
+        );
+        assert_eq!(rejected.status.code(), Some(128));
+        assert!(error.contains("svode-save.index.lock") && error.contains("Invalid argument"));
+        assert!(!index.exists() && !index.with_extension("index.lock").exists());
+        assert_eq!(fs::read(&original_index).unwrap(), original_bytes);
+        assert_eq!(fs::read(head_path).ok(), head_before);
+
+        let ordinary_path = PathBuf::from(&index_text[4..]);
+        println!(
+            "Control in the same repository and cwd: GIT_INDEX_FILE={}",
+            ordinary_path.display()
+        );
+        ordinary_path
+    } else {
+        index
+    };
     repo.git(&["read-tree", base_tree], Some(&index), &[]);
     assert!(
         index.is_file(),
