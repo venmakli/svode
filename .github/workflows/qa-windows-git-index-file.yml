@@ -1,0 +1,28 @@
+name: QA Windows Git index path
+
+on:
+  push:
+    branches:
+      - qa/windows-git-index-file-20261124
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: Run partial commits with normal and canonical index paths
+        shell: pwsh
+        run: |
+          $probe = Join-Path $env:RUNNER_TEMP 'git-index-probe.exe'
+          $fixtures = Join-Path $env:RUNNER_TEMP 'index fixtures'
+          rustc --edition=2024 .github/scripts/qa-windows-git-index-file.rs -o $probe
+          if ($LASTEXITCODE -ne 0) { throw "Probe compilation failed" }
+          & $probe $fixtures
+          if ($LASTEXITCODE -ne 0) { throw "Git index probe failed ($LASTEXITCODE)" }
