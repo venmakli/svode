@@ -243,6 +243,19 @@ jobs:
       # (DF-364): the proof hands Git no verbatim `\\?\` local path.
       - name: Publication of a root with a Space
         run: cargo test -p svode-core --lib -- git::publication::paths_tests
+      # Exercise the actual sidecar from a path with spaces. A missing Git LFS
+      # or sidecar is a failure in CI, including when checking an old registration.
+      - name: LFS S3 registration and download
+        shell: pwsh
+        env:
+          SVODE_STORAGE_REQUIRE_TOOLS: "1"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git --version
+          git lfs version
+          cargo test -p svode-core --lib -- storage::lfs::tests::repair_migrates_legacy_registration_and_is_idempotent storage::lfs::tests::repair_leaves_foreign_configuration_untouched
+          cargo build -p svode-lfs
+          cargo test -p svode-cli --test lfs_registration_process
       - name: Chat paths of the agent runtime
         run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
       - name: Chat paths of Desktop

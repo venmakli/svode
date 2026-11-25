@@ -31,6 +31,7 @@ use crate::attachments::import::LfsReadiness;
 use crate::git::GitError;
 use crate::git::cli::{GitCli, GitOutput, hide_window};
 use crate::git::state::GitRuntime;
+use crate::system_path::user_facing_path_str;
 
 /// Remote readiness probe of the LfsRemote strategy; it transfers nothing.
 const REMOTE_PROBE_ARGS: &[&str] = &["lfs", "fetch", "--dry-run", "origin"];
@@ -241,7 +242,7 @@ fn legacy_path_is_ours(path: Option<&str>) -> bool {
 /// unit-testable without Git or a resolved sidecar binary.
 fn classify_registration(
     agent: Option<&str>,
-    current_path_is_file: bool,
+    current_path_is_usable: bool,
     legacy_path: Option<&str>,
 ) -> RepairAction {
     match agent {
@@ -249,7 +250,7 @@ fn classify_registration(
         Some(a) if a == LEGACY_TRANSFER_AGENT && !legacy_path_is_ours(legacy_path) => {
             RepairAction::Foreign
         }
-        Some(a) if a == TRANSFER_AGENT && current_path_is_file && legacy_path.is_none() => {
+        Some(a) if a == TRANSFER_AGENT && current_path_is_usable && legacy_path.is_none() => {
             RepairAction::None
         }
         _ => RepairAction::Migrate,
@@ -267,7 +268,16 @@ pub async fn write_managed_registration(
     repo_dir: &Path,
     bin: &Path,
 ) -> Result<(), LfsError> {
-    let bin = bin.canonicalize().unwrap_or_else(|_| bin.to_path_buf());
+    let bin = match bin.canonicalize() {
+        Ok(bin) => bin,
+        Err(error) if cfg!(windows) => {
+            return Err(LfsError::Storage(format!(
+                "svode-lfs launch path could not be resolved ({}): {error}",
+                bin.display()
+            )));
+        }
+        Err(_) => bin.to_path_buf(),
+    };
     if !bin.is_absolute() {
         return Err(LfsError::Storage(format!(
             "svode-lfs path must be absolute: {}",
@@ -277,17 +287,34 @@ pub async fn write_managed_registration(
     let bin_str = bin
         .to_str()
         .ok_or_else(|| LfsError::Storage("svode-lfs path must be valid UTF-8".into()))?;
+    let launch_path = if cfg!(windows) {
+        // Git LFS launches custom transfers through its shell, which cannot
+        // run a Windows executable by its verbatim path.
+        let path = user_facing_path_str(bin_str);
+        let ordinary = Path::new(&path);
+        if path != bin_str
+            && (!ordinary.is_absolute() || !ordinary.canonicalize().is_ok_and(|path| path == bin))
+        {
+            return Err(LfsError::Storage(format!(
+                "svode-lfs has no compatible launch path: {}",
+                bin.display()
+            )));
+        }
+        path
+    } else {
+        bin_str.to_owned()
+    };
 
     let path_key = format!("lfs.customtransfer.{TRANSFER_AGENT}.path");
     let concurrent_key = format!("lfs.customtransfer.{TRANSFER_AGENT}.concurrent");
-    set_local_config(cli, repo_dir, &path_key, bin_str).await?;
+    set_local_config(cli, repo_dir, &path_key, &launch_path).await?;
     set_local_config(cli, repo_dir, &concurrent_key, "true").await?;
 
     // Verify the sidecar path persisted before making it the active agent.
     if read_local_config(cli, repo_dir, &path_key)
         .await?
         .as_deref()
-        != Some(bin_str)
+        != Some(launch_path.as_str())
     {
         return Err(LfsError::Storage(
             "svode-lfs transfer agent path did not persist".into(),
@@ -392,12 +419,12 @@ pub(super) async fn inspect_registration(
         &format!("lfs.customtransfer.{LEGACY_TRANSFER_AGENT}.path"),
     )
     .await?;
-    let current_path_is_file = current_path
-        .as_deref()
-        .is_some_and(|path| Path::new(path).is_file());
+    let current_path_is_usable = current_path.as_deref().is_some_and(|path| {
+        (!cfg!(windows) || user_facing_path_str(path) == path) && Path::new(path).is_file()
+    });
     Ok(classify_registration(
         agent.as_deref(),
-        current_path_is_file,
+        current_path_is_usable,
         legacy_path.as_deref(),
     ))
 }
@@ -678,6 +705,16 @@ mod tests {
         git_ok(cli, repo, &["init", "-q"]).await
     }
 
+    fn expected_launch_path(bin: &Path) -> Result<String, std::io::Error> {
+        let bin = bin.canonicalize()?;
+        let path = bin.to_str().unwrap();
+        Ok(if cfg!(windows) {
+            user_facing_path_str(path)
+        } else {
+            path.to_owned()
+        })
+    }
+
     #[tokio::test]
     async fn repair_migrates_legacy_registration_and_is_idempotent() -> TestResult {
         let git = GitRuntime::new();
@@ -708,7 +745,6 @@ mod tests {
             repair_managed_registration_with(&git, &repo, || Ok(resolved.clone())).await?;
         assert_eq!(outcome, RegistrationOutcome::Repaired);
 
-        let expected = bin.canonicalize()?;
         assert_eq!(
             git_stdout(
                 cli,
@@ -730,7 +766,7 @@ mod tests {
                 ]
             )
             .await?,
-            expected.to_str().unwrap()
+            expected_launch_path(&bin)?
         );
         assert_eq!(
             config_exit(cli, &repo, "lfs.customtransfer.lfs-dal.path").await?,
@@ -798,7 +834,7 @@ mod tests {
                 ]
             )
             .await?,
-            bin.canonicalize()?.to_str().unwrap()
+            expected_launch_path(&bin)?
         );
         Ok(())
     }
@@ -822,12 +858,14 @@ mod tests {
         ] {
             git_ok(cli, &repo, &["config", "--local", key, value]).await?;
         }
+        let before = std::fs::read(repo.join(".git/config"))?;
 
         let outcome = repair_managed_registration_with(&git, &repo, || {
             panic!("resolver must not run for a foreign configuration")
         })
         .await?;
         assert_eq!(outcome, RegistrationOutcome::Foreign);
+        assert_eq!(std::fs::read(repo.join(".git/config"))?, before);
 
         assert_eq!(
             git_stdout(
