@@ -1824,10 +1824,18 @@ async fn create_tasks_collection(
 
 /// Files and directories of `prefix` with their bytes.
 fn subtree_snapshot(root: &Path, prefix: &str) -> Vec<(String, Vec<u8>)> {
-    tree_snapshot(root)
-        .into_iter()
-        .filter(|(path, _)| path == prefix || path.starts_with(&format!("{prefix}/")))
-        .collect()
+    let subtree = root.join(prefix);
+    if subtree.is_file() {
+        return vec![(prefix.to_owned(), fs::read(&subtree).unwrap())];
+    }
+
+    let mut files = vec![(prefix.to_owned(), Vec::new())];
+    files.extend(
+        tree_snapshot(&subtree)
+            .into_iter()
+            .map(|(path, contents)| (format!("{prefix}/{path}"), contents)),
+    );
+    files
 }
 
 /// Names of the direct children of `parent` that portably match `name`.
