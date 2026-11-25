@@ -275,20 +275,6 @@ jobs:
         run: cargo test -p svode-agents --lib -- qwen_windows_catalog qwen_acp_
       - name: Qwen Code session catalogue scopes and restart
         run: cargo test -p svode-desktop --lib -- qwen_windows_chat_uses_listed_spelling_in_the_checked_space_after_restart
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      - name: Qwen Code 0.24.7 replays both Windows cwd spellings
-        timeout-minutes: 8
-        shell: pwsh
-        run: |
-          $fixture = Join-Path $env:RUNNER_TEMP 'svode-qwen-fixture'
-          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
-          Set-Content -LiteralPath (Join-Path $fixture 'package.json') -Value '{"private":true,"dependencies":{"@qwen-code/qwen-code":"0.24.7"}}'
-          bun install --cwd $fixture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:SVODE_QWEN_TEST_NODE_ENTRY = Join-Path $fixture 'node_modules/@qwen-code/qwen-code/cli-entry.js'
-          cargo test -p svode-agents --test qwen_catalog_process -- --ignored --nocapture
       - name: Chat paths of Desktop
         run: cargo test -p svode-desktop --lib -- commands::space::tests::path_kind media::source::tests::a_local_file shell_open_scope
       - name: Public project and Space paths through CLI and MCP
@@ -300,6 +286,23 @@ jobs:
       # of a terminal drop.
       - name: Dropped file paths of Desktop
         run: cargo test -p svode-desktop --lib -- webview_file_drop terminal::tests::terminal_paths_reject_a_network_share app_windows::tests::the_first_window_of_linux
+      - uses: actions/setup-node@v6
+        with:
+          # This release includes the Windows namespaced drive realpath fix (nodejs/node#65378).
+          node-version: '24.21.0'
+      - name: Qwen Code 0.24.7 replays both Windows cwd spellings on Node 24.21.0
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          node --version
+          node -e "const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os'); fs.realpathSync(path.toNamespacedPath(os.tmpdir()));"
+          $fixture = Join-Path $env:RUNNER_TEMP 'svode-qwen-fixture'
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $fixture 'package.json') -Value '{"private":true,"dependencies":{"@qwen-code/qwen-code":"0.24.7"}}'
+          bun install --cwd $fixture
+          $env:SVODE_QWEN_TEST_NODE_ENTRY = Join-Path $fixture 'node_modules/@qwen-code/qwen-code/cli-entry.js'
+          cargo test -p svode-agents --test qwen_catalog_process -- --ignored --nocapture
 
   standalone-linux:
     # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,
