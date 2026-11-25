@@ -27,13 +27,15 @@ fn json(cwd: &Path, args: &[&str]) -> (i32, Value) {
     args.push("--json");
     let output = svode(cwd, &args);
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let status = output.status;
     assert_eq!(
         stdout.lines().count(),
         1,
-        "{args:?}: one JSON line: {stdout}"
+        "{args:?} returned {status}. Expected one JSON line. stdout={stdout:?} stderr={stderr:?}"
     );
     (
-        output.status.code().unwrap(),
+        status.code().unwrap(),
         serde_json::from_str(&stdout).unwrap(),
     )
 }
