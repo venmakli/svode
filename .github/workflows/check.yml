@@ -219,6 +219,17 @@ jobs:
         run: cargo test -p svode-agents -- adapters::launcher::tests
       - name: Native session reader tests
         run: cargo test -p svode-desktop --lib -- agent_sessions::native_status agent_sessions::native_catalog agent_sessions::read_model agent_sessions::live_status
+      - name: Routine file events use the open Space paths
+        env:
+          SVODE_ROUTINE_EVENT_FIXTURE: ${{ runner.temp }}/svode-routine-event.json
+        run: cargo test -p svode-desktop --lib files::watcher::tests::routine_file_changes_emit_space_info_paths
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/desktop paraglide
+      - name: Routine catalogs and session links consume the watcher event
+        working-directory: apps/desktop
+        env:
+          SVODE_ROUTINE_EVENT_FIXTURE: ${{ runner.temp }}/svode-routine-event.json
+        run: bun test src/features/routines/hooks/routine-invalidation.dom.test.tsx
       # The local paths of the chat of Stage 10 `08` on Windows: drive paths
       # in either separator and their verbatim form, folder links, and no
       # filesystem access for a network share.

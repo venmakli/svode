@@ -328,11 +328,7 @@ fn process_published_events(
             {
                 membership_only_paths.insert(path.clone(), kind);
             }
-            if let Some(owner_path) = relative_watched_path(space_root, path)
-                .as_deref()
-                .and_then(routine_parser::definition_file_owner_path)
-                && !is_under_child_space(&owner_path, &skip_dirs)
-            {
+            if let Some(owner_path) = watched_routine_owner(space_root, path, &skip_dirs) {
                 routine_owner_paths.insert(owner_path);
             }
             if let Some(owner) = agent_actor_owner_for_path(space_root, path)
@@ -757,11 +753,25 @@ fn is_attachment_sidecar(name: &str) -> bool {
         )
 }
 
+fn watched_routine_owner(
+    space_root: &Path,
+    path: &Path,
+    skip_dirs: &HashSet<String>,
+) -> Option<String> {
+    let relative = relative_watched_path(space_root, path)?;
+    routine_parser::definition_file_owner_path(&relative)
+        .filter(|owner| !is_under_child_space(owner, skip_dirs))
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "runs on the debounce thread of the file watcher, never on the main thread"
 )]
-fn emit_routine_invalidation(space_root: &Path, owner_path: &str, app: &AppHandle) {
+fn emit_routine_invalidation<R: tauri::Runtime>(
+    space_root: &Path,
+    owner_path: &str,
+    app: &AppHandle<R>,
+) {
     tauri::async_runtime::block_on(async {
         let canonical_space_root =
             std::fs::canonicalize(space_root).unwrap_or_else(|_| space_root.to_path_buf());
@@ -1388,17 +1398,135 @@ mod tests {
     #[test]
     fn watched_routine_paths_reach_the_shared_definition_owner() {
         let root = Path::new("/project");
-        let owner = |path: &str| {
-            relative_watched_path(root, Path::new(path))
-                .as_deref()
-                .and_then(routine_parser::definition_file_owner_path)
-        };
+        let skip_dirs = HashSet::from(["child".to_owned()]);
+        let owner = |path: &str| watched_routine_owner(root, Path::new(path), &skip_dirs);
         assert_eq!(owner("/project/.routines/daily.md"), Some(".".into()));
         assert_eq!(
             owner("/project/tasks/.routines/daily.md"),
             Some("tasks".into())
         );
         assert_eq!(owner("/project/tasks/.routines/nested/daily.md"), None);
+        assert_eq!(owner("/project/child/.routines/daily.md"), None);
+    }
+
+    #[test]
+    fn routine_file_changes_emit_space_info_paths() {
+        use crate::space::project::{list_spaces, ready_space_info};
+        use crate::space::types::SpaceRef;
+        use tauri::Listener;
+
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("Project Дела");
+        let child = project.join("Child Space");
+        let mut project_config = SpaceConfig::named("Project");
+        project_config.spaces = Some(vec![SpaceRef {
+            id: "child".into(),
+            path: "Child Space".into(),
+            repo: None,
+            extensions: Default::default(),
+        }]);
+        write_space_config(&project, &project_config).unwrap();
+        write_space_config(&child, &SpaceConfig::named("Child")).unwrap();
+        let routine = |name: &str| {
+            format!(
+                "---\nid: 01arz3ndektsv4rrffq69g5fav\nname: {name}\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nRun daily.\n"
+            )
+        };
+        for owner in [&project, &child, &child.join("Tasks")] {
+            let directory = owner.join(".routines");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("daily.md"), routine("Before")).unwrap();
+        }
+        let project = project.canonicalize().unwrap();
+        let child = child.canonicalize().unwrap();
+        let project_info = ready_space_info("root".into(), project_config, None, &project);
+        let child_info = list_spaces(&project).unwrap().pop().unwrap();
+        assert_eq!(child_info.status, crate::space::types::SpaceStatus::Ready);
+        #[cfg(windows)]
+        {
+            assert!(project.to_string_lossy().starts_with(r"\\?\"));
+            assert!(!project_info.path.starts_with(r"\\?\"));
+        }
+
+        let index = IndexState::new();
+        let cache = crate::index::ProjectSpacesCache::from_project(&project).unwrap();
+        tauri::async_runtime::block_on(index.core.replace_project_cache(&project, cache));
+        let app = tauri::test::mock_app();
+        assert!(app.manage(index));
+        let (payload_tx, payload_rx) = mpsc::channel();
+        app.listen(crate::routines::INVALIDATED_EVENT, move |event| {
+            payload_tx.send(event.payload().to_owned()).unwrap();
+        });
+
+        for (space, space_info, owner, kind) in [
+            (&project, &project_info, ".", "project"),
+            (&child, &child_info, ".", "space"),
+            (&child, &child_info, "Tasks", "collection"),
+        ] {
+            let watched_space = Path::new(&space_info.path);
+            let expected = serde_json::json!({
+                "projectPath": project_info.path,
+                "spacePath": space_info.path,
+                "ownerKind": kind,
+                "ownerPath": owner,
+            });
+            #[cfg(windows)]
+            {
+                assert!(space.to_string_lossy().starts_with(r"\\?\"));
+                assert!(!space_info.path.starts_with(r"\\?\"));
+            }
+            #[cfg(unix)]
+            assert_eq!(
+                expected,
+                serde_json::json!({
+                    "projectPath": project,
+                    "spacePath": space,
+                    "ownerKind": kind,
+                    "ownerPath": owner,
+                }),
+            );
+
+            let definition = watched_space.join(owner).join(".routines/daily.md");
+            let (tx, rx) = mpsc::channel::<Event>();
+            let mut watcher =
+                notify::recommended_watcher(move |event: Result<Event, notify::Error>| {
+                    if let Ok(event) = event {
+                        let _ = tx.send(event);
+                    }
+                })
+                .unwrap();
+            watcher
+                .watch(watched_space, RecursiveMode::Recursive)
+                .unwrap();
+            std::fs::write(&definition, routine("After")).unwrap();
+
+            let skip_dirs = child_folder_names(watched_space);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let observed_owner = loop {
+                let event = rx
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .expect("Routine definition edit reached the watcher");
+                if changes_files(&event)
+                    && let Some(observed_owner) = event
+                        .paths
+                        .iter()
+                        .find_map(|path| watched_routine_owner(watched_space, path, &skip_dirs))
+                {
+                    break observed_owner;
+                }
+            };
+            emit_routine_invalidation(watched_space, &observed_owner, app.handle());
+            let payload = payload_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&payload).unwrap(),
+                expected
+            );
+            if kind == "collection"
+                && let Some(output) = std::env::var_os("SVODE_ROUTINE_EVENT_FIXTURE")
+            {
+                std::fs::write(output, payload).unwrap();
+            }
+        }
     }
 
     #[test]
