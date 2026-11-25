@@ -8,8 +8,8 @@
       "commit": "55035b599d265e792fa2a13e70fdf946c55a099b",
       "sourceRef": "55035b599d265e792fa2a13e70fdf946c55a099b",
       "runId": 45624084003,
-      "publishedAt": "2026-11-25T14:20:48.347Z",
-      "expiresAt": "2026-11-28T14:20:48.347Z",
+      "publishedAt": "2026-11-25T14:35:39.453Z",
+      "expiresAt": "2026-11-28T14:35:39.453Z",
       "reason": "Отправка диктовки после смены сессии и исправления Windows",
       "platforms": {
         "linux": {
@@ -21,6 +21,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/45624084003/artifacts/15032091454",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/45624084003",
           "artifactName": "Svode-windows-nsis"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/45624084003/artifacts/15032413658",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/45624084003",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     }
