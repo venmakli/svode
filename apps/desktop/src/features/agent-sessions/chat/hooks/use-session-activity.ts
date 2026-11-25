@@ -1,40 +1,34 @@
-import { useEffect, useState } from "react";
-import { openAgentSessionActivity } from "../../api/activity";
-import type { AgentSessionKeyDto, AgentSessionSnapshotDto } from "../api/chat";
+import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { createSessionActivity, EMPTY_ACTIVITY } from "../api/session-activity";
+import type { AgentSessionKeyDto } from "../api/chat";
 
-export interface SessionActivity {
-  snapshot: AgentSessionSnapshotDto | null;
-  /** The runtime does not serve the session, e.g. it is no longer open. */
-  error: unknown;
-}
+const empty = () => EMPTY_ACTIVITY;
+const noopSubscribe = () => () => undefined;
 
 /**
- * The live activity of a session the runtime drives: a snapshot, then its
- * deltas. A reload or a seq gap starts again from a new snapshot.
+ * Live activity of a session: a snapshot, then its deltas. A gap in
+ * delivery or an explicit reopen starts again from a runtime snapshot.
  */
-export function useSessionActivity(
-  session: AgentSessionKeyDto | null,
-  /** A new value subscribes again, as after the session was attached anew. */
-  epoch = 0,
-): SessionActivity {
-  const key = session
-    ? `${session.agent}\n${session.namespace}\n${session.sessionId}\n${epoch}`
-    : null;
-  const [state, setState] = useState<SessionActivity & { key: string | null }>(
-    { key: null, snapshot: null, error: null },
+export function useSessionActivity(session: AgentSessionKeyDto | null, epoch = 0) {
+  const agent = session?.agent;
+  const namespace = session?.namespace;
+  const sessionId = session?.sessionId;
+  const activity = useMemo(
+    () => agent && namespace && sessionId
+      ? createSessionActivity({ agent, namespace, sessionId })
+      : null,
+    [agent, namespace, sessionId],
   );
-  useEffect(() => {
-    if (!session || !key) return;
-    const subscription = openAgentSessionActivity(
-      session,
-      (snapshot) => setState({ key, snapshot, error: null }),
-      (error) => setState({ key, snapshot: null, error }),
-    );
-    return () => subscription.close();
-    // The key names the session; the object identity does not.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return state.key === key
-    ? { snapshot: state.snapshot, error: state.error }
-    : { snapshot: null, error: null };
+  const state = useSyncExternalStore(
+    activity?.subscribe ?? noopSubscribe,
+    activity?.getSnapshot ?? empty,
+  );
+  const followed = useRef({ activity, epoch });
+  useLayoutEffect(() => {
+    if (followed.current.activity === activity && followed.current.epoch !== epoch) {
+      activity?.refresh();
+    }
+    followed.current = { activity, epoch };
+  }, [activity, epoch]);
+  return { ...state, activity };
 }

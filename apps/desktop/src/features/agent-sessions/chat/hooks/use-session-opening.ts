@@ -11,7 +11,7 @@ import {
   type AgentSettingRefusalDto,
   type AgentSettingValueDto,
 } from "../api/chat";
-import { errorMessage } from "./use-session-composer";
+import { errorMessage } from "./session-send";
 
 export type SessionOpening =
   | { state: "opening" }

@@ -29,7 +29,7 @@ import { useComposerDraft } from "./use-composer-draft";
 import { passComposerFocus } from "./use-composer-focus";
 import { useDefaultAgent } from "./use-default-agent";
 import type { UpdateKeptValues } from "./use-draft-settings";
-import { errorMessage, type SendRefusal } from "./use-session-composer";
+import { errorMessage, type SendRefusal } from "./session-send";
 
 export interface StartedSession {
   sessionId: string;

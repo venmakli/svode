@@ -6,7 +6,7 @@ import {
   type AgentSettingRefusalDto,
   type AgentSettingValueDto,
 } from "../api/chat";
-import { errorMessage } from "./use-session-composer";
+import { errorMessage } from "./session-send";
 
 /** A setting change that did not apply; the setting keeps its value. */
 export type SettingChangeRefusal =

@@ -62,17 +62,45 @@ export function newSessionDraftKey(spacePath: string): string {
   return `new:${spacePath}`;
 }
 
-export function readComposerDraft(key: string): ComposerDraft | null {
+interface DraftEntry {
+  raw: string | null;
+  draft: ComposerDraft | null;
+  inMemory?: boolean;
+}
+
+const drafts = new Map<string, DraftEntry>();
+const EMPTY_ENTRY: DraftEntry = { raw: null, draft: null };
+
+function draftEntry(key: string): DraftEntry {
+  const current = drafts.get(key) ?? EMPTY_ENTRY;
+  let raw: string | null;
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_PREFIX + key);
-    if (!raw) return null;
-    const value = JSON.parse(raw) as unknown;
-    if (!value || typeof value !== "object") return null;
-    const draft = value as ComposerDraft;
-    return Array.isArray(draft.parts) ? draft : null;
+    raw = window.sessionStorage.getItem(STORAGE_PREFIX + key);
   } catch {
-    return null;
+    return current;
   }
+  if (raw === current.raw) return current;
+  let draft: ComposerDraft | null = null;
+  try {
+    const value = raw === null ? null : JSON.parse(raw) as unknown;
+    if (value && typeof value === "object" && Array.isArray((value as ComposerDraft).parts)) {
+      draft = value as ComposerDraft;
+    }
+  } catch {
+    // A draft from invalid storage is empty.
+  }
+  const next = { raw, draft };
+  drafts.set(key, next);
+  return next;
+}
+
+export function readComposerDraft(key: string): ComposerDraft | null {
+  return draftEntry(key).draft;
+}
+
+/** Changes with draft edits and with each send started from this draft. */
+export function composerDraftRevision(key: string): object {
+  return draftEntry(key);
 }
 
 /** A cleared composer is no longer the request a Svode action put in. */
@@ -84,16 +112,29 @@ export function settleDraftMark(draft: ComposerDraft): ComposerDraft {
 
 export function writeComposerDraft(key: string, draft: ComposerDraft | null) {
   if (draft) draft = settleDraftMark(draft);
+  const raw = draft && !isEmptyDraft(draft) ? JSON.stringify(draft) : null;
+  const current = draftEntry(key);
+  if (current.inMemory ? draft === current.draft : raw === current.raw) return;
   try {
-    if (!draft || isEmptyDraft(draft)) {
+    if (raw === null) {
       window.sessionStorage.removeItem(STORAGE_PREFIX + key);
     } else {
-      window.sessionStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(draft));
+      window.sessionStorage.setItem(STORAGE_PREFIX + key, raw);
     }
+    drafts.set(key, { raw, draft: raw === null ? null : draft });
   } catch {
-    // Storage can be unavailable in restricted WebViews; the draft then
-    // lives only as long as the surface.
+    // A restricted WebView can still keep its draft in memory.
+    drafts.set(key, { raw: current.raw, draft: raw === null ? null : draft, inMemory: true });
   }
+  for (const listener of draftListeners.get(key) ?? []) listener();
+}
+
+export function updateComposerDraft(
+  key: string,
+  change: Partial<ComposerDraft> | ((draft: ComposerDraft) => ComposerDraft),
+) {
+  const draft = readComposerDraft(key) ?? { parts: [] };
+  writeComposerDraft(key, typeof change === "function" ? change(draft) : { ...draft, ...change });
 }
 
 const draftListeners = new Map<string, Set<() => void>>();
@@ -118,27 +159,30 @@ export function appendComposerDraftText(
   key: string,
   format: (before: string) => string,
 ) {
+  const waiting = textDuringSend.get(key);
+  if (waiting) {
+    waiting.push(format);
+    return;
+  }
   const draft = readComposerDraft(key) ?? { parts: [] };
-  const last = draft.parts.at(-1);
-  const text = format(last?.type === "text" ? last.text : "");
-  if (!text) return;
-  writeComposerDraft(key, {
-    ...draft,
-    parts: normalizeDraftParts([...draft.parts, { type: "text", text }]),
-  });
-  for (const listener of draftListeners.get(key) ?? []) listener();
+  writeComposerDraft(key, appendText(draft, format));
 }
 
 /**
- * What was typed in the composer of a draft while its send was under way
- * (DF-199), by draft key: the field keeps the text being sent, and this
- * goes after the draft's text once the send is over. Kept for the window.
+ * Text typed or dictated while a send is under way, in arrival order.
+ * Its spacing is decided after the send clears or restores the draft.
  */
-const typedDuringSend = new Map<string, string>();
+type WaitingText = string | ((before: string) => string);
+const textDuringSend = new Map<string, WaitingText[]>();
 
 /** A send of the draft of `key` starts: what is typed meanwhile waits for its end. */
 export function beginDraftSend(key: string) {
-  typedDuringSend.set(key, "");
+  drafts.set(key, { ...draftEntry(key) });
+  textDuringSend.set(key, []);
+}
+
+export function draftSendActive(key: string): boolean {
+  return textDuringSend.has(key);
 }
 
 /**
@@ -147,20 +191,21 @@ export function beginDraftSend(key: string) {
  * already over and the composer does not show it yet.
  */
 export function typeDuringSend(key: string, text: string) {
-  const typed = typedDuringSend.get(key);
-  if (typed === undefined) appendComposerDraftText(key, () => text);
-  else typedDuringSend.set(key, typed + text);
+  const waiting = textDuringSend.get(key);
+  if (!waiting) {
+    appendComposerDraftText(key, () => text);
+    return;
+  }
+  const last = waiting.at(-1);
+  if (typeof last === "string") waiting[waiting.length - 1] = last + text;
+  else waiting.push(text);
 }
 
 /** The send of `key` is over: `draft` with what was typed meanwhile after its text. */
 export function endDraftSend(key: string, draft: ComposerDraft): ComposerDraft {
-  const typed = typedDuringSend.get(key);
-  typedDuringSend.delete(key);
-  if (!typed) return draft;
-  return {
-    ...draft,
-    parts: normalizeDraftParts([...draft.parts, { type: "text", text: typed }]),
-  };
+  const waiting = textDuringSend.get(key);
+  textDuringSend.delete(key);
+  return waiting?.reduce(appendText, draft) ?? draft;
 }
 
 /**
@@ -168,9 +213,17 @@ export function endDraftSend(key: string, draft: ComposerDraft): ComposerDraft {
  * draft `to`: what was typed during it goes to the stored draft of `to`.
  */
 export function passDraftSend(from: string, to: string) {
-  const typed = typedDuringSend.get(from);
-  typedDuringSend.delete(from);
-  if (typed) appendComposerDraftText(to, () => typed);
+  const waiting = textDuringSend.get(from);
+  textDuringSend.delete(from);
+  if (waiting?.length) updateComposerDraft(to, (draft) => waiting.reduce(appendText, draft));
+}
+
+function appendText(draft: ComposerDraft, addition: WaitingText): ComposerDraft {
+  const last = draft.parts.at(-1);
+  const text = typeof addition === "string" ? addition : addition(last?.type === "text" ? last.text : "");
+  return text
+    ? { ...draft, parts: normalizeDraftParts([...draft.parts, { type: "text", text }]) }
+    : draft;
 }
 
 /**
@@ -204,7 +257,6 @@ export function appendComposerDraftRequest(
     notSent: false,
     mark,
   });
-  for (const listener of draftListeners.get(key) ?? []) listener();
 }
 
 function isEmptyDraft(draft: ComposerDraft): boolean {

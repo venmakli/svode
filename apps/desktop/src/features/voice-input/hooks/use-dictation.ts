@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   cancelDictation,
   currentDictationWebview,
@@ -11,6 +11,7 @@ import {
   IDLE,
   RECORDING_LIMIT_MS,
   recordsElsewhere,
+  type DictationEvent,
   type DictationPhase,
 } from "../model/dictation";
 import { LevelHistory } from "../model/levels";
@@ -19,19 +20,18 @@ import { useDictationOwner } from "./use-dictation-owner";
 export interface DictationTarget {
   /** The composer's own id; its draft keeps the text when it is gone. */
   key: string;
+  /** A closing surface may still mount its field while it animates out. */
+  active?: boolean;
   /** Inserts the text at the cursor; `send` is ↑. */
   onText: (text: string, send: boolean) => void;
-  /**
-   * The composer was closed or replaced while recording or recognizing
-   * (`06`, stop from outside): the text goes into its kept draft, unsent.
-   */
-  onDetachedText: (key: string, text: string) => void;
+  /** Captures the destination when the field goes, including an earlier ↑. */
+  onDetach: () => (text: string, send: boolean) => void;
 }
 
 /** One recording run; it outlives its composer to deliver the text. */
 interface Run {
   key: string;
-  detached: boolean;
+  deliverDetached?: (text: string, send: boolean) => void;
 }
 
 const RECOGNITION_FAILED: DictationFailureDto = { code: "recognition" };
@@ -61,19 +61,23 @@ export interface Dictation {
  * agent's request card) stops the recording as ■ and its text lands in
  * the kept draft.
  */
-export function useDictation({ key, onText, onDetachedText }: DictationTarget): Dictation {
-  const [state, dispatch] = useReducer(dictationReducer, IDLE);
+export function useDictation({ key, active = true, onText, onDetach }: DictationTarget): Dictation {
+  const [state, setState] = useState<DictationPhase>(IDLE);
   const [enableOpen, setEnableOpen] = useState(false);
   const levels = useMemo(() => new LevelHistory(), []);
   const owner = useDictationOwner();
   const busyElsewhere = recordsElsewhere(owner, currentDictationWebview(), key);
 
-  const stateRef = useRef(state);
+  const stateRef = useRef<DictationPhase>(IDLE);
+  const dispatch = useCallback((event: DictationEvent) => {
+    // Navigation can clean up the field in the same batch as ↑.
+    stateRef.current = dictationReducer(stateRef.current, event);
+    setState(stateRef.current);
+  }, []);
   const runRef = useRef<Run | null>(null);
-  const targetRef = useRef({ onText, onDetachedText });
-  useEffect(() => {
-    stateRef.current = state;
-    targetRef.current = { onText, onDetachedText };
+  const targetRef = useRef({ onText, onDetach });
+  useLayoutEffect(() => {
+    targetRef.current = { onText, onDetach };
   });
 
   const recognize = useCallback(async (run: Run, send: boolean) => {
@@ -81,36 +85,34 @@ export function useDictation({ key, onText, onDetachedText }: DictationTarget): 
       outcome: "failed" as const,
       failure: RECOGNITION_FAILED,
     }));
+    if (run.deliverDetached) {
+      if (result.outcome === "text") run.deliverDetached(result.text, send);
+      // Nobody can retry: the kept audio goes.
+      else if (result.failure.code === "recognition") void cancelDictation(run.key);
+      return;
+    }
+    if (runRef.current !== run) return;
     if (result.outcome === "text") {
-      if (run.detached) {
-        targetRef.current.onDetachedText(run.key, result.text);
-        return;
-      }
       runRef.current = null;
       dispatch({ type: "text" });
       targetRef.current.onText(result.text, send);
       return;
     }
-    if (run.detached) {
-      // Nobody can retry: the kept audio goes.
-      if (result.failure.code === "recognition") void cancelDictation(run.key);
-      return;
-    }
     if (result.failure.code !== "recognition") runRef.current = null;
     dispatch({ type: "failed", failure: result.failure });
-  }, []);
+  }, [dispatch]);
 
   const start = useCallback(() => {
     const phase = stateRef.current.phase;
-    if (busyElsewhere || (phase !== "idle" && phase !== "failed")) return;
-    const run: Run = { key, detached: false };
+    if (!active || busyElsewhere || (phase !== "idle" && phase !== "failed")) return;
+    const run: Run = { key };
     runRef.current = run;
     levels.clear();
     dispatch({ type: "start" });
     void startDictation(key, (dbfs) => levels.push(dbfs))
       .catch((): DictationFailureDto => ({ code: "device" }))
       .then((failure) => {
-        if (run.detached) {
+        if (run.deliverDetached) {
           if (!failure) void cancelDictation(run.key);
           return;
         }
@@ -123,7 +125,7 @@ export function useDictation({ key, onText, onDetachedText }: DictationTarget): 
         }
         dispatch({ type: "started", at: Date.now() });
       });
-  }, [busyElsewhere, key, levels]);
+  }, [active, busyElsewhere, dispatch, key, levels]);
 
   const finish = useCallback(
     (send: boolean) => {
@@ -132,7 +134,7 @@ export function useDictation({ key, onText, onDetachedText }: DictationTarget): 
       dispatch({ type: "finish", send });
       void recognize(run, send);
     },
-    [recognize],
+    [dispatch, recognize],
   );
 
   const retry = useCallback(() => {
@@ -143,7 +145,7 @@ export function useDictation({ key, onText, onDetachedText }: DictationTarget): 
     }
     dispatch({ type: "retry" });
     void recognize(run, current.send);
-  }, [recognize]);
+  }, [dispatch, recognize]);
 
   const cancel = useCallback(() => {
     const run = runRef.current;
@@ -151,7 +153,7 @@ export function useDictation({ key, onText, onDetachedText }: DictationTarget): 
     dispatch({ type: "cancel" });
     levels.clear();
     if (run) void cancelDictation(run.key);
-  }, [levels]);
+  }, [dispatch, levels]);
 
   const toggle = useCallback(() => {
     const phase = stateRef.current.phase;
@@ -172,19 +174,19 @@ export function useDictation({ key, onText, onDetachedText }: DictationTarget): 
 
   // The composer goes, or turns to another draft: a recording stops as ■
   // into the kept draft, a failed one drops its audio.
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    if (!active) return;
+    return () => {
       const run = runRef.current;
       runRef.current = null;
       if (!run) return;
-      run.detached = true;
       const phase = stateRef.current.phase;
+      run.deliverDetached = targetRef.current.onDetach();
       if (phase === "recording") void recognize(run, false);
       else if (phase === "failed") void cancelDictation(run.key);
       dispatch({ type: "cancel" });
-    },
-    [key, recognize],
-  );
+    };
+  }, [active, dispatch, key, recognize]);
 
   return {
     state,

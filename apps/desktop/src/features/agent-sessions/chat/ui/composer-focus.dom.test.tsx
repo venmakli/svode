@@ -693,19 +693,20 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(stored()).toBe("abcX def");
   });
 
-  focusTest("a prompt that returns after the session showed its turn keeps what was typed since", async () => {
+  focusTest("typing stays buffered when the session shows a turn before the prompt replies", async () => {
     writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
     await mount(chat());
     await focusField();
     const send = deferred();
     promptAnswer = () => send.promise;
     await pressEnter();
-    // The session shows the new turn first: the send is accepted.
+    // A turn alone cannot settle the send while the prompt can still return
+    // a typed refusal. Typing stays buffered until it replies.
     await act(async () => turnChange("running"));
     await settle();
     await pastFocusRetries();
-    expect(stored()).toBe("");
-    await type("next");
+    expect(stored()).toBe("Hello");
+    await typeKeys("next");
     await act(async () => send.resolve("turn-1"));
     await settle();
     expect(stored()).toBe("next");

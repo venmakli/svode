@@ -205,6 +205,79 @@ if (process.env.SVODE_COMPOSER_DICTATION_DOM !== "1") {
     expect(storedText()).toBe("Please again");
   });
 
+  dictationTest("retry after ↑ still sends its text once", async () => {
+    await render();
+    await click(microphone());
+    results = [{ outcome: "failed", failure: { code: "recognition" } }];
+    await click(button(m.voice_input_stop_and_send()));
+    results = [{ outcome: "text", text: "again" }];
+    await click(buttonWithText(m.voice_input_retry()));
+    expect(count("speech_dictation_finish")).toBe(2);
+    expect(sent).toEqual(["Please again"]);
+  });
+
+  dictationTest("leaving after a failed recognition releases audio kept for retry", async () => {
+    await render();
+    await click(microphone());
+    results = [{ outcome: "failed", failure: { code: "recognition" } }];
+    await click(button(m.voice_input_stop_and_send()));
+    await render(false);
+    expect(count("speech_dictation_cancel")).toBe(1);
+    expect(storedText()).toBe("Please");
+    expect(sent).toEqual([]);
+  });
+
+  dictationTest("an ↑ response arriving after Esc cannot insert or send", async () => {
+    let finish!: (result: unknown) => void;
+    results = [new Promise((resolve) => { finish = resolve; })];
+    await render();
+    await click(microphone());
+    await click(button(m.voice_input_stop_and_send()));
+    await act(async () => {
+      composerField()?.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    await act(async () => finish({ outcome: "text", text: "late" }));
+    await settle();
+    expect(count("speech_dictation_cancel")).toBe(1);
+    expect(storedText()).toBe("Please");
+    expect(sent).toEqual([]);
+  });
+
+  dictationTest("↑ with empty recognized text cannot send the pre-existing draft", async () => {
+    await render();
+    await click(microphone());
+    results = [{ outcome: "text", text: "  " }];
+    await click(button(m.voice_input_stop_and_send()));
+    expect(storedText()).toBe("Please");
+    expect(sent).toEqual([]);
+  });
+
+  dictationTest("the recording limit stops as ■", async () => {
+    const setTimeout = dom.window.setTimeout;
+    let limit: (() => void) | undefined;
+    dom.window.setTimeout = (handler, delay, ...args) => {
+      if (typeof handler === "function" && delay !== undefined && delay > 110_000) {
+        limit = () => handler(...args);
+        return 0;
+      }
+      return setTimeout.call(dom.window, handler, delay, ...args);
+    };
+    try {
+      await render();
+      await click(microphone());
+      results = [{ outcome: "text", text: "at the limit" }];
+      expect(limit).toBeDefined();
+      await act(async () => limit?.());
+      await settle();
+      expect(storedText()).toBe("Please at the limit");
+      expect(sent).toEqual([]);
+    } finally {
+      dom.window.setTimeout = setTimeout;
+    }
+  });
+
   dictationTest("a recording without signal is not recognized text and leaves the draft", async () => {
     await render();
     await click(microphone());

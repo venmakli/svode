@@ -19,6 +19,7 @@ import {
   agentSessionContentKey,
   isInsideAgentSessionContent,
 } from "../lib/session-content";
+import { ComposerActiveContext } from "../chat/hooks/use-composer-dictation";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
 import { useAgentSessionChangesTarget } from "../hooks/use-agent-session-space";
@@ -139,36 +140,38 @@ export function AgentSessionPeek({
             </div>
           )}
           {shownTarget && (
-            <AgentSessionContent
-              key={agentSessionContentKey(shownTarget, openingKey)}
-              target={shownTarget}
-              focusTerminal={focusTerminal}
-              onOpenRoutine={onOpenRoutine}
-              onOpenAgentSettings={onOpenAgentSettings}
-              renderChrome={({ view, identity, status, menu, openWith }) => (
-                <PeekTopBar
-                  identity={
-                    identity ? (
-                      <PeekIdentity
-                        icon={identity.icon}
-                        name={identity.title}
-                      />
-                    ) : (
-                      <Skeleton className="mx-1 h-4 w-40" />
-                    )
-                  }
-                  info={status}
-                  menu={menu}
-                  changes={<SessionSpaceChanges session={view.session} />}
-                  openWith={
-                    openWith ? <OpenWithControl groups={[openWith]} /> : null
-                  }
-                  onExpand={() => void expand(view.session)}
-                  expandDisabled={expanding}
-                  onClose={() => onOpenChange(false)}
-                />
-              )}
-            />
+            <ComposerActiveContext.Provider value={open}>
+              <AgentSessionContent
+                key={agentSessionContentKey(shownTarget, openingKey)}
+                target={shownTarget}
+                focusTerminal={focusTerminal}
+                onOpenRoutine={onOpenRoutine}
+                onOpenAgentSettings={onOpenAgentSettings}
+                renderChrome={({ view, identity, status, menu, openWith }) => (
+                  <PeekTopBar
+                    identity={
+                      identity ? (
+                        <PeekIdentity
+                          icon={identity.icon}
+                          name={identity.title}
+                        />
+                      ) : (
+                        <Skeleton className="mx-1 h-4 w-40" />
+                      )
+                    }
+                    info={status}
+                    menu={menu}
+                    changes={<SessionSpaceChanges session={view.session} />}
+                    openWith={
+                      openWith ? <OpenWithControl groups={[openWith]} /> : null
+                    }
+                    onExpand={() => void expand(view.session)}
+                    expandDisabled={expanding}
+                    onClose={() => onOpenChange(false)}
+                  />
+                )}
+              />
+            </ComposerActiveContext.Provider>
           )}
         </PortalContext.Provider>
       </SheetContent>

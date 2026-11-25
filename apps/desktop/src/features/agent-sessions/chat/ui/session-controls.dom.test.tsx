@@ -27,10 +27,17 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     { url: "http://localhost/", pretendToBeVisual: true },
   );
   installDomGlobals(dom);
+  Object.defineProperty(dom.window.HTMLElement.prototype, "isContentEditable", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.closest("[contenteditable]")?.getAttribute("contenteditable") === "true";
+    },
+  });
   // cmdk keeps the selected item in view.
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   // React DOM reads the input events the document supports when it loads.
   const { createRoot } = await import("react-dom/client");
+  const { flushSync } = await import("react-dom");
 
   const spaceState = {
     activeRootIcon: null,
@@ -63,6 +70,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   let draftSession: typeof key | null = draftKey;
   /** How the next prompt ends. */
   let promptAnswer: () => unknown = () => "turn-2";
+  let recognition: () => unknown = () => null;
   /** How the next opening in the chat ends. */
   /** `attach`: an opening other than reading; `intent` says which. */
   let openAnswer: (attach: boolean, intent: string) => unknown = () => ({
@@ -108,6 +116,10 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     }
     if (command === "agent_runtime_set_setting") return settingAnswer();
     if (command === "agent_runtime_prompt") return promptAnswer();
+    if (command === "speech_dictation_finish") return recognition();
+    if (command.startsWith("speech_dictation_") || command === "speech_models") {
+      return null;
+    }
     if (command === "agent_runtime_open_session") {
       return openAnswer(payload.intent !== "read", payload.intent as string);
     }
@@ -157,6 +169,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   setLocale("en", { reload: false });
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { SessionChat } = await import("./session-chat");
+  const { ComposerActiveContext } = await import("../hooks/use-composer-dictation");
   const { useSessionOpening } = await import("../hooks/use-session-opening");
   const { Sheet, SheetContent, SheetTitle } = await import("@/components/ui/sheet");
   const { AGENT_SESSION_CONTENT_ATTRIBUTE } = await import(
@@ -200,6 +213,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         session: draftSession,
       });
       promptAnswer = () => "turn-2";
+      recognition = () => null;
       openAnswer = () => ({ outcome: "opened", session: key, liveness: "free" });
       messages.length = 0;
       try {
@@ -219,10 +233,385 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     document.body.append(container);
     const root = createRoot(container);
     mounted.push(root);
+    await show(root, element);
+    return root;
+  }
+
+  async function show(root: Root, element: React.ReactNode) {
     await act(async () => {
       root.render(<TooltipProvider>{element}</TooltipProvider>);
     });
     await settle();
+  }
+
+  const sessionB = { ...key, sessionId: "s2" };
+  const existingChat = (session: typeof key = key) => (
+    <SessionChat key={session.sessionId} sessionId={`codex:${session.sessionId}`} session={session} scope={null} />
+  );
+  const projectScreen = <button type="button">Project</button>;
+
+  function delayRecognition() {
+    let finish!: (result: unknown) => void;
+    const result = new Promise((resolve) => { finish = resolve; });
+    recognition = () => result;
+    return async (text = "now") => {
+      await act(async () => finish({ outcome: "text", text }));
+      await settle();
+    };
+  }
+
+  async function record() {
+    await click(buttonByLabel(m.voice_input_start({ shortcut: "Ctrl+Shift+M" })));
+  }
+
+  async function dictateAndSend() {
+    await record();
+    await click(buttonByLabel(m.voice_input_stop_and_send()));
+  }
+
+  function writeDraft(text: string) {
+    writeComposerDraft(sessionDraftKey("codex:s1"), { parts: [{ type: "text", text }] });
+  }
+
+  controlsTest("↑ sends once to A after navigating to B, keeping B's draft and focus", async () => {
+    writeComposerDraft(sessionDraftKey("codex:s1"), {
+      parts: [
+        { type: "text", text: "Check " },
+        { type: "attachment", attachment: { path: "/project/note.md", name: "Note" } },
+        { type: "text", text: " please" },
+      ],
+      mark: "agent_commits",
+    });
+    const bDraft = sessionDraftKey("codex:s2");
+    writeComposerDraft(bDraft, { parts: [{ type: "text", text: "Keep B" }] });
+    const finish = delayRecognition();
+    const root = await mount(existingChat());
+    await dictateAndSend();
+    await show(root, existingChat(sessionB));
+    await act(async () => field().focus());
+    const focused = document.activeElement;
+    await finish();
+    expect(calls.filter(({ command }) => command === "agent_runtime_prompt").map(({ payload }) => payload))
+      .toEqual([{
+        session: key,
+        prompt: [
+          { type: "text", text: "Check " },
+          { type: "file", path: "/project/note.md", name: "Note" },
+          { type: "text", text: " please now" },
+        ],
+        mark: "agent_commits",
+      }]);
+    expect(draftText()).toBeUndefined();
+    expect(readComposerDraft(bDraft)?.parts).toEqual([{ type: "text", text: "Keep B" }]);
+    expect(document.activeElement).toBe(focused);
+    expect(messages).toEqual(["codex:s1"]);
+    snapshotFor = (session) => ({
+      ...snapshot(session),
+      items: [{
+        id: "user-2", turnId: "turn-2", kind: "user_message",
+        summary: "Check Note please now", segments: [], status: null, hasDetail: false,
+      }],
+    });
+    await show(root, existingChat());
+    expect(document.body.textContent).toContain("Check Note please now");
+    expect(sent()).toEqual(["prompt"]);
+  });
+
+  controlsTest("↑ immediately followed by leaving for the project finishes one recognition and sends once", async () => {
+    writeDraft("Continue");
+    const finish = delayRecognition();
+    const root = await mount(existingChat());
+    await record();
+    await act(async () => {
+      buttonByLabel(m.voice_input_stop_and_send())!.click();
+      root.render(projectScreen);
+    });
+    const projectButton = document.querySelector("button")!;
+    await act(async () => projectButton.focus());
+    await finish();
+    expect(calls.filter(({ command }) => command === "speech_dictation_finish")).toHaveLength(1);
+    expect(sent()).toEqual(["prompt"]);
+    expect(document.activeElement).toBe(projectButton);
+  });
+
+  for (const stopBeforeLeaving of [true, false]) {
+    controlsTest(`${stopBeforeLeaving ? "■" : "leaving while recording"} keeps the text in A without a prompt`, async () => {
+      writeDraft("Continue");
+      const finish = delayRecognition();
+      const root = await mount(existingChat());
+      await record();
+      if (stopBeforeLeaving) await click(buttonByLabel(m.voice_input_stop()));
+      await show(root, existingChat(sessionB));
+      await finish();
+      expect(sent()).toEqual([]);
+      expect(draftText()).toEqual([{ type: "text", text: "Continue now" }]);
+      expect(calls.filter(({ command }) => command === "speech_dictation_finish")).toHaveLength(1);
+    });
+  }
+
+  controlsTest("closing a peek and returning to A in the main area keeps the original ↑", async () => {
+    writeDraft("Continue");
+    const finish = delayRecognition();
+    const root = await mount(
+      <Sheet open>
+        <SheetContent side="right">
+          <SheetTitle>Session</SheetTitle>
+          {existingChat()}
+        </SheetContent>
+      </Sheet>,
+    );
+    await dictateAndSend();
+    await show(root, projectScreen);
+    await show(root, <main>{existingChat()}</main>);
+    await finish();
+    expect(sent()).toEqual(["prompt"]);
+    expect(draftText()).toBeUndefined();
+    expect(field().querySelector("[data-slate-string]")).toBeNull();
+  });
+
+  controlsTest("a peek in its exit animation delivers ↑ to the draft without using its field", async () => {
+    writeDraft("Continue");
+    const finish = delayRecognition();
+    const peek = (open: boolean) => (
+      <Sheet open={open}>
+        <SheetContent forceMount>
+          <SheetTitle>Session</SheetTitle>
+          <ComposerActiveContext.Provider value={open}>
+            {existingChat()}
+          </ComposerActiveContext.Provider>
+        </SheetContent>
+      </Sheet>
+    );
+    const root = await mount(peek(true));
+    await dictateAndSend();
+    await show(root, peek(false));
+    expect(field()).toBeTruthy();
+    await finish();
+    expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+      { type: "text", text: "Continue now" },
+    ]);
+    expect(sent()).toEqual(["prompt"]);
+  });
+
+  controlsTest("an edited draft after returning gets the dictated text for manual send", async () => {
+    writeDraft("Original");
+    const finish = delayRecognition();
+    const root = await mount(existingChat());
+    await dictateAndSend();
+    await show(root, projectScreen);
+    await show(root, existingChat());
+    await act(async () => writeDraft("Edited"));
+    await finish();
+    expect(sent()).toEqual([]);
+    expect(field().textContent).toBe("Edited now");
+    await click(buttonByLabel(m.sessions_chat_send()));
+    expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+      { type: "text", text: "Edited now" },
+    ]);
+  });
+
+  for (const accepted of [true, false]) {
+    controlsTest(`recognition during a competing manual send survives its ${accepted ? "acceptance" : "refusal"}`, async () => {
+      writeDraft("Manual");
+      const finish = delayRecognition();
+      const root = await mount(existingChat());
+      await dictateAndSend();
+      await show(root, projectScreen);
+      await show(root, existingChat());
+      let finishPrompt!: () => void;
+      promptAnswer = () => new Promise((resolve, reject) => {
+        finishPrompt = () => {
+          if (accepted) resolve("turn-2");
+          else reject({ kind: "agent_runtime", code: "turn_active", message: "busy" });
+        };
+      });
+      await click(buttonByLabel(m.sessions_chat_send()));
+      await finish("Dictated");
+      expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+        { type: "text", text: "Manual" },
+      ]);
+      expect(field().textContent).toBe("Manual");
+      await act(async () => finishPrompt());
+      await settle();
+      expect(sent()).toEqual(["prompt"]);
+      expect(field().textContent).toBe(accepted ? "Dictated" : "Manual Dictated");
+    });
+  }
+
+  controlsTest("↑ inserts at the active selection and sends through the same path as Enter", async () => {
+    writeDraft("Before replace after");
+    const finish = delayRecognition();
+    await mount(existingChat());
+    await record();
+    await act(async () => field().focus());
+    await fieldFocused();
+    const text = field().querySelector("[data-slate-string]")!.firstChild!;
+    await act(async () => {
+      document.getSelection()!.setBaseAndExtent(text, 14, text, 7);
+      document.dispatchEvent(new window.Event("selectionchange"));
+    });
+    await fieldFocused();
+    await click(buttonByLabel(m.voice_input_stop_and_send()));
+    await finish();
+    expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+      { type: "text", text: "Before now after" },
+    ]);
+    expect(sent()).toEqual(["prompt"]);
+  });
+
+  controlsTest("leaving after insertion and before the activity check completes still sends once", async () => {
+    writeDraft("Continue");
+    const finish = delayRecognition();
+    const root = await mount(existingChat());
+    await dictateAndSend();
+    const { subscribeComposerDraft } = await import("../model/composer");
+    let sentFromProject = false;
+    promptAnswer = () => {
+      sentFromProject = document.body.textContent === "Project";
+      return "turn-2";
+    };
+    const stop = subscribeComposerDraft(sessionDraftKey("codex:s1"), () => {
+      if (draftText()?.some((part) => part.type === "text" && part.text.includes("now"))) {
+        stop();
+        queueMicrotask(() => flushSync(() => root.render(projectScreen)));
+      }
+    });
+    try {
+      await finish();
+    } finally {
+      stop();
+    }
+    expect(sent()).toEqual(["prompt"]);
+    expect(sentFromProject).toBe(true);
+    expect(draftText()).toBeUndefined();
+    expect(document.body.textContent).toBe("Project");
+  });
+
+  controlsTest("a background ↑ attaches a read session with the draft's settings before submitting", async () => {
+    readUntilAttached();
+    writeComposerDraft(sessionDraftKey("codex:s1"), {
+      parts: [{ type: "text", text: "Continue" }],
+      settings: { agent: "codex", values: [{ setting: "model", value: "gpt-6-sol" }] },
+    });
+    const finish = delayRecognition();
+    const root = await mount(<ReadSession />);
+    await dictateAndSend();
+    await show(root, projectScreen);
+    await finish();
+    expect(lastCall("agent_runtime_open_session")?.settings).toEqual([
+      { setting: "model", value: "gpt-6-sol" },
+    ]);
+    expect(sent()).toEqual(["read", "send", "prompt"]);
+    expect(draftText()).toBeUndefined();
+  });
+
+  controlsTest("background attach needing confirmation keeps the draft and only the button can send it", async () => {
+    let writer = "none";
+    snapshotFor = (session) => ({ ...snapshot(session), writer });
+    openAnswer = (_, intent) => {
+      if (intent === "send") return { outcome: "confirmation_required", turnOpen: true };
+      if (intent === "confirmed") writer = "acp";
+      return { outcome: "opened", session: key, liveness: "unknown" };
+    };
+    writeDraft("Continue");
+    const finish = delayRecognition();
+    const root = await mount(<ReadSession />);
+    await dictateAndSend();
+    await show(root, projectScreen);
+    await finish();
+    expect(sent()).toEqual(["read", "send"]);
+    await show(root, <ReadSession />);
+    expect(field().textContent).toBe("Continue now");
+    expect(document.body.textContent).toContain(m.sessions_chat_not_sent());
+    await pressKey(field(), "Enter");
+    expect(sent()).toEqual(["read", "send", "read"]);
+    await click(Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent === m.sessions_chat_attach_confirm()));
+    expect(sent()).toEqual(["read", "send", "read", "confirmed", "prompt"]);
+    expect(draftText()).toBeUndefined();
+  });
+
+  for (const blocked of ["running", "pending", "pty"] as const) {
+    controlsTest(`background ↑ sees the current ${blocked} state and keeps the draft marked unsent`, async () => {
+      writeDraft("Continue");
+      const finish = delayRecognition();
+      const root = await mount(existingChat());
+      await dictateAndSend();
+      await show(root, projectScreen);
+      snapshotFor = (session) => {
+        const initial = snapshot(session);
+        return {
+          ...initial,
+          turn: { ...initial.turn, phase: blocked === "running" ? "running" : "none" },
+          pending: blocked === "pending" ? { id: "pending" } : null,
+          writer: blocked === "pty" ? "pty" : "acp",
+        };
+      };
+      await finish();
+      expect(sent()).toEqual([]);
+      snapshotFor = (session) => snapshot(session);
+      await show(root, existingChat());
+      expect(field().textContent).toBe("Continue now");
+      expect(document.body.textContent).toContain(m.sessions_chat_not_sent());
+    });
+  }
+
+  controlsTest("background ↑ keeps the typed prompt refusal and offers manual send on return", async () => {
+    writeDraft("Continue");
+    const finish = delayRecognition();
+    const root = await mount(existingChat());
+    await dictateAndSend();
+    await show(root, projectScreen);
+    let refuse!: () => void;
+    promptAnswer = () => new Promise((_, reject) => {
+      refuse = () => reject({ kind: "agent_runtime", code: "writer_required", message: "busy" });
+    });
+    await finish();
+    const turn = snapshot(key).turn;
+    await deliver("s1", {
+      change: "turn",
+      value: { ...turn, turnId: "another-send", phase: "running" },
+    });
+    await act(async () => refuse());
+    await show(root, existingChat());
+    expect(sent()).toEqual(["prompt"]);
+    expect(messages).toEqual([]);
+    expect(field().textContent).toBe("Continue now");
+    expect(document.body.textContent).toContain(m.sessions_chat_not_sent());
+    expect(document.body.textContent).toContain(m.sessions_chat_refusal_connection());
+    promptAnswer = () => "turn-2";
+    await click(buttonByLabel(m.sessions_chat_send()));
+    expect(sent()).toEqual(["prompt", "prompt"]);
+    expect(draftText()).toBeUndefined();
+  });
+
+  for (const accepted of [true, false]) {
+    controlsTest(`an unknown background send ${accepted ? "settles from a new turn" : "returns the draft after the wait"}`, async () => {
+      writeDraft("Continue");
+      const finish = delayRecognition();
+      const root = await mount(existingChat());
+      await dictateAndSend();
+      await show(root, projectScreen);
+      promptAnswer = () => {
+        if (accepted) {
+          snapshotFor = (session) => {
+            const current = snapshot(session);
+            return { ...current, turn: { ...current.turn, turnId: "turn-2", phase: "running" } };
+          };
+        }
+        throw new Error("reply lost");
+      };
+      await finish();
+      expect(sent()).toEqual(["prompt"]);
+      if (!accepted) {
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 1_600)));
+      }
+      await show(root, existingChat());
+      expect(sent()).toEqual(["prompt"]);
+      expect(messages).toEqual(accepted ? ["codex:s1"] : []);
+      expect(draftText()).toEqual(accepted ? undefined : [{ type: "text", text: "Continue now" }]);
+      expect(document.body.textContent?.includes(m.sessions_chat_not_sent())).toBe(!accepted);
+    });
   }
 
   controlsTest(

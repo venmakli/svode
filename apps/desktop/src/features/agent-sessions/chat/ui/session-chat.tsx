@@ -18,10 +18,8 @@ import {
 import { useAgentSessionCatalog } from "../../hooks/use-agent-session-catalog";
 import { useSessionActivity } from "../hooks/use-session-activity";
 import { useSessionSettings } from "../hooks/use-session-settings";
-import {
-  useSessionComposer,
-  type SendRefusal,
-} from "../hooks/use-session-composer";
+import { useSessionComposer } from "../hooks/use-session-composer";
+import { canSendToSession, type SendRefusal } from "../hooks/session-send";
 import type { AttachOutcome, ContinueRefusal } from "../hooks/use-session-opening";
 import { takeEscape } from "@/shared/lib/escape-key";
 import type { ScopeMark } from "../../lib";
@@ -94,7 +92,7 @@ export function SessionChat({
   /** Receives the session and its turn while the chat shows it, then null. */
   onStateChange?: (state: ChatSessionState | null) => void;
 }) {
-  const { snapshot, error } = useSessionActivity(session, epoch);
+  const { snapshot, error, activity } = useSessionActivity(session, epoch);
   // A replay carries no turn outcomes: the catalogue status tells whether
   // the last turn failed (DF-226 R3).
   const status = useAgentSessionCatalog(
@@ -105,6 +103,7 @@ export function SessionChat({
     sessionId,
     session,
     snapshot,
+    activity,
     continuation?.attach,
     continuation?.sessionValues?.values,
   );
@@ -169,11 +168,10 @@ export function SessionChat({
   }
 
   const pending = snapshot.pending;
-  const canSend =
-    !composer.running &&
-    (read
-      ? !externalWriter && !continuation.attaching
-      : snapshot.writer === "acp" && snapshot.connection !== "closed");
+  const canSend = canSendToSession(
+    snapshot,
+    read && !externalWriter && !continuation.attaching,
+  );
   // A send attaches a read session itself; Desktop asks for a confirmation
   // only while a turn is open (DF-231).
   const send = () => void composer.send();
@@ -254,6 +252,11 @@ export function SessionChat({
             onCancel={composer.cancelConfirmation}
           />
         )}
+        {composer.draft.notSent && !planRefusal && (
+          <p className="pb-1 text-xs text-destructive">
+            {m.sessions_chat_not_sent()}
+          </p>
+        )}
         {pending ? (
           <PendingCard
             session={session}
@@ -269,22 +272,17 @@ export function SessionChat({
           <ExternalWriter continuation={continuation} />
         ) : (
           <div>
-            {planRefusal ? (
+            {planRefusal && (
               <div className="pb-1">
                 <SettingRefusalLine refusal={planRefusal} settings={snapshot.settings} />
               </div>
-            ) : (
-              composer.draft.notSent && (
-                <p className="pb-1 text-xs text-destructive">
-                  {m.sessions_chat_not_sent()}
-                </p>
-              )
             )}
             <Composer
               draftKey={composer.draftKey}
               parts={composer.draft.parts}
               onPartsChange={composer.setParts}
               onSend={send}
+              onDictatedSend={composer.sendDictated}
               onStop={composer.stop}
               running={composer.running}
               cancelling={composer.cancelling}

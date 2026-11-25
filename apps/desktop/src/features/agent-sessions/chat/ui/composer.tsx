@@ -98,6 +98,8 @@ export interface ComposerProps {
   parts: DraftPart[];
   onPartsChange: (parts: DraftPart[]) => void;
   onSend: () => void;
+  /** Sends a completed ↑ through an existing session's draft. */
+  onDictatedSend?: () => void;
   onStop: () => void;
   /** A turn runs: the one action is stop, and the draft can still be typed. */
   running: boolean;
@@ -129,6 +131,7 @@ export function Composer({
   parts,
   onPartsChange,
   onSend,
+  onDictatedSend,
   onStop,
   running,
   cancelling,
@@ -182,7 +185,15 @@ export function Composer({
     if (editor.api.isFocused()) editor.tf.select(editor.api.end([]));
   }, [draftKey, editor, sending]);
 
-  const { dictation, sendAfterRef } = useComposerDictation(editor, draftKey);
+  const saveParts = (next: DraftPart[]) => {
+    const key = JSON.stringify(next);
+    if (key === emittedRef.current) return;
+    emittedRef.current = key;
+    onPartsChange(next);
+  };
+  const { dictation, sendAfterRef } = useComposerDictation(
+    editor, rootRef, draftKey, saveParts, onDictatedSend,
+  );
   useComposerDropReceiver(
     useMemo<ComposerDropReceiver | null>(
       () =>
@@ -261,13 +272,7 @@ export function Composer({
   const fieldEventsRef = useRef<FieldEvents | null>(null);
   useLayoutEffect(() => {
     fieldEventsRef.current = {
-      onChange: (value) => {
-        const next = draftParts(value);
-        const key = JSON.stringify(next);
-        if (key === emittedRef.current) return;
-        emittedRef.current = key;
-        onPartsChange(next);
-      },
+      onChange: (value) => saveParts(draftParts(value)),
       onKeyDown: (event) => {
         // Enter and Esc in an open `@` or `/` search choose or close
         // it first.
@@ -293,7 +298,7 @@ export function Composer({
     [],
   );
 
-  // ↑ sends once the dictated text is in the draft.
+  // The first send of a new session still waits for its draft surface.
   useEffect(() => {
     if (sendAfterRef.current === null || sendAfterRef.current !== partsKey) return;
     sendAfterRef.current = null;
