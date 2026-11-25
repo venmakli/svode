@@ -243,6 +243,8 @@ jobs:
       # the budget.
       - name: Git path sets beyond the command line limit
         run: cargo test -p svode-core --lib -- git::path_set_tests git::cli::tests
+      - name: Partial commits with a temporary index from a canonical Windows path
+        run: cargo test -p svode-core --lib -- git::staging_tests::canonical_partial_commit
       # The SSH defaults of every Git process (DF-378): a time limit for each
       # SSH connection and one git-lfs retry, left out where the user set an
       # SSH command or retries, as Git for Windows reads them. The process

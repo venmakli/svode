@@ -214,21 +214,247 @@ pub(super) fn scaffold(path: &Path, name: &str) {
 
 pub(super) async fn repo(cli: &GitCli, born: bool) -> TempDir {
     let tmp = TempDir::new().unwrap();
-    git(cli, tmp.path(), &["init"]).await;
-    git(cli, tmp.path(), &["config", "user.name", "Test"]).await;
+    init_repo(cli, tmp.path(), born).await;
+    tmp
+}
+
+async fn init_repo(cli: &GitCli, root: &Path, born: bool) {
+    git(cli, root, &["init"]).await;
+    git(cli, root, &["config", "user.name", "Test"]).await;
+    git(cli, root, &["config", "user.email", "test@example.test"]).await;
+    git(cli, root, &["config", "commit.gpgsign", "false"]).await;
+    if born {
+        write(root, "baseline.md", "baseline\n");
+        git(cli, root, &["add", "."]).await;
+        git(cli, root, &["commit", "-m", "Baseline"]).await;
+    }
+}
+
+async fn canonical_partial_commit_repo(cli: &GitCli, born: bool) -> (TempDir, PathBuf) {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("Рабочая папка");
+    std::fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    #[cfg(windows)]
+    assert!(root.to_string_lossy().starts_with(r"\\?\"));
+    init_repo(cli, &root, false).await;
     git(
         cli,
-        tmp.path(),
-        &["config", "user.email", "test@example.test"],
+        &root,
+        &["config", "core.hooksPath", ".git/fixture-hooks"],
     )
     .await;
-    git(cli, tmp.path(), &["config", "commit.gpgsign", "false"]).await;
+    git(cli, &root, &["config", "core.autocrlf", "false"]).await;
     if born {
-        write(tmp.path(), "baseline.md", "baseline\n");
-        git(cli, tmp.path(), &["add", "."]).await;
-        git(cli, tmp.path(), &["commit", "-m", "Baseline"]).await;
+        write(&root, "note.md", "original\n");
+        git(cli, &root, &["add", "note.md"]).await;
+        git(cli, &root, &["commit", "-m", "Original"]).await;
     }
-    tmp
+    (tmp, root)
+}
+
+async fn temporary_index(cli: &GitCli, root: &Path) -> PathBuf {
+    let path = git(cli, root, &["rev-parse", "--git-path", "svode-save.index"]).await;
+    root.join(path.trim())
+}
+
+fn assert_temporary_index_removed(index: &Path) {
+    assert!(!index.exists());
+    assert!(!index.with_extension("index.lock").exists());
+}
+
+#[tokio::test]
+async fn canonical_partial_commit_saves_only_the_case_relocation() {
+    let cli = cli();
+    let (_tmp, root) = canonical_partial_commit_repo(&cli, true).await;
+    let before = git(&cli, &root, &["rev-parse", "HEAD"]).await;
+    write(&root, "unrelated.md", "staged\n");
+    git(&cli, &root, &["add", "unrelated.md"]).await;
+    let staged = git(&cli, &root, &["ls-files", "--stage", "-z", "unrelated.md"]).await;
+    std::fs::rename(root.join("note.md"), root.join("rename.md")).unwrap();
+    std::fs::rename(root.join("rename.md"), root.join("Note.md")).unwrap();
+    #[cfg(windows)]
+    assert!(
+        super::staging::Presence::new(&root).shadowed("note.md"),
+        "the Windows fixture must use the temporary index"
+    );
+    write(&root, "Note.md", "selected\n");
+
+    assert!(
+        super::versions::commit_exact(
+            &cli,
+            &root,
+            &["note.md".into(), "Note.md".into()],
+            "Save case relocation",
+        )
+        .await
+        .unwrap()
+    );
+    let range = format!("{}..HEAD", before.trim());
+    assert_eq!(
+        git(&cli, &root, &["rev-list", "--count", &range])
+            .await
+            .trim(),
+        "1"
+    );
+    assert_eq!(
+        git(&cli, &root, &["ls-tree", "-r", "--name-only", "-z", "HEAD"]).await,
+        "Note.md\0"
+    );
+    assert_eq!(
+        git(&cli, &root, &["show", "HEAD:Note.md"]).await,
+        "selected\n"
+    );
+    assert_eq!(
+        git(&cli, &root, &["ls-files", "--stage", "-z", "unrelated.md"]).await,
+        staged
+    );
+    assert_eq!(
+        git(&cli, &root, &["show", ":unrelated.md"]).await,
+        "staged\n"
+    );
+    assert_temporary_index_removed(&temporary_index(&cli, &root).await);
+}
+
+#[tokio::test]
+async fn canonical_partial_commit_retries_a_rejected_temporary_index_with_or_without_head() {
+    use super::{branch, diagnostics::HookTrace, staging};
+
+    let cli = cli();
+    for born in [false, true] {
+        let (_tmp, root) = canonical_partial_commit_repo(&cli, born).await;
+        let head = branch::read_pseudo_ref(&cli, &root, "HEAD").await.unwrap();
+        let index = temporary_index(&cli, &root).await;
+        let main_index = root.join(".git/index");
+        let paths = ["selected.md".to_string()];
+        write(&root, "selected.md", "selected\n");
+        write(&root, "unrelated.md", "staged\n");
+        git(&cli, &root, &["add", "unrelated.md"]).await;
+        staging::prepare(&cli, &root, &paths).await.unwrap();
+        let before = std::fs::read(&main_index).unwrap();
+
+        let lock = index.with_extension("index.lock");
+        std::fs::write(&lock, "held by another process\n").unwrap();
+        let error =
+            staging::commit_prepared(&cli, &root, &paths, "Save selected", &HookTrace::new())
+                .await
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            GitError::SaveFailed {
+                exit_code: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            branch::read_pseudo_ref(&cli, &root, "HEAD").await.unwrap(),
+            head
+        );
+        assert_eq!(std::fs::read(&main_index).unwrap(), before);
+        assert!(!index.exists());
+        assert_eq!(
+            std::fs::read_to_string(&lock).unwrap(),
+            "held by another process\n"
+        );
+        std::fs::remove_file(lock).unwrap();
+
+        let hook = root.join(".git/fixture-hooks/pre-commit");
+        let script = r#"#!/bin/sh
+printf '%s\n' "$GIT_INDEX_FILE" > .git/hook-index
+git diff --cached --no-renames --name-only -z > .git/hook-paths || exit 2
+exit 1
+"#;
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        svode_testkit::write_executable(&hook, script).unwrap();
+        #[cfg(windows)]
+        std::fs::write(&hook, script).unwrap();
+
+        let trace = HookTrace::new();
+        let rejected = staging::commit_prepared(&cli, &root, &paths, "Save selected", &trace)
+            .await
+            .unwrap();
+        assert_eq!(rejected.exit_code, 1, "{}", rejected.stderr);
+        assert!(trace.hook_failed());
+        let hook_index = std::fs::read_to_string(root.join(".git/hook-index")).unwrap();
+        let expected = crate::system_path::user_facing_path(&index);
+        assert!(Path::new(hook_index.trim()).is_absolute());
+        assert_eq!(Path::new(hook_index.trim()), Path::new(&expected));
+        assert_eq!(
+            std::fs::read(root.join(".git/hook-paths")).unwrap(),
+            b"selected.md\0"
+        );
+        assert_eq!(
+            branch::read_pseudo_ref(&cli, &root, "HEAD").await.unwrap(),
+            head
+        );
+        assert_eq!(std::fs::read(&main_index).unwrap(), before);
+        assert_temporary_index_removed(&index);
+
+        std::fs::remove_file(hook).unwrap();
+        let saved =
+            staging::commit_prepared(&cli, &root, &paths, "Save selected", &HookTrace::new())
+                .await
+                .unwrap();
+        assert_eq!(saved.exit_code, 0, "{}", saved.stderr);
+        assert_eq!(
+            git(&cli, &root, &["rev-list", "--count", "HEAD"])
+                .await
+                .trim(),
+            if born { "2" } else { "1" }
+        );
+        assert_eq!(
+            git(&cli, &root, &["show", "HEAD:selected.md"]).await,
+            "selected\n"
+        );
+        assert_eq!(
+            git(&cli, &root, &["diff", "--cached", "--name-only", "-z"]).await,
+            "unrelated.md\0"
+        );
+        assert_eq!(std::fs::read(&main_index).unwrap(), before);
+        assert_temporary_index_removed(&index);
+    }
+}
+
+#[tokio::test]
+async fn canonical_partial_commit_refuses_unfinished_git_operations() {
+    use super::{diagnostics::HookTrace, staging};
+
+    let cli = cli();
+    let (_tmp, root) = canonical_partial_commit_repo(&cli, true).await;
+    let before = git(&cli, &root, &["rev-parse", "HEAD"]).await;
+    let paths = ["selected.md".to_string()];
+    write(&root, "selected.md", "selected\n");
+    staging::prepare(&cli, &root, &paths).await.unwrap();
+
+    for pseudo_ref in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+        let merge_head = root.join(".git/MERGE_HEAD");
+        if pseudo_ref == "MERGE_HEAD" {
+            // Git stores a merge's parent list outside the ref store.
+            std::fs::write(&merge_head, &before).unwrap();
+        } else {
+            git(&cli, &root, &["update-ref", pseudo_ref, "HEAD"]).await;
+        }
+        let error =
+            staging::commit_prepared(&cli, &root, &paths, "Save selected", &HookTrace::new())
+                .await
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            GitError::SaveFailed {
+                reason: "command_failed",
+                exit_code: None,
+                ..
+            }
+        ));
+        assert_eq!(git(&cli, &root, &["rev-parse", "HEAD"]).await, before);
+        assert_temporary_index_removed(&temporary_index(&cli, &root).await);
+        if pseudo_ref == "MERGE_HEAD" {
+            std::fs::remove_file(merge_head).unwrap();
+        } else {
+            git(&cli, &root, &["update-ref", "-d", pseudo_ref]).await;
+        }
+    }
 }
 
 /// Born root repository that tracks one real submodule Space `Исследования`

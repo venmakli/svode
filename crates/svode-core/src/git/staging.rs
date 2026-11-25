@@ -627,6 +627,9 @@ async fn commit_through(
     trace: &HookTrace,
 ) -> Result<GitOutput, GitError> {
     let index = index.to_string_lossy();
+    // Git for Windows cannot create the index lock through a verbatim path.
+    #[cfg(windows)]
+    let index = crate::system_path::user_facing_path_str(&index);
     let env = [("GIT_INDEX_FILE", index.as_ref())];
     let head = exec(
         cli,
